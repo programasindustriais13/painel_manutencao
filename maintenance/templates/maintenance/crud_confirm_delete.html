@@ -1,0 +1,29 @@
+{% extends 'maintenance/base.html' %}
+
+{% block title %}Excluir {{ type }} - Gestão de Manutenção{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-6">
+        <div class="card card-custom p-4 bg-white border-top border-4 border-danger">
+            <h3 class="fw-bold text-danger mb-3"><i class="bi bi-exclamation-triangle-fill me-2"></i>Confirmar Exclusão</h3>
+            
+            <p class="text-dark fs-5">
+                Tem certeza de que deseja excluir o(a) {{ type }}: <strong>"{{ object }}"</strong>?
+            </p>
+            
+            <div class="alert alert-danger bg-danger bg-opacity-10 text-danger-emphasis border-0 small mb-4">
+                <i class="bi bi-info-circle-fill me-1"></i> Esta ação é irreversível e pode remover dados dependentes associados a este registro.
+            </div>
+            
+            <form method="post">
+                {% csrf_token %}
+                <div class="d-flex gap-2 justify-content-end">
+                    <a href="{% url 'crud_list' %}" class="btn btn-light rounded-pill px-4">Cancelar</a>
+                    <button type="submit" class="btn btn-danger rounded-pill px-4">Excluir Permanentemente</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

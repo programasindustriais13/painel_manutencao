@@ -1,0 +1,69 @@
+python manage.py runserver 0.0.0.0:8000
+
+python -m venv venv
+venv\Scripts\activate
+
+python -m pip install --upgrade pip
+pip install -r requirements.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
+
+# 2. Executa as migrações e cria as tabelas de fato no banco
+python manage.py migrate
+
+python manage.py collectstatic
+
+python manage.py createsuperuser
+
+# 3. Importar máquinas do Excel (TAG DAS MÁQUINAS.xlsx)
+python populate_machines.py
+
+# Notas do Sistema:
+# - A senha padrão do superusuário admin é @Freedom1234
+# - O Painel TV (Modo TV) foi otimizado para exibir mais de 20 técnicos sem rolagem (scroll)
+# - Cores dinâmicas nos cards dos técnicos ativos/pausados são baseadas na criticidade da máquina alocada.
+
+7. CONTROLE DE VERSÃO COM GIT E GITHUB
+--------------------------------------------------------------------------------
+Para vincular este projeto local ao seu repositório do GitHub e realizar o controle 
+de alterações a cada melhoria realizada, utilize os comandos abaixo no terminal 
+(certifique-se de ter o Git instalado no seu PC):
+
+A. Configuração Inicial (Executar apenas na primeira vez):
+---------------------------------------------------------
+1. Inicializar o repositório Git local na pasta do projeto:
+   > git init
+
+2. Vincular este repositório local ao seu GitHub remoto:
+   > git remote add origin https://github.com/programasindustriais13/painel_manutencao.git
+
+3. Configurar sua identidade no Git (caso ainda não tenha configurado no seu PC):
+   > git config --global user.name "Seu Nome"
+   > git config --global user.email "seu_email@exemplo.com"
+
+4. Adicionar todos os arquivos ao controle de versão (o arquivo `.gitignore` que 
+   criei impedirá automaticamente o envio de arquivos temporários, da pasta `venv/` 
+   e do banco local de testes `db.sqlite3` para a nuvem):
+   > git add .
+
+5. Realizar o primeiro commit de registro:
+   > git commit -m "Commit inicial: Estrutura do Painel Sinoptico Django para TV 43"
+
+6. Definir o nome da branch principal como main:
+   > git branch -M main
+
+7. Enviar o código pela primeira vez para o GitHub:
+   > git push -u origin main
+
+B. Rotina diária de melhorias (A cada nova alteração que você fizer):
+-------------------------------------------------------------------
+Sempre que você fizer alterações nos templates, views ou scripts e quiser subir
+a nova versão para o GitHub:
+
+1. Adicione os arquivos alterados:
+   > git add .
+
+2. Faça o commit descrevendo o que foi implementado:
+   > git commit -m "Melhoria: adicionado [descreva a melhoria aqui]"
+
+3. Envie para o GitHub:
+   > git push origin main
+

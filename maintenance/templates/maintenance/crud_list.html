@@ -1,0 +1,199 @@
+{% extends 'maintenance/base.html' %}
+
+{% block title %}Cadastros do Sistema - Gestão de Manutenção{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h1 class="h2 fw-bold text-dark mb-1"><i class="bi bi-sliders text-primary me-2"></i>Configurações e Cadastros</h1>
+        <p class="text-muted">Gerenciamento dos elementos fundamentais do sistema de produção e equipe.</p>
+    </div>
+</div>
+
+<!-- Tab Navigation -->
+<div class="card card-custom border-0 bg-white">
+    <div class="card-header bg-white border-0 pt-4 px-4">
+        <ul class="nav nav-pills nav-fill bg-light p-1 rounded-pill" id="crudTab" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link rounded-pill active py-2 fw-semibold" id="sectors-tab" data-bs-toggle="tab" data-bs-target="#sectors" type="button" role="tab" aria-controls="sectors" aria-selected="true">
+                    <i class="bi bi-tag me-1"></i> Setores ({{ sectors|length }})
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link rounded-pill py-2 fw-semibold" id="machines-tab" data-bs-toggle="tab" data-bs-target="#machines" type="button" role="tab" aria-controls="machines" aria-selected="false">
+                    <i class="bi bi-cpu me-1"></i> Máquinas ({{ machines|length }})
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link rounded-pill py-2 fw-semibold" id="techs-tab" data-bs-toggle="tab" data-bs-target="#techs" type="button" role="tab" aria-controls="techs" aria-selected="false">
+                    <i class="bi bi-people me-1"></i> Técnicos ({{ technicians|length }})
+                </button>
+            </li>
+        </ul>
+    </div>
+    
+    <div class="card-body p-4">
+        <div class="tab-content" id="crudTabContent">
+            
+            <!-- 1. SETORES TAB -->
+            <div class="tab-pane fade show active" id="sectors" role="tabpanel" aria-labelledby="sectors-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold m-0 text-dark">Setores Registrados</h5>
+                    <a href="{% url 'sector_create' %}" class="btn btn-sm btn-primary-custom rounded-pill px-3">
+                        <i class="bi bi-plus-circle me-1"></i> Novo Setor
+                    </a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle border-top">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col" style="width: 10%;">ID</th>
+                                <th scope="col" style="width: 65%;">Nome do Setor</th>
+                                <th scope="col" class="text-end" style="width: 25%;">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sector in sectors %}
+                            <tr>
+                                <th scope="row" class="font-monospace text-muted">{{ sector.id }}</th>
+                                <td><span class="fw-semibold text-dark">{{ sector.nome }}</span></td>
+                                <td class="text-end">
+                                    <a href="{% url 'sector_edit' sector.id %}" class="btn btn-sm btn-outline-primary rounded-pill px-2 me-1">
+                                        <i class="bi bi-pencil-square"></i> Editar
+                                    </a>
+                                    <a href="{% url 'sector_delete' sector.id %}" class="btn btn-sm btn-outline-danger rounded-pill px-2">
+                                        <i class="bi bi-trash"></i> Excluir
+                                    </a>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="3" class="text-center py-4 text-muted">Nenhum setor cadastrado.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- 2. MAQUINAS TAB -->
+            <div class="tab-pane fade" id="machines" role="tabpanel" aria-labelledby="machines-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold m-0 text-dark">Máquinas Registradas</h5>
+                    <a href="{% url 'machine_create' %}" class="btn btn-sm btn-primary-custom rounded-pill px-3">
+                        <i class="bi bi-plus-circle me-1"></i> Nova Máquina
+                    </a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle border-top">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col" style="width: 10%;">ID</th>
+                                <th scope="col" style="width: 35%;">Nome da Máquina</th>
+                                <th scope="col" style="width: 30%;">Setor</th>
+                                <th scope="col" style="width: 10%;">Criticidade</th>
+                                <th scope="col" class="text-end" style="width: 15%;">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for machine in machines %}
+                            <tr>
+                                <th scope="row" class="font-monospace text-muted">{{ machine.id }}</th>
+                                <td><span class="fw-semibold text-dark">{{ machine.nome }}</span></td>
+                                <td>{{ machine.setor.nome }}</td>
+                                <td>
+                                    <span class="badge bg-{{ machine.bootstrap_color }}">{{ machine.get_criticidade_display }}</span>
+                                </td>
+                                <td class="text-end">
+                                    <a href="{% url 'machine_edit' machine.id %}" class="btn btn-sm btn-outline-primary rounded-pill px-2 me-1">
+                                        <i class="bi bi-pencil-square"></i>
+                                    </a>
+                                    <a href="{% url 'machine_delete' machine.id %}" class="btn btn-sm btn-outline-danger rounded-pill px-2">
+                                        <i class="bi bi-trash"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">Nenhuma máquina cadastrada.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- 3. TECNICOS TAB -->
+            <div class="tab-pane fade" id="techs" role="tabpanel" aria-labelledby="techs-tab">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold m-0 text-dark">Técnicos Registrados</h5>
+                    <a href="{% url 'technician_create' %}" class="btn btn-sm btn-primary-custom rounded-pill px-3">
+                        <i class="bi bi-plus-circle me-1"></i> Novo Técnico
+                    </a>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle border-top">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col" style="width: 10%;">ID</th>
+                                <th scope="col" style="width: 45%;">Nome Completo</th>
+                                <th scope="col" style="width: 25%;">Matrícula</th>
+                                <th scope="col" style="width: 10%;">Status Atual</th>
+                                <th scope="col" class="text-end" style="width: 10%;">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for tech in technicians %}
+                            <tr>
+                                <th scope="row" class="font-monospace text-muted">{{ tech.id }}</th>
+                                <td><span class="fw-semibold text-dark">{{ tech.nome }}</span></td>
+                                <td><span class="font-monospace small text-muted">{{ tech.matricula }}</span></td>
+                                <td>
+                                    {% if tech.status == 'OCIOSO' %}
+                                        <span class="badge bg-secondary">Ocioso</span>
+                                    {% elif tech.status == 'EM_PAUSA' %}
+                                        <span class="badge bg-warning text-dark">Pausado</span>
+                                    {% else %}
+                                        <span class="badge bg-success">Em Serviço</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <a href="{% url 'technician_edit' tech.id %}" class="btn btn-sm btn-outline-primary rounded-pill px-2 me-1">
+                                        <i class="bi bi-pencil-square"></i>
+                                    </a>
+                                    <a href="{% url 'technician_delete' tech.id %}" class="btn btn-sm btn-outline-danger rounded-pill px-2">
+                                        <i class="bi bi-trash"></i>
+                                    </a>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-center py-4 text-muted">Nenhum técnico cadastrado.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Keep active tab state across refreshes if needed, or default
+    document.addEventListener("DOMContentLoaded", function() {
+        // Simple hash checker to activate specific tabs
+        const hash = window.location.hash;
+        if (hash) {
+            const triggerEl = document.querySelector(`button[data-bs-target="${hash}"]`);
+            if (triggerEl) {
+                const tab = new bootstrap.Tab(triggerEl);
+                tab.show();
+            }
+        }
+    });
+</script>
+{% endblock %}

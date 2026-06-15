@@ -1,0 +1,86 @@
+{% extends 'maintenance/base.html' %}
+
+{% block title %}Entrar - Monitoramento de Manutenção{% endblock %}
+
+{% block container_class %}container d-flex align-items-center justify-content-center min-vh-75 py-5{% endblock %}
+
+{% block extra_css %}
+    body {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important;
+        color: #f8fafc !important;
+    }
+    .card-login {
+        background: rgba(30, 41, 59, 0.7);
+        backdrop-filter: blur(16px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 16px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+        max-width: 450px;
+        width: 100%;
+        color: #f8fafc;
+    }
+    .form-control-custom {
+        background-color: rgba(15, 23, 42, 0.6) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #ffffff !important;
+        border-radius: 8px;
+        padding: 12px 16px;
+        transition: all 0.2s ease;
+    }
+    .form-control-custom:focus {
+        border-color: #6366f1 !important;
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25) !important;
+    }
+    .login-logo {
+        font-size: 3rem;
+        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+{% endblock %}
+
+{% block content %}
+<div class="card card-login p-4 p-md-5">
+    <div class="text-center mb-4">
+        <div class="mb-2">
+            <i class="bi bi-ui-checks-grid login-logo"></i>
+        </div>
+        <h2 class="fw-bold mb-1">Painel Manutenção</h2>
+        <p class="text-white-50">Área de acesso restrito a funcionários</p>
+    </div>
+
+    {% if form.errors %}
+    <div class="alert alert-danger border-0 bg-danger bg-opacity-20 text-danger-emphasis py-2 px-3 rounded mb-4 text-center">
+        <i class="bi bi-exclamation-triangle-fill me-1"></i> Usuário ou senha incorretos.
+    </div>
+    {% endif %}
+
+    <form method="post" action="{% url 'login' %}">
+        {% csrf_token %}
+        
+        <div class="mb-3">
+            <label for="id_username" class="form-label small fw-semibold text-white-50">Nome de Usuário</label>
+            <div class="input-group">
+                <span class="input-group-text bg-transparent border-end-0 border-white-15 text-white-50" style="border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px 0 0 8px;">
+                    <i class="bi bi-person"></i>
+                </span>
+                <input type="text" name="username" autofocus required id="id_username" class="form-control form-control-custom border-start-0" style="border-radius: 0 8px 8px 0;" placeholder="Digite seu usuário">
+            </div>
+        </div>
+
+        <div class="mb-4">
+            <label for="id_password" class="form-label small fw-semibold text-white-50">Senha</label>
+            <div class="input-group">
+                <span class="input-group-text bg-transparent border-end-0 border-white-15 text-white-50" style="border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px 0 0 8px;">
+                    <i class="bi bi-lock"></i>
+                </span>
+                <input type="password" name="password" required id="id_password" class="form-control form-control-custom border-start-0" style="border-radius: 0 8px 8px 0;" placeholder="Digite sua senha">
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary-custom w-100 py-2 fs-6 rounded-pill">
+            <i class="bi bi-box-arrow-in-right me-1"></i> Acessar Sistema
+        </button>
+    </form>
+</div>
+{% endblock %}

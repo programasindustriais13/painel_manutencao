@@ -1,0 +1,291 @@
+{% extends 'maintenance/base.html' %}
+
+{% block title %}Controle de Técnicos - Gestão de Manutenção{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 col-md-6">
+        <h1 class="h2 fw-bold text-dark mb-1"><i class="bi bi-people-fill text-primary me-2"></i>Controle de Técnicos</h1>
+        <p class="text-muted">Gerenciamento e alocação de técnicos na linha de produção em tempo real.</p>
+    </div>
+    <div class="col-12 col-md-6 text-md-end d-flex align-items-center justify-content-md-end gap-2">
+        <a href="{% url 'tv_dashboard' %}" class="btn btn-outline-dark rounded-pill px-3">
+            <i class="bi bi-tv me-1"></i> Ver Painel TV
+        </a>
+        <a href="{% url 'crud_list' %}" class="btn btn-primary-custom rounded-pill px-3">
+            <i class="bi bi-plus-circle me-1"></i> Cadastros
+        </a>
+    </div>
+</div>
+
+<!-- Grid of Technicians with Actions -->
+<div class="row g-4">
+    {% for tech in technicians %}
+        {% with alloc=tech.active_allocation %}
+        <div class="col-12 col-md-6 col-lg-4">
+            <div class="card card-custom h-100 border-0">
+                <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-start">
+                    <div>
+                        <h5 class="fw-bold mb-0 text-dark">{{ tech.nome }}</h5>
+                        <small class="text-muted font-monospace">Matrícula: {{ tech.matricula }}</small>
+                    </div>
+                    
+                    <!-- Technician status badges -->
+                    {% if tech.status == 'OCIOSO' %}
+                        <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
+                            OCIOSO
+                        </span>
+                    {% elif tech.status == 'EM_PAUSA' %}
+                        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
+                            EM PAUSA
+                        </span>
+                    {% else %}
+                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
+                            EM ATENDIMENTO
+                        </span>
+                    {% endif %}
+                </div>
+                
+                <div class="card-body px-4 py-3">
+                    {% if tech.status == 'OCIOSO' or not alloc %}
+                        <div class="text-center py-4 bg-light rounded-3 text-muted">
+                            <i class="bi bi-check-circle-fill text-success fs-3 mb-2 d-block"></i>
+                            Disponível para nova ordem
+                        </div>
+                    {% else %}
+                        <div class="p-3 bg-light rounded-3">
+                            <div class="row g-2 mb-3">
+                                <div class="col-6">
+                                    <span class="text-muted small d-block">Máquina</span>
+                                    <strong class="text-dark">{{ alloc.maquina.nome }}</strong>
+                                </div>
+                                <div class="col-6 text-end">
+                                    <span class="text-muted small d-block">Criticidade</span>
+                                    <span class="badge bg-{{ alloc.maquina.bootstrap_color }}">{{ alloc.maquina.get_criticidade_display }}</span>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-3">
+                                <span class="text-muted small d-block">Atividade Atual</span>
+                                <p class="mb-0 text-dark small font-monospace bg-white p-2 border rounded" style="word-break: break-all;">
+                                    {{ alloc.atividade_observacao }}
+                                </p>
+                            </div>
+                            
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span class="text-muted small">Tempo Decorrido:</span>
+                                <span class="badge bg-dark font-monospace px-2 py-1"><i class="bi bi-stopwatch me-1"></i>{{ alloc.tempo_decorrido_str }}</span>
+                            </div>
+
+                            {% if tech.status == 'EM_PAUSA' %}
+                                <div class="mt-3 p-2 bg-warning bg-opacity-10 border border-warning rounded text-warning-emphasis small">
+                                    <i class="bi bi-info-circle-fill me-1"></i><strong>Motivo da Pausa:</strong> {{ alloc.motivo_pausa }}
+                                </div>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
+                
+                <!-- Card Footer controls -->
+                <div class="card-footer bg-white border-0 pb-4 px-4 pt-2">
+                    <div class="d-flex gap-2 justify-content-end">
+                        {% if tech.status == 'OCIOSO' %}
+                            <!-- Start action triggers modal -->
+                            <button class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm w-100 py-2 fw-semibold"
+                                    data-bs-toggle="modal" 
+                                    data-bs-target="#startModal" 
+                                    data-tech-id="{{ tech.id }}" 
+                                    data-tech-name="{{ tech.nome }}">
+                                <i class="bi bi-play-fill me-1"></i> Iniciar Serviço
+                            </button>
+                        {% elif tech.status == 'EM_ATENDIMENTO' %}
+                            <!-- Pause triggers modal -->
+                            <button class="btn btn-warning btn-sm rounded-pill px-3 w-50 py-2 fw-semibold text-white"
+                                    data-bs-toggle="modal" 
+                                    data-bs-target="#pauseModal" 
+                                    data-tech-id="{{ tech.id }}" 
+                                    data-tech-name="{{ tech.nome }}">
+                                <i class="bi bi-pause-fill me-1"></i> Pausar
+                            </button>
+                            <!-- Finish triggers modal -->
+                            <button class="btn btn-danger btn-sm rounded-pill px-3 w-50 py-2 fw-semibold"
+                                    data-bs-toggle="modal" 
+                                    data-bs-target="#finishModal" 
+                                    data-tech-id="{{ tech.id }}" 
+                                    data-tech-name="{{ tech.nome }}">
+                                <i class="bi bi-check-lg me-1"></i> Concluir
+                            </button>
+                        {% elif tech.status == 'EM_PAUSA' %}
+                            <!-- Resume triggers POST form directly -->
+                            <form action="{% url 'resume_service' tech.id %}" method="post" class="w-50 m-0">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-success btn-sm rounded-pill px-3 w-100 py-2 fw-semibold">
+                                    <i class="bi bi-play-fill me-1"></i> Retomar
+                                </button>
+                            </form>
+                            <!-- Finish triggers modal -->
+                            <button class="btn btn-danger btn-sm rounded-pill px-3 w-50 py-2 fw-semibold"
+                                    data-bs-toggle="modal" 
+                                    data-bs-target="#finishModal" 
+                                    data-tech-id="{{ tech.id }}" 
+                                    data-tech-name="{{ tech.nome }}">
+                                <i class="bi bi-check-lg me-1"></i> Concluir
+                            </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endwith %}
+    {% empty %}
+        <div class="col-12 text-center py-5">
+            <div class="card p-5 border-0 shadow-sm rounded-3">
+                <i class="bi bi-people-fill text-muted fs-1 mb-3"></i>
+                <h4 class="fw-bold">Nenhum Técnico Cadastrado</h4>
+                <p class="text-muted">Cadastre técnicos no sistema para poder iniciar o monitoramento e alocação.</p>
+                <div class="mt-2">
+                    <a href="{% url 'crud_list' %}" class="btn btn-primary-custom rounded-pill px-4">
+                        <i class="bi bi-plus-circle me-1"></i> Adicionar Técnicos
+                    </a>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL: INICIAR SERVIÇO                     -->
+<!-- ========================================== -->
+<div class="modal fade" id="startModal" tabindex="-1" aria-labelledby="startModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+            <div class="modal-header bg-primary text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                <h5 class="modal-title fw-bold" id="startModalLabel">Iniciar Serviço</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="">
+                {% csrf_token %}
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label for="id_maquina" class="form-label fw-semibold">Selecione a Máquina <span class="text-danger">*</span></label>
+                        {{ start_form.maquina }}
+                    </div>
+                    <div class="mb-2">
+                        <label for="id_atividade_observacao" class="form-label fw-semibold">Observações / Atividade a Realizar <span class="text-danger">*</span></label>
+                        {{ start_form.atividade_observacao }}
+                    </div>
+                </div>
+                <div class="modal-footer border-0 p-4 pt-0">
+                    <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary rounded-pill px-4">Alocar Técnico</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL: PAUSAR SERVIÇO                      -->
+<!-- ========================================== -->
+<div class="modal fade" id="pauseModal" tabindex="-1" aria-labelledby="pauseModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+            <div class="modal-header bg-warning text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                <h5 class="modal-title fw-bold" id="pauseModalLabel">Pausar Atendimento</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="">
+                {% csrf_token %}
+                <div class="modal-body p-4">
+                    <div class="mb-2">
+                        <label for="id_motivo_pausa" class="form-label fw-semibold text-warning-emphasis">Motivo da Pausa <span class="text-danger">*</span></label>
+                        {{ pause_form.motivo_pausa }}
+                        <div class="form-text text-muted">A descrição do motivo é obrigatória para prosseguir.</div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 p-4 pt-0">
+                    <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning text-white rounded-pill px-4">Pausar Atendimento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL: CONCLUIR SERVIÇO                    -->
+<!-- ========================================== -->
+<div class="modal fade" id="finishModal" tabindex="-1" aria-labelledby="finishModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+            <div class="modal-header bg-danger text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                <h5 class="modal-title fw-bold" id="finishModalLabel">Finalizar Serviço</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="" enctype="multipart/form-data">
+                {% csrf_token %}
+                <div class="modal-body p-4">
+                    <div class="mb-3">
+                        <label for="id_observacao_conclusao" class="form-label fw-semibold">Observações Finais de Conclusão</label>
+                        {{ finish_form.observacao_conclusao }}
+                    </div>
+                    <div class="mb-2">
+                        <label for="id_foto_anexo" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
+                        {{ finish_form.foto_anexo }}
+                        <div class="form-text text-muted">Ideal para registrar o estado pós-manutenção via smartphone ou PC.</div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 p-4 pt-0">
+                    <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger rounded-pill px-4">Concluir Ordem</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        // Dynamic Setup for Start Service Modal
+        const startModal = document.getElementById('startModal');
+        if (startModal) {
+            startModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const techId = button.getAttribute('data-tech-id');
+                const techName = button.getAttribute('data-tech-name');
+                
+                startModal.querySelector('.modal-title').textContent = `Iniciar Serviço - ${techName}`;
+                startModal.querySelector('form').action = `/technicians/${techId}/start/`;
+            });
+        }
+
+        // Dynamic Setup for Pause Service Modal
+        const pauseModal = document.getElementById('pauseModal');
+        if (pauseModal) {
+            pauseModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const techId = button.getAttribute('data-tech-id');
+                const techName = button.getAttribute('data-tech-name');
+                
+                pauseModal.querySelector('.modal-title').textContent = `Pausar Serviço - ${techName}`;
+                pauseModal.querySelector('form').action = `/technicians/${techId}/pause/`;
+            });
+        }
+
+        // Dynamic Setup for Finish Service Modal
+        const finishModal = document.getElementById('finishModal');
+        if (finishModal) {
+            finishModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const techId = button.getAttribute('data-tech-id');
+                const techName = button.getAttribute('data-tech-name');
+                
+                finishModal.querySelector('.modal-title').textContent = `Finalizar Serviço - ${techName}`;
+                finishModal.querySelector('form').action = `/technicians/${techId}/finish/`;
+            });
+        }
+    });
+</script>
+{% endblock %}
