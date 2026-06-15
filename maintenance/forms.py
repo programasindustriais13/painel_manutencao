@@ -47,6 +47,10 @@ class StartServiceForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # Otimizar queryset com select_related('setor') e ordenar por nome da máquina
+        self.fields['maquina'].queryset = Machine.objects.select_related('setor').order_by('nome')
+        # Exibição combinando nome da máquina e setor
+        self.fields['maquina'].label_from_instance = lambda obj: f"{obj.nome} [Setor: {obj.setor.nome}]"
         # Ensure machine field is required
         self.fields['maquina'].required = True
         self.fields['atividade_observacao'].required = True

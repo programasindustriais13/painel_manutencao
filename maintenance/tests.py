@@ -149,3 +149,17 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertIsNotNone(active_alloc.data_fim)
         self.assertEqual(active_alloc.observacao_conclusao, 'Serviço executado perfeitamente')
         self.assertIsNone(self.tech.active_allocation)
+
+    def test_start_service_form_custom_label(self):
+        """Test StartServiceForm queryset optimization and label formatting."""
+        from .forms import StartServiceForm
+        form = StartServiceForm()
+        # Ensure 'maquina' field's queryset uses select_related('setor')
+        self.assertTrue(form.fields['maquina'].queryset.query.select_related)
+        
+        # Test label_from_instance custom output format
+        label = form.fields['maquina'].label_from_instance(self.machine_low)
+        self.assertEqual(label, f"{self.machine_low.nome} [Setor: {self.sector.nome}]")
+
+
+

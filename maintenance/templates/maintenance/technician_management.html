@@ -2,6 +2,41 @@
 
 {% block title %}Controle de Técnicos - Gestão de Manutenção{% endblock %}
 
+{% block extra_css %}
+<!-- Select2 CSS -->
+<link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/select2-bootstrap-5-theme@1.3.0/dist/select2-bootstrap-5-theme.min.css" rel="stylesheet">
+<style>
+    /* Ensure Select2 dropdown appears above modal backdrop */
+    .select2-container {
+        width: 100% !important;
+    }
+    .select2-container--bootstrap-5 .select2-selection {
+        border-radius: 8px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.95rem !important;
+        min-height: 42px !important;
+        border-color: #dee2e6 !important;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
+    }
+    .select2-container--bootstrap-5.select2-container--focus .select2-selection {
+        border-color: #86b7fe !important;
+        box-shadow: 0 0 0 0.25rem rgba(79, 70, 229, 0.25) !important;
+    }
+    .select2-container--bootstrap-5 .select2-dropdown {
+        border-radius: 8px !important;
+        margin-top: 4px !important;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.15), 0 4px 6px -2px rgba(0, 0, 0, 0.08) !important;
+        border-color: rgba(0, 0, 0, 0.08) !important;
+        font-family: 'Inter', sans-serif !important;
+    }
+    .select2-container--bootstrap-5 .select2-results__option--highlighted {
+        background-color: #4f46e5 !important;
+        color: #ffffff !important;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row mb-4">
     <div class="col-12 col-md-6">
@@ -168,7 +203,14 @@
                 <div class="modal-body p-4">
                     <div class="mb-3">
                         <label for="id_maquina" class="form-label fw-semibold">Selecione a Máquina <span class="text-danger">*</span></label>
-                        {{ start_form.maquina }}
+                        <!-- Select renderizado manualmente para garantir que as options apareçam;
+                             o Select2 enriquece visualmente, mas o <select> nativo fica como fallback funcional. -->
+                        <select name="maquina" id="id_maquina" class="form-select" required>
+                            <option value="">-- Selecione a Máquina --</option>
+                            {% for machine in start_form.fields.maquina.queryset %}
+                                <option value="{{ machine.id }}">{{ machine.nome }} [Setor: {{ machine.setor.nome }}]</option>
+                            {% endfor %}
+                        </select>
                     </div>
                     <div class="mb-2">
                         <label for="id_atividade_observacao" class="form-label fw-semibold">Observações / Atividade a Realizar <span class="text-danger">*</span></label>
@@ -246,8 +288,31 @@
 {% endblock %}
 
 {% block extra_js %}
+<!-- jQuery (required for Select2) -->
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
+<!-- Select2 JS -->
+<script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
 <script>
     document.addEventListener('DOMContentLoaded', function() {
+        // Initialize Select2 for machine dropdown.
+        // dropdownParent: '#startModal' fixes the common Bootstrap 5 modal z-index issue
+        // where the dropdown renders behind the modal backdrop.
+        function initSelect2() {
+            if (typeof $.fn.select2 === 'undefined') return; // Select2 CDN failed — <select> native fallback remains visible
+            $('#id_maquina').select2({
+                dropdownParent: $('#startModal'),
+                placeholder: 'Selecione a Máquina...',
+                allowClear: true,
+                width: '100%',
+                theme: 'bootstrap-5',
+                language: {
+                    noResults: function() { return 'Nenhuma máquina encontrada'; },
+                    searching: function() { return 'Buscando...'; }
+                }
+            });
+        }
+        initSelect2();
+
         // Dynamic Setup for Start Service Modal
         const startModal = document.getElementById('startModal');
         if (startModal) {
@@ -258,6 +323,11 @@
                 
                 startModal.querySelector('.modal-title').textContent = `Iniciar Serviço - ${techName}`;
                 startModal.querySelector('form').action = `/technicians/${techId}/start/`;
+                
+                // Reset Select2 selection on each modal open
+                if (typeof $.fn.select2 !== 'undefined') {
+                    $('#id_maquina').val(null).trigger('change');
+                }
             });
         }
 

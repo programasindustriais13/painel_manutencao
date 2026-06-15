@@ -374,3 +374,7 @@ def technician_delete(request, pk):
         messages.success(request, "Técnico excluído com sucesso.")
         return redirect('crud_list')
     return render(request, 'maintenance/crud_confirm_delete.html', {'object': technician, 'type': 'Técnico'})
+
+
+
+

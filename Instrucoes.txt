@@ -16,6 +16,27 @@ python manage.py createsuperuser
 # 3. Importar máquinas do Excel (TAG DAS MÁQUINAS.xlsx)
 python populate_machines.py
 
+# Estrutura e Colunas Esperadas na Planilha Excel:
+# - Nome do Arquivo: 'TAG DAS MÁQUINAS.xlsx' (deve estar na raiz do projeto)
+# - Nome da Aba (Sheet): 'Cronograma 2026'
+# - Linha de Cabeçalho (esperada até a linha 30, geralmente linha 11):
+#   * A linha de cabeçalho deve conter as seguintes colunas (busca insensível a maiúsculas/minúsculas):
+#     - 'TAG' (coluna com o identificador/tag do equipamento)
+#     - 'Nome do Equipamento' (ou termo similar contendo 'nome' ou 'equipamento')
+#     - 'Criticidade' (ou termo similar contendo 'criticidade', 'prioridade' ou 'crit')
+#     - 'Setor' (ou termo similar contendo 'setor', 'área', 'linha' - caso ausente ou vazio, usa "Geral")
+#
+# Comportamento do Script:
+# - Utiliza a biblioteca Pandas para ler e realizar a limpeza do Excel.
+# - Remove linhas completamente vazias ou onde as colunas cruciais 'Setor' ou 'Nome do Equipamento' estão nulas.
+# - Filtra linhas duplicadas do cabeçalho e rodapés da planilha.
+# - Converte explicitamente os valores lidos para string e aplica `.strip()`, mantendo o formato original
+#   e evitando que tags ou nomes puramente numéricos (como "102") sejam convertidos para float (como "102.0").
+# - Cria/busca o Setor utilizando Sector.objects.get_or_create.
+# - Cria/busca a Máquina utilizando Machine.objects.get_or_create com base tanto no Nome quanto no Setor.
+# - Se a máquina já existir, atualiza sua criticidade caso tenha sido alterada na planilha.
+# - Em caso de falha de importação em alguma linha específica, o script trata o erro e continua para as demais linhas.
+
 # Notas do Sistema:
 # - A senha padrão do superusuário admin é @Freedom1234
 # - O Painel TV (Modo TV) foi otimizado para exibir mais de 20 técnicos sem rolagem (scroll)
@@ -45,7 +66,7 @@ A. Configuração Inicial (Executar apenas na primeira vez):
    > git add .
 
 5. Realizar o primeiro commit de registro:
-   > git commit -m "Commit inicial: Estrutura do Painel Sinoptico Django para TV 43"
+   > git commit -m "Commit inicial: Estrutura do Painel dos Técnicos para TV 43"
 
 6. Definir o nome da branch principal como main:
    > git branch -M main
@@ -67,3 +88,42 @@ a nova versão para o GitHub:
 3. Envie para o GitHub:
    > git push origin main
 
+
+8. BUSCADOR DINÂMICO NO CAMPO DE SELEÇÃO DE MÁQUINAS (FILTRO LOCAL EM MEMÓRIA)
+--------------------------------------------------------------------------------
+Para lidar com uma lista extensa de equipamentos (importados do Excel), foi
+implementada uma busca por digitação (autocomplete) local/em memória no campo de seleção de máquinas.
+
+A. Modificações no Backend:
+--------------------------
+1. O formulário Django `StartServiceForm` em `forms.py` carrega a lista completa de
+   máquinas através do queryset `Machine.objects.select_related('setor').order_by('nome')`
+   para renderizar todas as opções diretamente nas tags `<option>` do HTML.
+2. A utilização de `select_related('setor')` otimiza o carregamento evitando o problema de
+   consultas adicionais (N+1) no banco de dados.
+3. O texto exibido para o usuário mostra a combinação máquina + setor no formato:
+   `"Nome da Máquina [Setor: Nome do Setor]"`.
+
+B. Modificações no Frontend (Templates):
+---------------------------------------
+1. No layout base `base.html`, o bloco `extra_css` foi realocado para fora da
+   tag `<style>`, possibilitando a inclusão de tags `<link>` de folha de estilo CDN.
+2. Na tela de "Controle de Técnicos" (`technician_management.html`):
+   - Foram integrados os links CDN oficiais (CSS e JS) da biblioteca **Tom Select**.
+   - O Tom Select é inicializado em modo estático local no campo `#id_maquina`:
+     * O dropdownParent está definido como `'body'` para evitar que o dropdown seja cortado
+       pelas bordas/overflow do modal do Bootstrap.
+     * **Exibição Imediata:** Ao clicar no campo, todas as opções carregadas aparecem imediatamente,
+       permitindo ao operador rolar a lista ou digitar para filtrar em tempo real no próprio frontend.
+     * Ao reabrir o modal "Iniciar Serviço" para qualquer técnico, a seleção anterior e a busca
+       são limpas automaticamente.
+
+C. Correção de Sintaxe do CSS Exposto:
+-------------------------------------
+1. Como o bloco `extra_css` em `base.html` foi movido para fora da tag `<style>` global, os templates
+   `login.html` e `tv_dashboard.html` que sobrescreviam este bloco começaram a renderizar suas regras de CSS
+   bruto como texto puro no topo da página.
+2. Este problema foi corrigido com sucesso encapsulando explicitamente as regras de CSS destes templates
+   dentro de tags `<style></style>` válidas no bloco `extra_css`.
+3. Com isso, todo o vazamento de texto foi removido, o layout do Painel voltou ao normal e a inicialização
+   do JavaScript do buscador (Tom Select) ocorre perfeitamente sem erros de travamento.
