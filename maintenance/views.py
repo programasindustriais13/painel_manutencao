@@ -70,22 +70,28 @@ def start_service(request, technician_id):
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
         
-        # Check if technician is already busy
-        if technician.status != 'OCIOSO':
-            messages.error(request, f"Técnico {technician.nome} não está ocioso.")
+        # Bloquear se o técnico estiver ausente/fora da fábrica.
+        if technician.is_ausente:
+            messages.error(request, f"Técnico {technician.nome} está marcado como '{technician.get_status_display()}' e não pode receber novas ordens. Altere a disponibilidade antes de alocar.")
+            return redirect('technician_management')
+
+        # Bloquear APENAS se o técnico já tiver uma alocação EM_ATENDIMENTO ativa.
+        # Ter apenas serviços pausados é permitido — o técnico pode receber nova ordem.
+        if technician.active_allocation is not None:
+            messages.error(request, f"Técnico {technician.nome} já possui um atendimento ativo. Pause-o antes de iniciar outro.")
             return redirect('technician_management')
             
         form = StartServiceForm(request.POST)
         if form.is_valid():
-            # Update technician state
-            technician.status = 'EM_ATENDIMENTO'
-            technician.save()
-            
-            # Create Allocation record
             allocation = form.save(commit=False)
             allocation.tecnico = technician
             allocation.data_inicio = timezone.now()
+            allocation.status = 'EM_ATENDIMENTO'
             allocation.save()
+            
+            # Status do técnico sempre reflete a alocação ativa
+            technician.status = 'EM_ATENDIMENTO'
+            technician.save()
             
             messages.success(request, f"Serviço iniciado com sucesso para {technician.nome}.")
         else:
@@ -96,7 +102,7 @@ def start_service(request, technician_id):
     return redirect('technician_management')
 
 
-# Action: Pause Service
+# Action: Pause Service (pausa a alocação ativa do técnico)
 @operador_required
 def pause_service(request, technician_id):
     if request.method == 'POST':
@@ -113,14 +119,16 @@ def pause_service(request, technician_id):
             
         form = PauseServiceForm(request.POST)
         if form.is_valid():
-            # Save pause details in active allocation
+            # Marca a alocação como EM_PAUSA
             active_alloc.data_pausa = timezone.now()
             active_alloc.motivo_pausa = form.cleaned_data['motivo_pausa']
+            active_alloc.status = 'EM_PAUSA'
             active_alloc.save()
             
-            # Update technician state
-            technician.status = 'EM_PAUSA'
-            technician.save()
+            # Atualiza status do técnico: EM_PAUSA se não houver outra ativa
+            if technician.active_allocation is None:
+                technician.status = 'EM_PAUSA'
+                technician.save()
             
             messages.warning(request, f"Serviço pausado para {technician.nome}.")
         else:
@@ -131,7 +139,7 @@ def pause_service(request, technician_id):
     return redirect('technician_management')
 
 
-# Action: Resume Service
+# Action: Resume Service (retoma o ÚNICO serviço pausado — caso simples)
 @operador_required
 def resume_service(request, technician_id):
     if request.method == 'POST':
@@ -140,16 +148,19 @@ def resume_service(request, technician_id):
         if technician.status != 'EM_PAUSA':
             messages.error(request, f"Técnico {technician.nome} não está em pausa.")
             return redirect('technician_management')
-            
-        active_alloc = technician.active_allocation
-        if not active_alloc:
-            messages.error(request, f"Nenhuma alocação ativa encontrada para {technician.nome}.")
+        
+        # Pega a única pausada (caso simples sem alocação ativa)
+        paused_allocs = technician.paused_allocations
+        if not paused_allocs.exists():
+            messages.error(request, f"Nenhuma alocação pausada encontrada para {technician.nome}.")
             return redirect('technician_management')
-            
-        # Resume active service: reset pause columns and toggle state
-        active_alloc.data_pausa = None
-        active_alloc.motivo_pausa = None
-        active_alloc.save()
+        
+        # Retoma a alocação pausada mais antiga
+        alloc = paused_allocs.first()
+        alloc.data_pausa = None
+        alloc.motivo_pausa = None
+        alloc.status = 'EM_ATENDIMENTO'
+        alloc.save()
         
         technician.status = 'EM_ATENDIMENTO'
         technician.save()
@@ -159,16 +170,45 @@ def resume_service(request, technician_id):
     return redirect('technician_management')
 
 
-# Action: Finish Service
+# Action: Resume Paused Allocation (troca de contexto — ativa alocação específica por ID)
+@operador_required
+def resume_paused_allocation(request, allocation_id):
+    if request.method == 'POST':
+        alloc_to_resume = get_object_or_404(Allocation, id=allocation_id)
+        technician = alloc_to_resume.tecnico
+        
+        if alloc_to_resume.status != 'EM_PAUSA' or alloc_to_resume.data_fim is not None:
+            messages.error(request, "Esta alocação não está em pausa ou já foi encerrada.")
+            return redirect('technician_management')
+        
+        # Se houver uma alocação ativa, ela vai para EM_PAUSA (troca de contexto automática)
+        current_active = technician.active_allocation
+        if current_active:
+            current_active.data_pausa = timezone.now()
+            current_active.motivo_pausa = "Interrompido para retomada de outro serviço."
+            current_active.status = 'EM_PAUSA'
+            current_active.save()
+        
+        # Ativa a alocação selecionada
+        alloc_to_resume.data_pausa = None
+        alloc_to_resume.motivo_pausa = None
+        alloc_to_resume.status = 'EM_ATENDIMENTO'
+        alloc_to_resume.save()
+        
+        technician.status = 'EM_ATENDIMENTO'
+        technician.save()
+        
+        messages.success(request, f"Alocação retomada: {alloc_to_resume.maquina.nome if alloc_to_resume.maquina else 'Sem máquina'} para {technician.nome}.")
+        
+    return redirect('technician_management')
+
+
+# Action: Finish Service (finaliza a alocação ATIVA do técnico)
 @operador_required
 def finish_service(request, technician_id):
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
         
-        if technician.status not in ['EM_ATENDIMENTO', 'EM_PAUSA']:
-            messages.error(request, f"Técnico {technician.nome} não possui atendimento ativo.")
-            return redirect('technician_management')
-            
         active_alloc = technician.active_allocation
         if not active_alloc:
             messages.error(request, f"Nenhuma alocação ativa encontrada para {technician.nome}.")
@@ -176,16 +216,18 @@ def finish_service(request, technician_id):
             
         form = FinishServiceForm(request.POST, request.FILES)
         if form.is_valid():
-            # Update allocation end state
             active_alloc.data_fim = timezone.now()
             active_alloc.observacao_conclusao = form.cleaned_data['observacao_conclusao']
             if 'foto_anexo' in request.FILES:
                 active_alloc.foto_anexo = request.FILES['foto_anexo']
+            active_alloc.status = 'EM_ATENDIMENTO'  # preservar o status original ao fechar
             active_alloc.save()
             
-            # Update technician to idle
-            technician.status = 'OCIOSO'
-            technician.save()
+            # Recalcula status do técnico
+            if technician.active_allocation is None:
+                remaining_paused = technician.paused_allocations.exists()
+                technician.status = 'EM_PAUSA' if remaining_paused else 'OCIOSO'
+                technician.save()
             
             messages.success(request, f"Serviço finalizado com sucesso por {technician.nome}.")
         else:
@@ -193,6 +235,94 @@ def finish_service(request, technician_id):
                 for error in errors:
                     messages.error(request, f"Erro: {error}")
                     
+    return redirect('technician_management')
+
+
+# Action: Finish Allocation (finaliza uma alocação específica por ID — ativa OU pausada)
+@operador_required
+def finish_allocation(request, allocation_id):
+    if request.method == 'POST':
+        alloc = get_object_or_404(Allocation, id=allocation_id)
+        technician = alloc.tecnico
+        
+        if alloc.data_fim is not None:
+            messages.error(request, "Esta alocação já foi encerrada.")
+            return redirect('technician_management')
+        
+        form = FinishServiceForm(request.POST, request.FILES)
+        if form.is_valid():
+            alloc.data_fim = timezone.now()
+            alloc.observacao_conclusao = form.cleaned_data['observacao_conclusao']
+            if 'foto_anexo' in request.FILES:
+                alloc.foto_anexo = request.FILES['foto_anexo']
+            alloc.save()
+            
+            # Recalcula status do técnico com base nas alocações abertas restantes
+            if technician.active_allocation is not None:
+                technician.status = 'EM_ATENDIMENTO'
+            elif technician.paused_allocations.exists():
+                technician.status = 'EM_PAUSA'
+            else:
+                technician.status = 'OCIOSO'
+            technician.save()
+            
+            messages.success(request, f"Alocação de {alloc.maquina.nome if alloc.maquina else 'serviço'} finalizada com sucesso.")
+        else:
+            for field, errors in form.errors.items():
+                for error in errors:
+                    messages.error(request, f"Erro: {error}")
+                    
+    return redirect('technician_management')
+
+
+# Action: Set Availability / Absence status
+@operador_required
+def set_availability(request, technician_id):
+    """Permite ao operador definir o status de escala/ausência do técnico.
+
+    Status aceitos:
+        OCIOSO          → retorna o técnico ao fluxo normal
+        AUSENTE_FOLGA   → Folga/Escala
+        AUSENTE_FERIAS  → Férias
+        AUSENTE_MEDICO  → Licença Médica/Afastamento
+        EXTERNO_PLANTAO → Plantão fora da fábrica
+
+    Regras de negócio:
+        - Ao marcar ausência, o técnico NÃO recebe novas ordens.
+        - Serviços pausados existentes são MANTIDOS congelados no histórico.
+        - O status EM_ATENDIMENTO não pode ser definido manualmente aqui;
+          ele é controlado exclusivamente pelas views start/pause/finish.
+    """
+    if request.method == 'POST':
+        technician = get_object_or_404(Technician, id=technician_id)
+        novo_status = request.POST.get('novo_status', '').strip()
+
+        STATUS_PERMITIDOS = {'OCIOSO', 'AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO'}
+
+        if novo_status not in STATUS_PERMITIDOS:
+            messages.error(request, "Status de disponibilidade inválido.")
+            return redirect('technician_management')
+
+        # Impede alterar técnico que está EM_ATENDIMENTO para ausência diretamente.
+        # O operador deve primeiro pausar/encerrar o serviço ativo.
+        if technician.status == 'EM_ATENDIMENTO' and novo_status != 'OCIOSO':
+            messages.error(
+                request,
+                f"{technician.nome} está em atendimento ativo. Pause ou finalize o serviço antes de marcar ausência."
+            )
+            return redirect('technician_management')
+
+        # Se o técnico tem apenas pausados e está voltando para OCIOSO, mantém pausados
+        # (não alteramos as alocações — apenas o status do técnico)
+        label_novo = dict(Technician.STATUS_CHOICES).get(novo_status, novo_status)
+        technician.status = novo_status
+        technician.save()
+
+        if novo_status == 'OCIOSO':
+            messages.success(request, f"{technician.nome} retornou como Disponível (Ocioso).")
+        else:
+            messages.warning(request, f"{technician.nome} marcado como '{label_novo}'. Não receberá novas ordens até retornar como Ocioso.")
+
     return redirect('technician_management')
 
 
@@ -206,17 +336,21 @@ def dashboard(request):
     active_techs = Technician.objects.filter(status='EM_ATENDIMENTO').count()
     paused_techs = Technician.objects.filter(status='EM_PAUSA').count()
     idle_techs = Technician.objects.filter(status='OCIOSO').count()
-    
+    absent_techs = Technician.objects.filter(
+        status__in=list(Technician.STATUS_AUSENCIA)
+    ).count()
+
     # Distinct machines currently undergoing maintenance (data_fim is null)
     machines_in_maintenance = Machine.objects.filter(
         allocations__data_fim__isnull=True
     ).distinct().count()
-    
-    # 1. Pie/Doughnut Chart Data: Distribution of tech status
+
+    # 1. Pie/Doughnut Chart Data: Distribution of tech status (inclui ausências)
     status_distribution = {
-        'OCIOSO': idle_techs,
-        'EM_ATENDIMENTO': active_techs,
-        'EM_PAUSA': paused_techs,
+        'Ocioso': idle_techs,
+        'Em Atendimento': active_techs,
+        'Em Pausa': paused_techs,
+        'Ausente/Externo': absent_techs,
     }
     
     # 2. Bar Chart Data: Allocations by Criticidade
@@ -236,6 +370,7 @@ def dashboard(request):
         'active_techs': active_techs,
         'paused_techs': paused_techs,
         'idle_techs': idle_techs,
+        'absent_techs': absent_techs,
         'machines_in_maintenance': machines_in_maintenance,
         
         # Serialize to pass safely to javascript block

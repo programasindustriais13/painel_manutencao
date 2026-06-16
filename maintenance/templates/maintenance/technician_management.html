@@ -34,6 +34,110 @@
         background-color: #4f46e5 !important;
         color: #ffffff !important;
     }
+
+    /* Seção de alocações pausadas */
+    .paused-allocations-section {
+        border-top: 2px dashed #ffc107;
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+    }
+    .paused-alloc-item {
+        background: #fff8e1;
+        border: 1px solid #ffe082;
+        border-radius: 10px;
+        padding: 0.6rem 0.8rem;
+        margin-bottom: 0.5rem;
+        font-size: 0.85rem;
+    }
+    .paused-alloc-item:last-child {
+        margin-bottom: 0;
+    }
+    .btn-paused-resume {
+        font-size: 0.78rem;
+        padding: 0.2rem 0.6rem;
+    }
+    .btn-paused-finish {
+        font-size: 0.78rem;
+        padding: 0.2rem 0.6rem;
+    }
+    .collapse-toggle-btn {
+        font-size: 0.8rem;
+        cursor: pointer;
+        border: none;
+        background: none;
+        padding: 0;
+        color: #856404;
+        font-weight: 600;
+        text-decoration: underline dotted;
+        transition: color 0.2s;
+    }
+    .collapse-toggle-btn:hover {
+        color: #533f03;
+    }
+    /* Badge com contagem de pausados */
+    .badge-paused-count {
+        font-size: 0.65rem;
+        vertical-align: middle;
+    }
+
+    /* Badges para novos status de ausência */
+    .badge-ausente-folga   { background: #6b7280; color: #f9fafb; border: 1px solid #9ca3af; }
+    .badge-ausente-ferias  { background: #0e7490; color: #ecfeff; border: 1px solid #22d3ee; }
+    .badge-ausente-medico  { background: #7c3aed; color: #f5f3ff; border: 1px solid #a78bfa; }
+    .badge-externo-plantao { background: #c2410c; color: #fff7ed; border: 1px solid #fb923c; }
+
+    /* Overlay do card quando ausente */
+    .card-ausente {
+        opacity: 0.85;
+        position: relative;
+    }
+    .card-ausente::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        border: 2px dashed #9ca3af;
+        pointer-events: none;
+    }
+
+    /* Widget de disponibilidade */
+    .availability-widget {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.55rem 0.75rem;
+        margin-top: 0.5rem;
+    }
+    .availability-widget label {
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #475569;
+        letter-spacing: .04em;
+        text-transform: uppercase;
+        margin-bottom: 0.25rem;
+        display: block;
+    }
+    .availability-select {
+        font-size: 0.8rem;
+        border-radius: 8px;
+        border: 1px solid #cbd5e1;
+        padding: 0.3rem 0.5rem;
+        background: #fff;
+        width: 100%;
+        cursor: pointer;
+        transition: border-color 0.15s;
+    }
+    .availability-select:focus {
+        outline: none;
+        border-color: #6366f1;
+        box-shadow: 0 0 0 2px rgba(99,102,241,.15);
+    }
+    .btn-availability-save {
+        font-size: 0.78rem;
+        padding: 0.28rem 0.7rem;
+        border-radius: 8px;
+        margin-top: 0.35rem;
+    }
 </style>
 {% endblock %}
 
@@ -56,7 +160,7 @@
 <!-- Grid of Technicians with Actions -->
 <div class="row g-4">
     {% for tech in technicians %}
-        {% with alloc=tech.active_allocation %}
+        {% with alloc=tech.active_allocation paused=tech.paused_allocations %}
         <div class="col-12 col-md-6 col-lg-4">
             <div class="card card-custom h-100 border-0">
                 <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-start">
@@ -66,30 +170,71 @@
                     </div>
                     
                     <!-- Technician status badges -->
-                    {% if tech.status == 'OCIOSO' %}
-                        <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
-                            OCIOSO
-                        </span>
-                    {% elif tech.status == 'EM_PAUSA' %}
-                        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
-                            EM PAUSA
-                        </span>
-                    {% else %}
-                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
-                            EM ATENDIMENTO
-                        </span>
-                    {% endif %}
+                    <div class="d-flex flex-column align-items-end gap-1">
+                        {% if tech.status == 'OCIOSO' %}
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
+                                OCIOSO
+                            </span>
+                        {% elif tech.status == 'EM_PAUSA' %}
+                            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
+                                EM PAUSA
+                            </span>
+                        {% elif tech.status == 'EM_ATENDIMENTO' %}
+                            <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle px-3 py-2 rounded-pill font-monospace fw-bold">
+                                EM ATENDIMENTO
+                            </span>
+                        {% elif tech.status == 'AUSENTE_FOLGA' %}
+                            <span class="badge badge-ausente-folga px-3 py-2 rounded-pill font-monospace fw-bold">
+                                <i class="bi bi-calendar2-x me-1"></i>FOLGA/ESCALA
+                            </span>
+                        {% elif tech.status == 'AUSENTE_FERIAS' %}
+                            <span class="badge badge-ausente-ferias px-3 py-2 rounded-pill font-monospace fw-bold">
+                                <i class="bi bi-umbrella me-1"></i>FÉRIAS
+                            </span>
+                        {% elif tech.status == 'AUSENTE_MEDICO' %}
+                            <span class="badge badge-ausente-medico px-3 py-2 rounded-pill font-monospace fw-bold">
+                                <i class="bi bi-heart-pulse me-1"></i>LIC. MÉDICA
+                            </span>
+                        {% elif tech.status == 'EXTERNO_PLANTAO' %}
+                            <span class="badge badge-externo-plantao px-3 py-2 rounded-pill font-monospace fw-bold">
+                                <i class="bi bi-geo-alt me-1"></i>PLANTÃO EXTERNO
+                            </span>
+                        {% endif %}
+                        {% if paused.count > 0 %}
+                            <span class="badge bg-warning text-dark badge-paused-count rounded-pill">
+                                <i class="bi bi-pause-circle-fill me-1"></i>{{ paused.count }} pausado{{ paused.count|pluralize:"s" }}
+                            </span>
+                        {% endif %}
+                    </div>
                 </div>
                 
                 <div class="card-body px-4 py-3">
-                    {% if tech.status == 'OCIOSO' or not alloc %}
-                        <div class="text-center py-4 bg-light rounded-3 text-muted">
-                            <i class="bi bi-check-circle-fill text-success fs-3 mb-2 d-block"></i>
-                            Disponível para nova ordem
+                    <!-- SEÇÃO: Alocação Ativa -->
+                    {% if tech.is_ausente %}
+                        <!-- Técnico ausente: exibe card de aviso -->
+                        <div class="text-center py-4 rounded-3 mb-2" style="background: #f1f5f9; border: 2px dashed #94a3b8;">
+                            {% if tech.status == 'AUSENTE_FOLGA' %}
+                                <i class="bi bi-calendar2-x text-secondary fs-3 mb-2 d-block"></i>
+                                <strong class="text-secondary d-block">Folga / Escala</strong>
+                            {% elif tech.status == 'AUSENTE_FERIAS' %}
+                                <i class="bi bi-umbrella text-info fs-3 mb-2 d-block"></i>
+                                <strong class="text-info d-block">Férias</strong>
+                            {% elif tech.status == 'AUSENTE_MEDICO' %}
+                                <i class="bi bi-heart-pulse" style="color:#7c3aed; font-size:1.75rem;" ></i>
+                                <strong class="d-block mt-1" style="color:#7c3aed;">Licença Médica / Afastamento</strong>
+                            {% elif tech.status == 'EXTERNO_PLANTAO' %}
+                                <i class="bi bi-geo-alt text-warning fs-3 mb-2 d-block" style="color:#c2410c !important;"></i>
+                                <strong style="color:#c2410c;">Plantão Fora da Fábrica</strong>
+                            {% endif %}
+                            <small class="text-muted d-block mt-1">Não recebe novas ordens de serviço</small>
                         </div>
-                    {% else %}
-                        <div class="p-3 bg-light rounded-3">
-                            <div class="row g-2 mb-3">
+                    {% elif alloc %}
+                        <div class="p-3 bg-light rounded-3 mb-2">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span class="text-muted small fw-semibold text-uppercase" style="letter-spacing:.04em;">Serviço Ativo</span>
+                                <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle px-2 rounded-pill" style="font-size:.7rem;">EM ATENDIMENTO</span>
+                            </div>
+                            <div class="row g-2 mb-2">
                                 <div class="col-6">
                                     <span class="text-muted small d-block">Máquina</span>
                                     <strong class="text-dark">{{ alloc.maquina.nome }}</strong>
@@ -99,33 +244,100 @@
                                     <span class="badge bg-{{ alloc.maquina.bootstrap_color }}">{{ alloc.maquina.get_criticidade_display }}</span>
                                 </div>
                             </div>
-                            
-                            <div class="mb-3">
-                                <span class="text-muted small d-block">Atividade Atual</span>
+                            <div class="mb-2">
+                                <span class="text-muted small d-block">Atividade</span>
                                 <p class="mb-0 text-dark small font-monospace bg-white p-2 border rounded" style="word-break: break-all;">
                                     {{ alloc.atividade_observacao }}
                                 </p>
                             </div>
-                            
                             <div class="d-flex justify-content-between align-items-center">
                                 <span class="text-muted small">Tempo Decorrido:</span>
                                 <span class="badge bg-dark font-monospace px-2 py-1"><i class="bi bi-stopwatch me-1"></i>{{ alloc.tempo_decorrido_str }}</span>
                             </div>
+                        </div>
+                    {% elif tech.status == 'EM_PAUSA' and paused.count > 0 %}
+                        <!-- Sem ativo, mas tem pausados -->
+                        <div class="text-center py-3 bg-warning bg-opacity-10 border border-warning border-opacity-25 rounded-3 text-warning-emphasis mb-2">
+                            <i class="bi bi-pause-circle-fill fs-4 mb-1 d-block"></i>
+                            <small class="fw-semibold">Aguardando retomada de serviço</small>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4 bg-light rounded-3 text-muted">
+                            <i class="bi bi-check-circle-fill text-success fs-3 mb-2 d-block"></i>
+                            Disponível para nova ordem
+                        </div>
+                    {% endif %}
 
-                            {% if tech.status == 'EM_PAUSA' %}
-                                <div class="mt-3 p-2 bg-warning bg-opacity-10 border border-warning rounded text-warning-emphasis small">
-                                    <i class="bi bi-info-circle-fill me-1"></i><strong>Motivo da Pausa:</strong> {{ alloc.motivo_pausa }}
-                                </div>
-                            {% endif %}
+                    <!-- SEÇÃO COLAPSÁVEL: Serviços Pausados Pendentes -->
+                    {% if paused.count > 0 %}
+                        <div class="paused-allocations-section">
+                            <div class="d-flex align-items-center justify-content-between mb-2">
+                                <span class="text-warning-emphasis small fw-bold"><i class="bi bi-hourglass-split me-1"></i>Serviços Pausados ({{ paused.count }})</span>
+                                <button class="collapse-toggle-btn" 
+                                        type="button" 
+                                        data-bs-toggle="collapse" 
+                                        data-bs-target="#pausedList-{{ tech.id }}" 
+                                        aria-expanded="false">
+                                    <i class="bi bi-chevron-down"></i> Ver
+                                </button>
+                            </div>
+                            <div class="collapse" id="pausedList-{{ tech.id }}">
+                                {% for p_alloc in paused %}
+                                    <div class="paused-alloc-item">
+                                        <div class="d-flex justify-content-between align-items-start mb-1">
+                                            <div>
+                                                <span class="fw-bold text-dark">{{ p_alloc.maquina.nome }}</span>
+                                                {% if p_alloc.maquina %}
+                                                    <span class="badge bg-{{ p_alloc.maquina.bootstrap_color }} ms-1" style="font-size:.65rem;">{{ p_alloc.maquina.get_criticidade_display }}</span>
+                                                {% endif %}
+                                            </div>
+                                            <span class="badge bg-dark font-monospace px-1" style="font-size:.65rem;"><i class="bi bi-stopwatch me-1"></i>{{ p_alloc.tempo_decorrido_str }}</span>
+                                        </div>
+                                        <p class="mb-1 text-muted" style="font-size:.78rem; word-break:break-word;">{{ p_alloc.atividade_observacao|truncatechars:80 }}</p>
+                                        {% if p_alloc.motivo_pausa %}
+                                            <p class="mb-2 text-warning-emphasis" style="font-size:.75rem;"><i class="bi bi-info-circle-fill me-1"></i>{{ p_alloc.motivo_pausa|truncatechars:60 }}</p>
+                                        {% endif %}
+                                        <div class="d-flex gap-2">
+                                            <!-- Retomar esta alocação específica -->
+                                            {% if tech.is_ausente %}
+                                                <button type="button" class="btn btn-secondary btn-paused-resume rounded-pill disabled" disabled title="Técnico ausente — retorne-o para Ocioso antes de retomar">
+                                                    <i class="bi bi-lock me-1"></i>Retomar
+                                                </button>
+                                            {% else %}
+                                            <form action="{% url 'resume_paused_allocation' p_alloc.id %}" method="post" class="m-0">
+                                                {% csrf_token %}
+                                                <button type="submit" class="btn btn-success btn-paused-resume rounded-pill">
+                                                    <i class="bi bi-play-fill me-1"></i>Retomar
+                                                </button>
+                                            </form>
+                                            {% endif %}
+                                            <!-- Finalizar esta alocação específica -->
+                                            <button class="btn btn-outline-danger btn-paused-finish rounded-pill"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#finishAllocModal"
+                                                    data-alloc-id="{{ p_alloc.id }}"
+                                                    data-alloc-info="{{ p_alloc.maquina.nome }} — {{ tech.nome }}">
+                                                <i class="bi bi-check-lg me-1"></i>Finalizar
+                                            </button>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
                         </div>
                     {% endif %}
                 </div>
                 
                 <!-- Card Footer controls -->
                 <div class="card-footer bg-white border-0 pb-4 px-4 pt-2">
-                    <div class="d-flex gap-2 justify-content-end">
-                        {% if tech.status == 'OCIOSO' %}
-                            <!-- Start action triggers modal -->
+                    <div class="d-flex gap-2 justify-content-end flex-wrap">
+
+                        {% if tech.is_ausente %}
+                            <!-- Ausente: não pode iniciar serviço -->
+                            <div class="w-100 text-center">
+                                <span class="text-muted small fst-italic"><i class="bi bi-lock me-1"></i>Indisponível para novas ordens</span>
+                            </div>
+                        {% elif not alloc %}
+                            <!-- Sem ativo → pode sempre iniciar (mesmo que tenha pausados) -->
                             <button class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm w-100 py-2 fw-semibold"
                                     data-bs-toggle="modal" 
                                     data-bs-target="#startModal" 
@@ -133,8 +345,9 @@
                                     data-tech-name="{{ tech.nome }}">
                                 <i class="bi bi-play-fill me-1"></i> Iniciar Serviço
                             </button>
+
                         {% elif tech.status == 'EM_ATENDIMENTO' %}
-                            <!-- Pause triggers modal -->
+                            <!-- Pausar o serviço ativo -->
                             <button class="btn btn-warning btn-sm rounded-pill px-3 w-50 py-2 fw-semibold text-white"
                                     data-bs-toggle="modal" 
                                     data-bs-target="#pauseModal" 
@@ -142,23 +355,7 @@
                                     data-tech-name="{{ tech.nome }}">
                                 <i class="bi bi-pause-fill me-1"></i> Pausar
                             </button>
-                            <!-- Finish triggers modal -->
-                            <button class="btn btn-danger btn-sm rounded-pill px-3 w-50 py-2 fw-semibold"
-                                    data-bs-toggle="modal" 
-                                    data-bs-target="#finishModal" 
-                                    data-tech-id="{{ tech.id }}" 
-                                    data-tech-name="{{ tech.nome }}">
-                                <i class="bi bi-check-lg me-1"></i> Concluir
-                            </button>
-                        {% elif tech.status == 'EM_PAUSA' %}
-                            <!-- Resume triggers POST form directly -->
-                            <form action="{% url 'resume_service' tech.id %}" method="post" class="w-50 m-0">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-success btn-sm rounded-pill px-3 w-100 py-2 fw-semibold">
-                                    <i class="bi bi-play-fill me-1"></i> Retomar
-                                </button>
-                            </form>
-                            <!-- Finish triggers modal -->
+                            <!-- Concluir o serviço ativo -->
                             <button class="btn btn-danger btn-sm rounded-pill px-3 w-50 py-2 fw-semibold"
                                     data-bs-toggle="modal" 
                                     data-bs-target="#finishModal" 
@@ -167,7 +364,30 @@
                                 <i class="bi bi-check-lg me-1"></i> Concluir
                             </button>
                         {% endif %}
+
                     </div>
+
+                    <!-- Widget: Definir Escala / Disponibilidade -->
+                    <!-- Oculto apenas quando o técnico está EM_ATENDIMENTO ativo -->
+                    {% if tech.status != 'EM_ATENDIMENTO' %}
+                    <div class="availability-widget">
+                        <label><i class="bi bi-gear-fill me-1"></i>Definir Escala / Disponibilidade</label>
+                        <form method="post" action="{% url 'set_availability' tech.id %}" class="d-flex gap-2 align-items-center flex-wrap">
+                            {% csrf_token %}
+                            <select name="novo_status" class="availability-select flex-grow-1" id="avail-select-{{ tech.id }}">
+                                <option value="OCIOSO"{% if tech.status == 'OCIOSO' %} selected{% endif %}>&#x2705; Disponível (Ocioso)</option>
+                                <option value="AUSENTE_FOLGA"{% if tech.status == 'AUSENTE_FOLGA' %} selected{% endif %}>&#x1F4C5; Folga / Escala</option>
+                                <option value="AUSENTE_FERIAS"{% if tech.status == 'AUSENTE_FERIAS' %} selected{% endif %}>&#x1F3D6; Férias</option>
+                                <option value="AUSENTE_MEDICO"{% if tech.status == 'AUSENTE_MEDICO' %} selected{% endif %}>&#x1FA7A; Licença Médica</option>
+                                <option value="EXTERNO_PLANTAO"{% if tech.status == 'EXTERNO_PLANTAO' %} selected{% endif %}>&#x1F4CD; Plantão Externo</option>
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-outline-secondary btn-availability-save">
+                                <i class="bi bi-check-lg"></i> Salvar
+                            </button>
+                        </form>
+                    </div>
+                    {% endif %}
+
                 </div>
             </div>
         </div>
@@ -255,7 +475,7 @@
 </div>
 
 <!-- ========================================== -->
-<!-- MODAL: CONCLUIR SERVIÇO                    -->
+<!-- MODAL: CONCLUIR SERVIÇO ATIVO              -->
 <!-- ========================================== -->
 <div class="modal fade" id="finishModal" tabindex="-1" aria-labelledby="finishModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -274,6 +494,43 @@
                     <div class="mb-2">
                         <label for="id_foto_anexo" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
                         {{ finish_form.foto_anexo }}
+                        <div class="form-text text-muted">Ideal para registrar o estado pós-manutenção via smartphone ou PC.</div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 p-4 pt-0">
+                    <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger rounded-pill px-4">Concluir Ordem</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ========================================== -->
+<!-- MODAL: FINALIZAR ALOCAÇÃO ESPECÍFICA       -->
+<!-- (para serviços pausados pendentes)         -->
+<!-- ========================================== -->
+<div class="modal fade" id="finishAllocModal" tabindex="-1" aria-labelledby="finishAllocModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+            <div class="modal-header bg-danger text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                <h5 class="modal-title fw-bold" id="finishAllocModalLabel">Finalizar Serviço Pausado</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" action="" enctype="multipart/form-data" id="finishAllocForm">
+                {% csrf_token %}
+                <div class="modal-body p-4">
+                    <div class="alert alert-warning border-warning-subtle mb-3 py-2" id="finishAllocInfo" style="font-size:.875rem;">
+                        <i class="bi bi-info-circle-fill me-1"></i>
+                        <span id="finishAllocInfoText">Finalizando serviço pausado...</span>
+                    </div>
+                    <div class="mb-3">
+                        <label for="id_fa_observacao_conclusao" class="form-label fw-semibold">Observações Finais de Conclusão</label>
+                        <textarea name="observacao_conclusao" id="id_fa_observacao_conclusao" class="form-control" rows="3" placeholder="Descreva o que foi concluído na manutenção..."></textarea>
+                    </div>
+                    <div class="mb-2">
+                        <label for="id_fa_foto_anexo" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
+                        <input type="file" name="foto_anexo" id="id_fa_foto_anexo" class="form-control" accept="image/*">
                         <div class="form-text text-muted">Ideal para registrar o estado pós-manutenção via smartphone ou PC.</div>
                     </div>
                 </div>
@@ -344,7 +601,7 @@
             });
         }
 
-        // Dynamic Setup for Finish Service Modal
+        // Dynamic Setup for Finish Service Modal (serviço ativo)
         const finishModal = document.getElementById('finishModal');
         if (finishModal) {
             finishModal.addEventListener('show.bs.modal', function(event) {
@@ -356,6 +613,56 @@
                 finishModal.querySelector('form').action = `/technicians/${techId}/finish/`;
             });
         }
+
+        // Dynamic Setup for Finish Allocation Modal (serviço pausado específico)
+        const finishAllocModal = document.getElementById('finishAllocModal');
+        if (finishAllocModal) {
+            finishAllocModal.addEventListener('show.bs.modal', function(event) {
+                const button = event.relatedTarget;
+                const allocId = button.getAttribute('data-alloc-id');
+                const allocInfo = button.getAttribute('data-alloc-info');
+                
+                document.getElementById('finishAllocModalLabel').textContent = `Finalizar Serviço Pausado`;
+                document.getElementById('finishAllocInfoText').textContent = allocInfo;
+                document.getElementById('finishAllocForm').action = `/allocations/${allocId}/finish/`;
+
+                // Reset fields
+                document.getElementById('id_fa_observacao_conclusao').value = '';
+                document.getElementById('id_fa_foto_anexo').value = '';
+            });
+        }
+
+        // Auto-expand collapse when there's only 1 paused service (UX: show immediately)
+        document.querySelectorAll('[id^="pausedList-"]').forEach(function(collapseEl) {
+            const items = collapseEl.querySelectorAll('.paused-alloc-item');
+            if (items.length === 1) {
+                const bsCollapse = new bootstrap.Collapse(collapseEl, { toggle: false });
+                bsCollapse.show();
+                // Update button chevron icon
+                const btn = document.querySelector(`[data-bs-target="#${collapseEl.id}"]`);
+                if (btn) {
+                    btn.querySelector('i').className = 'bi bi-chevron-up';
+                    btn.innerHTML = btn.innerHTML.replace('Ver', 'Ocultar');
+                }
+            }
+        });
+
+        // Toggle chevron icon on collapse toggle
+        document.querySelectorAll('[data-bs-toggle="collapse"]').forEach(function(btn) {
+            const targetId = btn.getAttribute('data-bs-target');
+            const targetEl = document.querySelector(targetId);
+            if (!targetEl) return;
+            targetEl.addEventListener('show.bs.collapse', function() {
+                const icon = btn.querySelector('i.bi');
+                if (icon) { icon.className = 'bi bi-chevron-up'; }
+                btn.innerHTML = btn.innerHTML.replace('Ver', 'Ocultar');
+            });
+            targetEl.addEventListener('hide.bs.collapse', function() {
+                const icon = btn.querySelector('i.bi');
+                if (icon) { icon.className = 'bi bi-chevron-down'; }
+                btn.innerHTML = btn.innerHTML.replace('Ocultar', 'Ver');
+            });
+        });
     });
 </script>
 {% endblock %}

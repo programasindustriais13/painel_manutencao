@@ -1,370 +1,501 @@
 {% extends 'maintenance/base.html' %}
 
-{% block title %}Painel de Monitoramento (TV) - Manutenção{% endblock %}
+{% block title %}Painel de Manutenção – Fábrica (TV){% endblock %}
 
-{% block container_class %}container-fluid px-3 py-2{% endblock %}
-
+{# ─── Oculta TODA a navbar e o footer herdados do base.html ─── #}
 {% block extra_css %}
 <style>
-    body {
-        background-color: var(--bg-dark-panel) !important;
-        color: #f8fafc !important;
-        overflow-y: auto;
-    }
-    
-    /* Top header area for TV */
-    .tv-header {
-        border-bottom: 2px solid #27272a;
-        margin-bottom: 12px;
-        padding-bottom: 6px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    
-    .tv-title {
-        font-size: 1.5rem;
-        font-weight: 800;
-        letter-spacing: -0.5px;
-        text-transform: uppercase;
-        background: linear-gradient(135deg, #fbbf24 0%, #ef4444 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
+/* ══════════════════════════════════════════════════
+   RESET GLOBAL – TV FULLSCREEN
+   Esconde navbar, footer e elimina qualquer scroll.
+══════════════════════════════════════════════════ */
+body {
+    background-color: #0a0a0f !important;
+    color: #f8fafc !important;
+    overflow: hidden !important;
+    height: 100vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
 
-    /* Countdown bar */
-    .refresh-bar-container {
-        height: 4px;
-        background-color: #27272a;
-        width: 100%;
-        position: fixed;
-        top: 0;
-        left: 0;
-        z-index: 1030;
-    }
-    
-    .refresh-bar {
-        height: 100%;
-        width: 100%;
-        background: linear-gradient(90deg, #6366f1, #fbbf24, #ef4444);
-        transition: width 0.1s linear;
-    }
+/* Oculta navbar herdada do base */
+nav.navbar { display: none !important; }
 
-    /* Cards design */
-    .tech-card {
-        background-color: #1e1e24;
-        border: 2px solid #27272a;
-        border-radius: 12px;
-        padding: 12px;
-        min-height: 175px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
-        position: relative;
-        overflow: hidden;
-    }
+/* Oculta footer herdado do base */
+footer { display: none !important; }
 
-    /* OCIOSO State */
-    .tech-card.status-ocioso {
-        background-color: #18181b !important;
-        border-color: #27272a !important;
-        color: #d4d4d8 !important;
-    }
-    .tech-card.status-ocioso .badge-status {
-        background-color: #27272a;
-        color: #a1a1aa;
-        border: 1px solid #3f3f46;
-    }
-    .tech-card.status-ocioso .tech-name {
-        color: #f4f4f5;
-    }
-    .tech-card.status-ocioso .tech-matricula,
-    .tech-card.status-ocioso .tech-detail-label {
-        color: #71717a;
-    }
+/* Remove o container-fluid do base para controle total */
+.tv-wrapper-outer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    padding: 0;
+}
 
-    /* Crit BAIXA - Green Background & Thick Left Border */
-    .tech-card.crit-baixa {
-        background-color: #064e3b !important;
-        border-color: #065f46 !important;
-        border-left: 8px solid #22c55e !important;
-        color: #ffffff !important;
-    }
-    .tech-card.crit-baixa .badge-status {
-        background-color: #22c55e !important;
-        color: #ffffff !important;
-    }
-    .tech-card.crit-baixa .tech-name,
-    .tech-card.crit-baixa .tech-detail-value {
-        color: #ffffff !important;
-    }
-    .tech-card.crit-baixa .tech-detail-label,
-    .tech-card.crit-baixa .tech-matricula {
-        color: #a7f3d0 !important;
-    }
+/* ══════════════════════════════════════════════════
+   BARRA SUPERIOR DISCRETA (4px progresso + micro-header)
+══════════════════════════════════════════════════ */
+.refresh-bar-container {
+    height: 3px;
+    background: #1a1a2e;
+    width: 100%;
+    flex-shrink: 0;
+}
+.refresh-bar {
+    height: 100%;
+    width: 100%;
+    background: linear-gradient(90deg, #6366f1 0%, #fbbf24 50%, #ef4444 100%);
+    transition: width 0.1s linear;
+}
 
-    /* Crit MEDIA - Yellow Background & Thick Left Border */
-    .tech-card.crit-media {
-        background-color: #78350f !important;
-        border-color: #92400e !important;
-        border-left: 8px solid #eab308 !important;
-        color: #ffffff !important;
-    }
-    .tech-card.crit-media .badge-status {
-        background-color: #eab308 !important;
-        color: #1e1b4b !important;
-    }
-    .tech-card.crit-media .tech-name,
-    .tech-card.crit-media .tech-detail-value {
-        color: #ffffff !important;
-    }
-    .tech-card.crit-media .tech-detail-label,
-    .tech-card.crit-media .tech-matricula {
-        color: #fde68a !important;
-    }
+.tv-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 16px;
+    background: linear-gradient(90deg, #0f0f1a 0%, #1a1a2e 100%);
+    border-bottom: 1px solid #27272a;
+    gap: 12px;
+    height: 48px;
+}
 
-    /* Crit ALTA - Red Background & Thick Left Border */
-    .tech-card.crit-alta {
-        background-color: #7f1d1d !important;
-        border-color: #991b1b !important;
-        border-left: 8px solid #ef4444 !important;
-        color: #ffffff !important;
-    }
-    .tech-card.crit-alta .badge-status {
-        background-color: #ef4444 !important;
-        color: #ffffff !important;
-    }
-    .tech-card.crit-alta .tech-name,
-    .tech-card.crit-alta .tech-detail-value {
-        color: #ffffff !important;
-    }
-    .tech-card.crit-alta .tech-detail-label,
-    .tech-card.crit-alta .tech-matricula {
-        color: #fecaca !important;
-    }
+.tv-title {
+    font-size: 1.15rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    background: linear-gradient(135deg, #fbbf24 0%, #ef4444 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    white-space: nowrap;
+}
 
-    /* PAUSADO State overlay styling (retaining its criticality bg) */
-    .tech-card.status-pausado {
-        animation: border-pulse-pause 2s infinite ease-in-out;
-        background-image: repeating-linear-gradient(
-            45deg,
-            transparent,
-            transparent 10px,
-            rgba(0, 0, 0, 0.2) 10px,
-            rgba(0, 0, 0, 0.2) 20px
-        );
-    }
-    .tech-card.status-pausado .badge-status {
-        background-color: #f97316 !important;
-        color: #ffffff !important;
-        animation: badge-pulse 1s infinite alternate;
-    }
+.tv-stats {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+}
+.tv-stat-item { display: flex; align-items: center; gap: 5px; }
+.tv-stat-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.tv-stat-dot.green  { background: #22c55e; box-shadow: 0 0 6px #22c55e88; }
+.tv-stat-dot.yellow { background: #eab308; box-shadow: 0 0 6px #eab30888; }
+.tv-stat-dot.gray   { background: #52525b; }
 
-    @keyframes border-pulse-pause {
-        0% { box-shadow: 0 0 8px rgba(249, 115, 22, 0.2); }
-        50% { box-shadow: 0 0 20px rgba(249, 115, 22, 0.5); }
-        100% { box-shadow: 0 0 8px rgba(249, 115, 22, 0.2); }
-    }
+.tv-clock-block {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    flex-shrink: 0;
+}
+.tv-clock {
+    font-size: 1.4rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: #f1f5f9;
+    letter-spacing: 1px;
+    line-height: 1;
+}
+.tv-date {
+    font-size: 0.65rem;
+    color: #52525b;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+}
 
-    @keyframes badge-pulse {
-        0% { opacity: 0.7; }
-        100% { opacity: 1; }
-    }
+/* ══════════════════════════════════════════════════
+   CSS GRID DINÂMICO – PRINCIPAL
+   auto-fit + minmax = ajusta automaticamente
+   o nº de colunas conforme a quantidade de cards.
+══════════════════════════════════════════════════ */
+.tv-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 7px;
+    padding: 8px 10px;
+    /* Não permite estouro da tela */
+    overflow: hidden;
+    /* Distribui linhas para preencher altura disponível */
+    align-content: stretch;
+}
 
-    /* Card texts sizes for TV reading */
-    .tech-name {
-        font-size: 1.25rem;
-        font-weight: 800;
-        color: #ffffff;
-        letter-spacing: -0.3px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-    
-    .tech-matricula {
-        font-size: 0.8rem;
-        color: #a1a1aa;
-        font-weight: 600;
-    }
-    
-    .tech-badge-container {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 6px;
-    }
+/* ══════════════════════════════════════════════════
+   CARD BASE
+══════════════════════════════════════════════════ */
+.tech-card {
+    background: #111118;
+    border: 1.5px solid #27272a;
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
+    transition: box-shadow 0.3s ease;
+    overflow: hidden;
+    position: relative;
+    min-height: 0;   /* CRÍTICO: permite que o grid comprima o card */
+}
 
-    .badge-status {
-        font-size: 0.75rem;
-        font-weight: 800;
-        padding: 4px 8px;
-        border-radius: 6px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
+/* ── Indicador lateral esquerdo colorido ── */
+.tech-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+    border-radius: 10px 0 0 10px;
+    background: #27272a;
+}
 
-    .tech-details {
-        margin-top: 8px;
-        margin-bottom: 8px;
-    }
+/* ══════════════════════════════════════════════════
+   VARIANTES POR STATUS / CRITICIDADE
+══════════════════════════════════════════════════ */
 
-    .tech-detail-label {
-        font-size: 0.7rem;
-        font-weight: 700;
-        color: #a1a1aa;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        margin-bottom: 1px;
-    }
+/* OCIOSO – destaque VERMELHO para chamar atenção imediata */
+.tech-card.status-ocioso {
+    background: #1a0505;         /* fundo quase preto com tom avermelhado */
+    border-color: #7f1d1d;
+    /* opacity total: texto vermelho sobre fundo escuro = máximo contraste */
+}
+.tech-card.status-ocioso::before { background: #dc3545; box-shadow: 0 0 8px #dc354577; }
+.tech-card.status-ocioso .tech-name { color: #dc3545; font-size: 0.82rem; font-weight: 700; }
+.tech-card.status-ocioso .tech-matricula { display: none; }   /* economiza espaço no card compacto */
 
-    .tech-detail-value {
-        font-size: 1.05rem;
-        font-weight: 800;
-        color: #f4f4f5;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
+/* OCIOSO – esconde o corpo e rodapé do card para compactar */
+.tech-card.status-ocioso .tech-body,
+.tech-card.status-ocioso .tech-footer { display: none; }
 
-    .tech-observation {
-        font-size: 0.8rem;
-        color: #e4e4e7;
-        background-color: rgba(0, 0, 0, 0.25);
-        padding: 6px 8px;
-        border-radius: 6px;
-        margin-top: 4px;
-        border-left: 3px solid #6366f1;
-        font-style: italic;
-        max-height: 42px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        line-height: 1.25;
-    }
+/* Crit BAIXA – Verde */
+.tech-card.crit-baixa {
+    background: #052e1e;
+    border-color: #064e3b;
+}
+.tech-card.crit-baixa::before { background: #22c55e; box-shadow: 0 0 8px #22c55e66; }
 
-    .tech-time {
-        font-size: 0.95rem;
-        font-weight: 800;
-        color: #ffffff;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-    }
+/* Crit MEDIA – Amarelo */
+.tech-card.crit-media {
+    background: #422006;
+    border-color: #78350f;
+}
+.tech-card.crit-media::before { background: #eab308; box-shadow: 0 0 8px #eab30866; }
+
+/* Crit ALTA – Vermelho */
+.tech-card.crit-alta {
+    background: #450a0a;
+    border-color: #7f1d1d;
+}
+.tech-card.crit-alta::before { background: #ef4444; box-shadow: 0 0 10px #ef444466; }
+
+/* Crit ALTA – animação pulsante na borda */
+.tech-card.crit-alta {
+    animation: pulse-red 2.5s ease-in-out infinite;
+}
+@keyframes pulse-red {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+    50%       { box-shadow: 0 0 0 3px rgba(239,68,68,0.25); }
+}
+
+/* PAUSADO */
+.tech-card.status-pausado {
+    background-image: repeating-linear-gradient(
+        45deg,
+        transparent,
+        transparent 12px,
+        rgba(255,255,255,0.02) 12px,
+        rgba(255,255,255,0.02) 24px
+    );
+    animation: pulse-orange 2s ease-in-out infinite;
+}
+@keyframes pulse-orange {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(249,115,22,0); }
+    50%       { box-shadow: 0 0 0 3px rgba(249,115,22,0.3); }
+}
+
+/* ══════════════════════════════════════════════════
+   CONTEÚDO DOS CARDS ATIVOS
+══════════════════════════════════════════════════ */
+.tech-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.tech-name-wrap { min-width: 0; flex: 1; }
+
+.tech-name {
+    font-size: 0.92rem;
+    font-weight: 800;
+    color: #f4f4f5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+.tech-matricula {
+    font-size: 0.62rem;
+    color: #52525b;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.badge-status {
+    font-size: 0.6rem;
+    font-weight: 800;
+    padding: 3px 7px;
+    border-radius: 5px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.badge-ocioso  { background: #3b0a0a; color: #dc3545; border: 1px solid #7f1d1d; }
+.badge-ativo   { background: #166534; color: #bbf7d0; }
+.badge-pausa   { background: #c2410c; color: #ffedd5; animation: badge-blink 1s infinite alternate; }
+@keyframes badge-blink {
+    from { opacity: 0.75; }
+    to   { opacity: 1; }
+}
+
+/* Separador fino */
+.tech-divider {
+    height: 1px;
+    background: rgba(255,255,255,0.07);
+    margin: 5px 0;
+    flex-shrink: 0;
+}
+
+/* Corpo do card – Máquina, Setor, Observação */
+.tech-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    overflow: hidden;
+}
+
+.tech-label {
+    font-size: 0.58rem;
+    font-weight: 700;
+    color: #52525b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 1px;
+    line-height: 1;
+}
+.tech-value {
+    font-size: 0.82rem;
+    font-weight: 800;
+    color: #e4e4e7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.2;
+}
+.tech-value.sector { font-size: 0.72rem; font-weight: 600; opacity: 0.85; }
+
+.tech-obs {
+    font-size: 0.65rem;
+    color: #a1a1aa;
+    font-style: italic;
+    background: rgba(0,0,0,0.25);
+    padding: 3px 6px;
+    border-radius: 4px;
+    border-left: 2px solid #6366f1;
+    /* Limita a 2 linhas */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.3;
+    flex-shrink: 0;
+}
+
+/* Rodapé do card – tempo decorrido */
+.tech-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+.tech-time {
+    font-size: 0.8rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.tech-time.green  { color: #22c55e; }
+.tech-time.yellow { color: #eab308; }
+.tech-time.muted  { color: #52525b; }
+
+.tech-footer-label {
+    font-size: 0.6rem;
+    font-weight: 600;
+    color: #52525b;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+/* ══════════════════════════════════════════════════
+   ESTADO VAZIO
+══════════════════════════════════════════════════ */
+.tv-empty {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #52525b;
+    gap: 12px;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+/* ══════════════════════════════════════════════════
+   CARDS DE AUSÊNCIA / EXTERNO
+   (Técnico fora da fábrica — sem alertas, compacto)
+══════════════════════════════════════════════════ */
+.tech-card.status-ausente {
+    background: #18181b;      /* quase neutro — não gera alarme visual */
+    border-color: #3f3f46;
+    opacity: 0.78;
+}
+.tech-card.status-ausente::before { background: #71717a; }
+.tech-card.status-ausente .tech-name { color: #a1a1aa; font-size: 0.82rem; }
+.tech-card.status-ausente .tech-matricula { display: none; }
+/* Compacta o card como o OCIOSO */
+.tech-card.status-ausente .tech-body,
+.tech-card.status-ausente .tech-footer { display: none; }
+
+/* Badges específicos por tipo de ausência */
+.badge-folga   { background: #3f3f46; color: #a1a1aa; border: 1px solid #52525b; }
+.badge-ferias  { background: #164e63; color: #a5f3fc; border: 1px solid #0e7490; }
+.badge-medico  { background: #3b0764; color: #d8b4fe; border: 1px solid #7c3aed; }
+.badge-plantao { background: #431407; color: #fdba74; border: 1px solid #c2410c; }
 </style>
 {% endblock %}
 
+{# Substitui o container_class para evitar padding/margin do base #}
+{% block container_class %}tv-wrapper-outer p-0{% endblock %}
+
 {% block content %}
-<!-- Auto-refresh Countdown Line -->
+{# ── Barra de progresso de auto-refresh ── #}
 <div class="refresh-bar-container">
     <div class="refresh-bar" id="refreshBar"></div>
 </div>
 
+{# ── Micro-cabeçalho ── #}
 <div class="tv-header">
-    <div>
-        <h1 class="tv-title m-0"><i class="bi bi-display me-2 text-warning"></i>Status da Manutenção</h1>
-        <p class="text-muted m-0 small mt-1">Atualização automática a cada 30 segundos</p>
+    <div class="d-flex align-items-center gap-3">
+        <i class="bi bi-display text-warning" style="font-size:1.1rem;"></i>
+        <span class="tv-title">Status da Manutenção</span>
     </div>
-    <div class="text-end">
-        <h3 class="m-0 text-white font-monospace" id="currentTime">00:00:00</h3>
-        <span class="badge bg-secondary py-1 px-3 mt-1"><i class="bi bi-clock me-1"></i> Horário da Fábrica</span>
+
+    {# Contadores por status #}
+    <div class="tv-stats">
+        <div class="tv-stat-item">
+            <span class="tv-stat-dot green"></span>
+            <span id="statAtivos">0</span> Ativos
+        </div>
+        <div class="tv-stat-item">
+            <span class="tv-stat-dot yellow"></span>
+            <span id="statPausados">0</span> Pausados
+        </div>
+        <div class="tv-stat-item">
+            <span class="tv-stat-dot gray"></span>
+            <span id="statOciosos">0</span> Ociosos
+        </div>
+        <div class="tv-stat-item" id="statAusenteBlock" style="display:none;">
+            <span class="tv-stat-dot" style="background:#71717a;"></span>
+            <span id="statAusentes">0</span> Ausentes
+        </div>
+        <span style="color:#27272a;">|</span>
+        <span style="color:#3f3f46;">{{ technicians|length }} técnicos</span>
+        <span style="color:#27272a;">|</span>
+        <span style="color:#3f3f46; font-size:0.65rem;">↻ 30s</span>
+    </div>
+
+    {# Relógio #}
+    <div class="tv-clock-block">
+        <div class="tv-clock" id="tvClock">00:00:00</div>
+        <div class="tv-date" id="tvDate">–</div>
     </div>
 </div>
 
-<!-- Grid responsivo otimizado para TVs de 42 polegadas (até 20+ cards sem rolagem) -->
-<div class="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 row-cols-xl-5 g-2">
+{# ── Grid principal de cards ── #}
+<div class="tv-grid" id="tvGrid">
     {% for tech in technicians %}
         {% with alloc=tech.active_allocation %}
-        <div class="col">
-            <div class="tech-card 
-                {% if tech.status == 'OCIOSO' %}status-ocioso{% else %}status-ocupado{% endif %}
-                {% if tech.status == 'EM_PAUSA' %}status-pausado{% endif %}
-                {% if alloc %}
-                    {% if alloc.maquina.criticidade == 'BAIXA' %}crit-baixa
-                    {% elif alloc.maquina.criticidade == 'MEDIA' %}crit-media
-                    {% elif alloc.maquina.criticidade == 'ALTA' %}crit-alta
-                    {% endif %}
-                {% endif %}">
-                
-                <!-- Card Header: Tech metadata and Status Badge -->
-                <div class="tech-badge-container">
-                    <div style="min-width: 0; flex: 1;">
+
+        {# Determina classe de criticidade #}
+        {% if alloc %}
+            {% if alloc.maquina.criticidade == 'ALTA' %}
+                {% include "maintenance/_tv_card.html" with tech=tech alloc=alloc crit_class="crit-alta" %}
+            {% elif alloc.maquina.criticidade == 'MEDIA' %}
+                {% include "maintenance/_tv_card.html" with tech=tech alloc=alloc crit_class="crit-media" %}
+            {% else %}
+                {% include "maintenance/_tv_card.html" with tech=tech alloc=alloc crit_class="crit-baixa" %}
+            {% endif %}
+        {% elif tech.is_ausente %}
+            {# ── Card de Ausência / Externo ── #}
+            <div class="tech-card status-ausente"
+                 data-status="{{ tech.status }}">
+                <div class="tech-header">
+                    <div class="tech-name-wrap">
                         <div class="tech-name" title="{{ tech.nome }}">{{ tech.nome }}</div>
-                        <div class="tech-matricula">MAT: {{ tech.matricula }}</div>
                     </div>
-                    <span class="badge badge-status">
-                        {% if tech.status == 'OCIOSO' %}
-                            Ocioso
-                        {% elif tech.status == 'EM_PAUSA' %}
-                            Pausa
-                        {% else %}
-                            Ativo
-                        {% endif %}
-                    </span>
-                </div>
-
-                <!-- Card Body: Current machine allocation details -->
-                <div class="tech-details">
-                    {% if tech.status == 'OCIOSO' or not alloc %}
-                        <div class="text-center py-3 text-white-50">
-                            <i class="bi bi-info-circle fs-4 mb-1 d-block text-muted"></i>
-                            Disponível
-                        </div>
-                    {% else %}
-                        <div class="row g-1">
-                            <div class="col-12">
-                                <div class="tech-detail-label">Máquina</div>
-                                <div class="tech-detail-value" title="{{ alloc.maquina.nome }}">{{ alloc.maquina.nome }}</div>
-                            </div>
-                            <div class="col-12 mt-1">
-                                <div class="tech-detail-label">Setor</div>
-                                <div class="tech-detail-value" style="font-size: 0.9rem; font-weight: 600; opacity: 0.9;">{{ alloc.maquina.setor.nome }}</div>
-                            </div>
-                        </div>
-                        <div class="mt-2">
-                            <div class="tech-observation" title="{{ alloc.atividade_observacao }}">
-                                "{{ alloc.atividade_observacao }}"
-                            </div>
-                        </div>
+                    {% if tech.status == 'AUSENTE_FOLGA' %}
+                        <span class="badge-status badge-folga"><i class="bi bi-calendar2-x"></i> Folga</span>
+                    {% elif tech.status == 'AUSENTE_FERIAS' %}
+                        <span class="badge-status badge-ferias"><i class="bi bi-umbrella"></i> Férias</span>
+                    {% elif tech.status == 'AUSENTE_MEDICO' %}
+                        <span class="badge-status badge-medico"><i class="bi bi-heart-pulse"></i> Lic. Médica</span>
+                    {% elif tech.status == 'EXTERNO_PLANTAO' %}
+                        <span class="badge-status badge-plantao"><i class="bi bi-geo-alt"></i> Plantão Ext.</span>
                     {% endif %}
                 </div>
-
-                <!-- Card Footer: Time metric -->
-                <div class="border-top border-secondary pt-2 mt-1 d-flex justify-content-between align-items-center">
-                    {% if tech.status == 'OCIOSO' or not alloc %}
-                        <span class="text-white-50 small"><i class="bi bi-hourglass-bottom me-1"></i>Aguardando</span>
-                        <div class="tech-time text-white-50">--</div>
-                    {% else %}
-                        {% if tech.status == 'EM_PAUSA' %}
-                            <span class="text-warning small fw-bold text-truncate" style="max-width: 90px;" title="{{ alloc.motivo_pausa }}">
-                                <i class="bi bi-exclamation-triangle-fill me-1"></i>Pausa
-                            </span>
-                            <div class="tech-time text-warning">
-                                <i class="bi bi-pause-fill"></i> {{ alloc.tempo_decorrido_str }}
-                            </div>
-                        {% else %}
-                            <span class="text-success small fw-semibold"><i class="bi bi-play-fill me-1"></i>Em curso</span>
-                            <div class="tech-time text-success">
-                                <i class="bi bi-stopwatch-fill"></i> {{ alloc.tempo_decorrido_str }}
-                            </div>
-                        {% endif %}
-                    {% endif %}
-                </div>
-
             </div>
-        </div>
+        {% else %}
+            {# Ocioso ou EM_PAUSA sem alocação ativa #}
+            <div class="tech-card status-ocioso {% if tech.status == 'EM_PAUSA' %}status-pausado{% endif %}"
+                 data-status="{{ tech.status }}">
+                <div class="tech-header">
+                    <div class="tech-name-wrap">
+                        <div class="tech-name" title="{{ tech.nome }}">{{ tech.nome }}</div>
+                    </div>
+                    {% if tech.status == 'EM_PAUSA' %}
+                        <span class="badge-status badge-pausa"><i class="bi bi-pause-fill"></i> Pausa</span>
+                    {% else %}
+                        <span class="badge-status badge-ocioso">Ocioso</span>
+                    {% endif %}
+                </div>
+            </div>
+        {% endif %}
+
         {% endwith %}
     {% empty %}
-        <div class="col-12 text-center py-5">
-            <div class="card bg-dark border-secondary p-5 text-white-50">
-                <i class="bi bi-people fs-1 mb-3 text-muted"></i>
-                <h3>Nenhum técnico cadastrado</h3>
-                <p>Por favor, acesse o painel de cadastros para adicionar técnicos no sistema.</p>
-            </div>
+        <div class="tv-empty">
+            <i class="bi bi-people" style="font-size:3rem;"></i>
+            <span>Nenhum técnico cadastrado</span>
         </div>
     {% endfor %}
 </div>
@@ -372,33 +503,74 @@
 
 {% block extra_js %}
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Clock implementation
-        function updateClock() {
-            const now = new Date();
-            const timeStr = now.toTimeString().split(' ')[0];
-            document.getElementById('currentTime').textContent = timeStr;
+document.addEventListener('DOMContentLoaded', function () {
+
+    /* ── Relógio e data ── */
+    const DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    const MESES = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+    function pad(n) { return String(n).padStart(2, '0'); }
+
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('tvClock').textContent =
+            pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+        document.getElementById('tvDate').textContent =
+            DIAS[now.getDay()] + ' ' + pad(now.getDate()) + ' ' +
+            MESES[now.getMonth()] + ' ' + now.getFullYear();
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    /* ── Contadores de status ── */
+    const STATUS_AUSENCIA = new Set(['AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO']);
+    function updateStats() {
+        const cards = document.querySelectorAll('.tech-card');
+        let ativos = 0, pausados = 0, ociosos = 0, ausentes = 0;
+        cards.forEach(c => {
+            const s = c.dataset.status;
+            if (s === 'EM_ATENDIMENTO') ativos++;
+            else if (s === 'EM_PAUSA') pausados++;
+            else if (STATUS_AUSENCIA.has(s)) ausentes++;
+            else ociosos++;
+        });
+        document.getElementById('statAtivos').textContent   = ativos;
+        document.getElementById('statPausados').textContent = pausados;
+        document.getElementById('statOciosos').textContent  = ociosos;
+        document.getElementById('statAusentes').textContent = ausentes;
+        // Mostra o bloco de ausentes apenas se houver algum
+        const ausenteBlock = document.getElementById('statAusenteBlock');
+        if (ausenteBlock) ausenteBlock.style.display = ausentes > 0 ? 'flex' : 'none';
+    }
+    updateStats();
+
+    /* ── Barra de progresso de refresh ── */
+    const REFRESH_SECS = 30;
+    let remaining = REFRESH_SECS;
+    const bar = document.getElementById('refreshBar');
+
+    const interval = setInterval(function () {
+        remaining -= 0.1;
+        const pct = Math.max(0, (remaining / REFRESH_SECS) * 100);
+        if (bar) bar.style.width = pct + '%';
+        if (remaining <= 0) {
+            clearInterval(interval);
+            location.reload();
         }
-        setInterval(updateClock, 1000);
-        updateClock();
+    }, 100);
 
-        // 30s Auto Refresh and progress bar
-        const refreshSeconds = 30;
-        let timeRemaining = refreshSeconds;
-        const refreshBar = document.getElementById('refreshBar');
-
-        const interval = setInterval(function() {
-            timeRemaining -= 0.1;
-            const percentage = (timeRemaining / refreshSeconds) * 100;
-            if (refreshBar) {
-                refreshBar.style.width = percentage + '%';
-            }
-
-            if (timeRemaining <= 0) {
-                clearInterval(interval);
-                location.reload();
-            }
-        }, 100);
-    });
+    /* ── Grid auto-sizing: ajusta grid-template-rows para preencher altura ── */
+    function fitGrid() {
+        const grid = document.getElementById('tvGrid');
+        if (!grid) return;
+        // O CSS faz o trabalho pesado; aqui apenas removemos o
+        // min-height residual dos cards para garantir compressão.
+        grid.querySelectorAll('.tech-card').forEach(c => {
+            c.style.minHeight = '0';
+        });
+    }
+    fitGrid();
+    window.addEventListener('resize', fitGrid);
+});
 </script>
 {% endblock %}

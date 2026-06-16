@@ -16,11 +16,16 @@ urlpatterns = [
     path('management/', views.technician_management, name='technician_management'),
     path('dashboard/', views.dashboard, name='dashboard'),
     
-    # Real-time state transitions
+    # Real-time state transitions (por technician_id)
     path('technicians/<int:technician_id>/start/', views.start_service, name='start_service'),
     path('technicians/<int:technician_id>/pause/', views.pause_service, name='pause_service'),
     path('technicians/<int:technician_id>/resume/', views.resume_service, name='resume_service'),
     path('technicians/<int:technician_id>/finish/', views.finish_service, name='finish_service'),
+    path('technicians/<int:technician_id>/availability/', views.set_availability, name='set_availability'),
+    
+    # Ações sobre alocações específicas (por allocation_id — suporte a múltiplas alocações)
+    path('allocations/<int:allocation_id>/resume/', views.resume_paused_allocation, name='resume_paused_allocation'),
+    path('allocations/<int:allocation_id>/finish/', views.finish_allocation, name='finish_allocation'),
     
     # CRUD central page
     path('cruds/', views.crud_list, name='crud_list'),

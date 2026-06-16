@@ -1,0 +1,50 @@
+<div class="tech-card {{ crit_class }} {% if tech.status == 'EM_PAUSA' %}status-pausado{% endif %}"
+     data-status="{{ tech.status }}">
+
+    <div class="tech-header">
+        <div class="tech-name-wrap">
+            <div class="tech-name" title="{{ tech.nome }}">{{ tech.nome }}</div>
+            <div class="tech-matricula">{{ tech.matricula }}</div>
+        </div>
+        {% if tech.status == 'EM_PAUSA' %}
+            <span class="badge-status badge-pausa"><i class="bi bi-pause-fill"></i> Pausa</span>
+        {% else %}
+            <span class="badge-status badge-ativo"><i class="bi bi-play-fill"></i> Ativo</span>
+        {% endif %}
+    </div>
+
+    <div class="tech-divider"></div>
+
+    <div class="tech-body">
+        <div>
+            <div class="tech-label">Máquina</div>
+            <div class="tech-value" title="{{ alloc.maquina.nome }}">{{ alloc.maquina.nome }}</div>
+        </div>
+        <div>
+            <div class="tech-label">Setor</div>
+            <div class="tech-value sector" title="{{ alloc.maquina.setor.nome }}">{{ alloc.maquina.setor.nome }}</div>
+        </div>
+        {% if alloc.atividade_observacao %}
+        <div class="tech-obs" title="{{ alloc.atividade_observacao }}">{{ alloc.atividade_observacao }}</div>
+        {% endif %}
+    </div>
+
+    <div class="tech-footer">
+        {% if tech.status == 'EM_PAUSA' %}
+            <span class="tech-footer-label"><i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                {% if alloc.motivo_pausa %}{{ alloc.motivo_pausa|truncatechars:22 }}{% else %}Em pausa{% endif %}
+            </span>
+            <div class="tech-time yellow">
+                <i class="bi bi-pause-circle-fill"></i>
+                {{ alloc.tempo_decorrido_str }}
+            </div>
+        {% else %}
+            <span class="tech-footer-label"><i class="bi bi-play-circle text-success"></i> Em curso</span>
+            <div class="tech-time green">
+                <i class="bi bi-stopwatch-fill"></i>
+                {{ alloc.tempo_decorrido_str }}
+            </div>
+        {% endif %}
+    </div>
+
+</div>

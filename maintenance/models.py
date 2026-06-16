@@ -48,10 +48,18 @@ class Machine(models.Model):
 
 class Technician(models.Model):
     STATUS_CHOICES = [
-        ('OCIOSO', 'Ocioso'),
+        ('OCIOSO', 'Disponível (Ocioso)'),
         ('EM_ATENDIMENTO', 'Em Atendimento'),
         ('EM_PAUSA', 'Em Pausa'),
+        ('AUSENTE_FOLGA', 'Ausente – Folga/Escala'),
+        ('AUSENTE_FERIAS', 'Ausente – Férias'),
+        ('AUSENTE_MEDICO', 'Ausente – Licença Médica/Afastamento'),
+        ('EXTERNO_PLANTAO', 'Plantão Fora da Fábrica'),
     ]
+
+    # Conjunto de status que indicam que o técnico está ausente/fora da fábrica
+    # e não pode receber novas ordens de serviço.
+    STATUS_AUSENCIA = {'AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO'}
 
     nome = models.CharField(max_length=100, verbose_name="Nome do Técnico")
     matricula = models.CharField(max_length=50, unique=True, verbose_name="Matrícula")
@@ -66,8 +74,19 @@ class Technician(models.Model):
         return f"{self.nome} ({self.matricula})"
 
     @property
+    def is_ausente(self):
+        """Retorna True se o técnico está em qualquer status de ausência/externo."""
+        return self.status in self.STATUS_AUSENCIA
+
+    @property
     def active_allocation(self):
-        return self.allocations.filter(data_fim__isnull=True).order_by('-data_inicio').first()
+        """Retorna apenas a alocação com status EM_ATENDIMENTO e sem data_fim."""
+        return self.allocations.filter(data_fim__isnull=True, status='EM_ATENDIMENTO').order_by('-data_inicio').first()
+
+    @property
+    def paused_allocations(self):
+        """Retorna todas as alocações pausadas (sem data_fim, status EM_PAUSA)."""
+        return self.allocations.filter(data_fim__isnull=True, status='EM_PAUSA').order_by('data_pausa')
 
     class Meta:
         verbose_name = "Técnico"
@@ -75,9 +94,20 @@ class Technician(models.Model):
 
 
 class Allocation(models.Model):
+    STATUS_CHOICES = [
+        ('EM_ATENDIMENTO', 'Em Atendimento'),
+        ('EM_PAUSA', 'Em Pausa'),
+    ]
+
     tecnico = models.ForeignKey(Technician, on_delete=models.CASCADE, related_name="allocations", verbose_name="Técnico")
     maquina = models.ForeignKey(Machine, on_delete=models.SET_NULL, null=True, blank=True, related_name="allocations", verbose_name="Máquina")
     atividade_observacao = models.TextField(verbose_name="Atividade/Observação")
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='EM_ATENDIMENTO',
+        verbose_name="Status da Alocação"
+    )
     data_inicio = models.DateTimeField(verbose_name="Data/Hora de Início")
     data_pausa = models.DateTimeField(null=True, blank=True, verbose_name="Data/Hora de Pausa")
     motivo_pausa = models.TextField(null=True, blank=True, verbose_name="Motivo da Pausa")

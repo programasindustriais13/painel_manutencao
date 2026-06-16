@@ -1,4 +1,4 @@
-python manage.py runserver 0.0.0.0:8600
+python manage.py runserver 0.0.0.0:8000
 
 python -m venv venv
 venv\Scripts\activate
@@ -127,3 +127,178 @@ C. Correção de Sintaxe do CSS Exposto:
    dentro de tags `<style></style>` válidas no bloco `extra_css`.
 3. Com isso, todo o vazamento de texto foi removido, o layout do Painel voltou ao normal e a inicialização
    do JavaScript do buscador (Tom Select) ocorre perfeitamente sem erros de travamento.
+
+
+9. SUPORTE A MÚLTIPLAS ALOCAÇÕES E SERVIÇOS PAUSADOS
+--------------------------------------------------------------------------------
+Esta seção descreve a lógica de concorrência de alocações implementada para permitir
+que um técnico acumule mais de um serviço em aberto ao mesmo tempo.
+
+A. Regras de Negócio:
+---------------------
+- Um técnico pode ter NO MÁXIMO 1 alocação com status 'EM_ATENDIMENTO' por vez.
+- Um técnico pode ter ILIMITADAS alocações com status 'EM_PAUSA' simultaneamente.
+- O status do model Technician (.status) sempre reflete o estado do serviço ativo:
+  * 'EM_ATENDIMENTO' → há exatamente 1 alocação aberta com status='EM_ATENDIMENTO'
+  * 'EM_PAUSA'       → não há ativo, mas há ao menos 1 pausada
+  * 'OCIOSO'         → não há nenhuma alocação aberta (todas encerradas com data_fim)
+
+B. Novo Campo no Model Allocation (models.py):
+----------------------------------------------
+- Adicionado o campo `status` (CharField) no model Allocation com as seguintes opções:
+  * 'EM_ATENDIMENTO' (padrão ao criar)
+  * 'EM_PAUSA'
+- Migração gerada: `maintenance/migrations/0002_allocation_add_status.py`
+- Comando para reaplicar se necessário: python manage.py migrate
+
+C. Propriedades Corrigidas/Adicionadas em Technician (models.py):
+-----------------------------------------------------------------
+- `active_allocation`: filtra allocations onde data_fim IS NULL AND status='EM_ATENDIMENTO'
+  (antes filtrava apenas data_fim IS NULL — podia retornar pausadas erroneamente)
+- `paused_allocations`: nova propriedade que retorna QuerySet de alocações onde
+  data_fim IS NULL AND status='EM_PAUSA', ordenadas por data_pausa
+
+D. Lógica das Views (views.py):
+--------------------------------
+- `start_service`: NÃO bloqueia se o técnico tiver apenas serviços pausados. Bloqueia
+  SOMENTE se já houver uma alocação EM_ATENDIMENTO ativa (technician.active_allocation is not None).
+- `pause_service`: seta allocation.status='EM_PAUSA' na alocação ativa e recalcula
+  o status do técnico (vai para 'EM_PAUSA' se não houver outra ativa restante).
+- `resume_service`: retoma a alocação pausada mais antiga — caso simples (sem ativa).
+- `finish_service`: finaliza a alocação EM_ATENDIMENTO e recalcula status do técnico
+  (EM_PAUSA se restarem pausadas, OCIOSO se não restar nenhuma).
+- `resume_paused_allocation(allocation_id)` [NOVA]: troca de contexto — ativa a alocação
+  pausada selecionada; se havia uma EM_ATENDIMENTO, ela vai automaticamente para EM_PAUSA
+  com motivo "Interrompido para retomada de outro serviço."
+- `finish_allocation(allocation_id)` [NOVA]: finaliza uma alocação ESPECÍFICA (ativa ou pausada)
+  pelo seu ID. Recalcula o status do técnico com base nas alocações restantes.
+
+E. Novas Rotas de URL (urls.py):
+---------------------------------
+  allocations/<int:allocation_id>/resume/  → resume_paused_allocation (name='resume_paused_allocation')
+  allocations/<int:allocation_id>/finish/  → finish_allocation         (name='finish_allocation')
+
+F. Interface do Operador (technician_management.html):
+------------------------------------------------------
+- Card do técnico redesenhado:
+  * Seção "Serviço Ativo" exibe a alocação EM_ATENDIMENTO.
+  * Badge "+N pausado(s)" aparece no header se houver alocações pausadas.
+  * Seção colapsável "Serviços Pausados (N)" lista cada alocação pausada com:
+    - Nome da máquina, criticidade, tempo decorrido, atividade, motivo da pausa.
+    - Botão "Retomar" → POST para resume_paused_allocation/<allocation_id>/ (troca de contexto).
+    - Botão "Finalizar" → abre modal #finishAllocModal com action apontando para
+      finish_allocation/<allocation_id>/.
+  * Botão "Iniciar Serviço" visível mesmo quando o técnico tem serviços pausados (mas não ativo).
+- Modal #finishAllocModal: equivalente ao #finishModal, mas dinâmico por allocation_id.
+  O campo action do form é setado via JavaScript ao abrir o modal.
+
+
+10. ALTERAÇÃO VISUAL: COR DO STATUS OCIOSO NO PAINEL TV (2026-06-16)
+--------------------------------------------------------------------------------
+Arquivo modificado: maintenance/templates/maintenance/tv_dashboard.html
+
+Alteração realizada:
+- .tech-card.status-ocioso → background #1a0505 (preto avermelhado), border #7f1d1d;
+  opacity: 0.72 removida (garante máximo contraste com o texto vermelho).
+- Barra lateral esquerda (::before) → #dc3545 com box-shadow vermelho sutil.
+- .tech-name dentro do card ocioso → color: #dc3545 (vermelho forte, font-weight: 700).
+- .badge-ocioso → background #3b0a0a, color #dc3545, border 1px solid #7f1d1d.
+
+Objetivo: chamar atenção visual imediata para técnicos ociosos na TV da fábrica.
+Nenhum arquivo de backend (views.py, models.py, forms.py) foi alterado.
+
+
+11. STATUS DE AUSÊNCIA E DISPONIBILIDADE DO TÉCNICO
+--------------------------------------------------------------------------------
+Esta seção documenta a expansão dos status do modelo Technician para contemplar
+estados de ausência e situações de escala fora da fábrica.
+
+A. Novos Status Adicionados (models.py — Technician.STATUS_CHOICES):
+---------------------------------------------------------------------
+Código              | Rótulo                              | Situação
+--------------------|-------------------------------------|------------------------------
+OCIOSO              | Disponível (Ocioso)                 | Técnico na fábrica, disponível
+EM_ATENDIMENTO      | Em Atendimento                      | Serviço ativo em campo
+EM_PAUSA            | Em Pausa                            | Serviço interrompido
+AUSENTE_FOLGA       | Ausente – Folga/Escala              | Folga ou escala no dia
+AUSENTE_FERIAS      | Ausente – Férias                    | Em período de férias
+AUSENTE_MEDICO      | Ausente – Licença Médica/Afastamento| Afastado por saúde
+EXTERNO_PLANTAO     | Plantão Fora da Fábrica             | Plantão em outra unidade
+
+B. Constante de Controle (Technician.STATUS_AUSENCIA):
+------------------------------------------------------
+O model define o atributo de classe:
+    STATUS_AUSENCIA = {'AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO'}
+
+E a propriedade:
+    @property is_ausente → bool   (True se status ∈ STATUS_AUSENCIA)
+
+C. Regras de Negócio:
+--------------------
+- Técnico com status de ausência NÃO pode receber novas ordens de serviço.
+  A view start_service bloqueia a operação e exibe mensagem de erro.
+- Serviços em EM_PAUSA existentes são MANTIDOS congelados no histórico; os
+  botões "Retomar" ficam desabilitados enquanto o técnico estiver ausente.
+- O status EM_ATENDIMENTO não pode ser definido manualmente via widget de
+  disponibilidade — ele é controlado exclusivamente pelas views start/pause/finish.
+- Um técnico EM_ATENDIMENTO não pode ser marcado como ausente diretamente;
+  o operador deve primeiro pausar ou finalizar o serviço ativo.
+
+D. Nova View e Rota (views.py / urls.py):
+-----------------------------------------
+- View: set_availability(request, technician_id)
+- URL : POST /technicians/<id>/availability/   (name='set_availability')
+- Aceita: OCIOSO, AUSENTE_FOLGA, AUSENTE_FERIAS, AUSENTE_MEDICO, EXTERNO_PLANTAO
+- Para retornar o técnico ao fluxo normal, selecionar "Disponível (Ocioso)".
+
+E. Interface do Operador (technician_management.html):
+------------------------------------------------------
+- Novos badges coloridos no header de cada card:
+    FOLGA/ESCALA    → cinza-médio  (#6b7280)
+    FÉRIAS          → ciano/teal   (#0e7490)
+    LIC. MÉDICA     → roxo         (#7c3aed)
+    PLANTÃO EXTERNO → laranja-brun (#c2410c)
+- Card de aviso visual (ícone + texto) no corpo do card quando o técnico está ausente.
+- Widget "Definir Escala / Disponibilidade" (mini-dropdown + botão Salvar) no rodapé
+  de cada card, visível em todos os estados exceto EM_ATENDIMENTO.
+- Botão "Iniciar Serviço" completamente oculto para técnicos ausentes.
+- Botão "Retomar" desabilitado (cinza, lock icon) para pausas enquanto ausente.
+
+F. Dashboard (views.py — dashboard):
+-------------------------------------
+- Novo KPI: absent_techs (contagem de todos com status ∈ STATUS_AUSENCIA)
+- Gráfico de distribuição atualizado para incluir "Ausente/Externo" como fatia separada.
+
+G. Migração de Banco:
+--------------------
+- Migração: 0003_technician_expand_status_choices.py
+- Tipo: alteração apenas de metadados (choices) — SEM DDL no banco SQLite.
+- Dados existentes são 100% preservados.
+- Comando: python manage.py migrate
+
+
+12. HABILITAÇÃO E CONFIGURAÇÃO DO DJANGO ADMIN (2026-06-16)
+--------------------------------------------------------------------------------
+Este painel estende o Django Admin padrão para permitir a visualização de logs 
+e a gestão direta dos dados cadastrados e de histórico de alocações.
+
+A. Registro de Modelos no Admin (admin.py):
+------------------------------------------
+Todos os modelos foram registrados com layouts otimizados e recursos de busca e filtros:
+- Sector (Setor): Exibe o nome. Permite busca por nome.
+- Machine (Máquina): Exibe nome, setor e criticidade. Possui filtros rápidos por setor e por criticidade. Permite busca por nome da máquina e do setor.
+- Technician (Técnico): Exibe nome, matrícula e status. Filtro por status atual e busca por nome e matrícula.
+- Allocation (Alocação): Exibe técnico, máquina, status, data de início, data de pausa e data de finalização. Filtros rápidos por datas e status, e busca pelo nome do técnico.
+
+B. Logs de Alterações / Auditoria:
+----------------------------------
+- O aplicativo padrão `django.contrib.admin` e `django.contrib.contenttypes` estão ativos no settings.py.
+- O bloco nativo de "Ações recentes" (LogEntry do Django) está visível na home do Django Admin (/admin/), registrando quem realizou criação, alteração ou exclusão de qualquer registro.
+- Para facilitar a auditoria completa, o modelo LogEntry foi registrado diretamente no painel admin como uma tabela pesquisável e filtrável (apenas leitura).
+
+C. Acesso ao Admin:
+-------------------
+- URL de Acesso: /admin/
+- Usuário e senha padrão: Criados anteriormente (conforme seção 2).
+
+
