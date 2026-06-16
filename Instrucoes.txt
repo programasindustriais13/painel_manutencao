@@ -1,4 +1,4 @@
-python manage.py runserver 0.0.0.0:8000
+python manage.py runserver 0.0.0.0:8600
 
 python -m venv venv
 venv\Scripts\activate
@@ -66,7 +66,7 @@ A. Configuração Inicial (Executar apenas na primeira vez):
    > git add .
 
 5. Realizar o primeiro commit de registro:
-   > git commit -m "Commit inicial: Estrutura do Painel dos Técnicos para TV 43"
+   > git commit -m "Estrutura da pesquisa de maquinas"
 
 6. Definir o nome da branch principal como main:
    > git branch -M main
