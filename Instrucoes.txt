@@ -83,7 +83,7 @@ a nova versão para o GitHub:
    > git add .
 
 2. Faça o commit descrevendo o que foi implementado:
-   > git commit -m "Melhoria: adicionado [descreva a melhoria aqui]"
+   > git commit -m "Melhoria: janela /admin com dados de pausa e retorno e com status corrigido"
 
 3. Envie para o GitHub:
    > git push origin main
@@ -300,5 +300,31 @@ C. Acesso ao Admin:
 -------------------
 - URL de Acesso: /admin/
 - Usuário e senha padrão: Criados anteriormente (conforme seção 2).
+
+
+13. HISTÓRICO MULTIPLO DE PAUSAS E RETORNOS (RELACIONAL)
+--------------------------------------------------------------------------------
+Para evitar a perda de dados ao retomar um atendimento e permitir múltiplos registros
+de pausa em uma única alocação, foi criada uma tabela relacional de histórico.
+
+A. Novo Modelo de Banco de Dados (HistoricoPausa):
+--------------------------------------------------
+Campos definidos no model HistoricoPausa:
+- alocacao     -> ForeignKey para o model Allocation (related_name='pausas')
+- data_pausa   -> DateTimeField (registra o momento de início da pausa)
+- data_retorno -> DateTimeField (nulo ao pausar, preenchido com timezone.now() ao retomar)
+- motivo_pausa -> TextField (obrigatório, contendo o motivo da pausa)
+
+B. Comportamento nas Views (views.py):
+-------------------------------------
+- Pausar: Cria um registro no HistoricoPausa com o timestamp atual e o motivo. Altera o status da alocação para 'EM_PAUSA'.
+- Retomar: Localiza o último registro no HistoricoPausa onde 'data_retorno' é nulo e preenche com a data/hora atual. Altera o status para 'EM_ATENDIMENTO'.
+- Concluir: Além de definir 'data_fim' no registro principal de Allocation, se houver qualquer pausa em aberto, a data_retorno da pausa é preenchida automaticamente com o mesmo horário de fim de serviço, fechando o ciclo de forma consistente.
+
+C. Exibição no Django Admin (admin.py):
+---------------------------------------
+- Foi implementado um TabularInline (HistoricoPausaInline) na classe AlocacaoAdmin.
+- Ao visualizar ou editar uma Alocação antiga, uma tabela completa e elegante do histórico de pausas do técnico é renderizada diretamente na página de detalhes.
+
 
 

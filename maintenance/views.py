@@ -5,7 +5,7 @@ from django.utils import timezone
 from functools import wraps
 import json
 
-from .models import Sector, Machine, Technician, Allocation
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
 from .forms import (
     SectorForm, MachineForm, TechnicianForm, 
     StartServiceForm, PauseServiceForm, FinishServiceForm
@@ -119,9 +119,19 @@ def pause_service(request, technician_id):
             
         form = PauseServiceForm(request.POST)
         if form.is_valid():
-            # Marca a alocação como EM_PAUSA
-            active_alloc.data_pausa = timezone.now()
-            active_alloc.motivo_pausa = form.cleaned_data['motivo_pausa']
+            now_time = timezone.now()
+            motivo = form.cleaned_data['motivo_pausa']
+            
+            # Cria registro de histórico de pausa
+            HistoricoPausa.objects.create(
+                alocacao=active_alloc,
+                data_pausa=now_time,
+                motivo_pausa=motivo
+            )
+            
+            # Marca a alocação como EM_PAUSA (mantendo campos legados)
+            active_alloc.data_pausa = now_time
+            active_alloc.motivo_pausa = motivo
             active_alloc.status = 'EM_PAUSA'
             active_alloc.save()
             
@@ -157,6 +167,13 @@ def resume_service(request, technician_id):
         
         # Retoma a alocação pausada mais antiga
         alloc = paused_allocs.first()
+        
+        # Localiza o último registro de HistoricoPausa onde data_retorno é nulo e preenche
+        pausa_aberta = alloc.pausas.filter(data_retorno__isnull=True).order_by('-data_pausa').first()
+        if pausa_aberta:
+            pausa_aberta.data_retorno = timezone.now()
+            pausa_aberta.save()
+            
         alloc.data_pausa = None
         alloc.motivo_pausa = None
         alloc.status = 'EM_ATENDIMENTO'
@@ -184,12 +201,24 @@ def resume_paused_allocation(request, allocation_id):
         # Se houver uma alocação ativa, ela vai para EM_PAUSA (troca de contexto automática)
         current_active = technician.active_allocation
         if current_active:
-            current_active.data_pausa = timezone.now()
-            current_active.motivo_pausa = "Interrompido para retomada de outro serviço."
+            now_time = timezone.now()
+            motivo = "Interrompido para retomada de outro serviço."
+            HistoricoPausa.objects.create(
+                alocacao=current_active,
+                data_pausa=now_time,
+                motivo_pausa=motivo
+            )
+            current_active.data_pausa = now_time
+            current_active.motivo_pausa = motivo
             current_active.status = 'EM_PAUSA'
             current_active.save()
         
         # Ativa a alocação selecionada
+        pausa_aberta = alloc_to_resume.pausas.filter(data_retorno__isnull=True).order_by('-data_pausa').first()
+        if pausa_aberta:
+            pausa_aberta.data_retorno = timezone.now()
+            pausa_aberta.save()
+            
         alloc_to_resume.data_pausa = None
         alloc_to_resume.motivo_pausa = None
         alloc_to_resume.status = 'EM_ATENDIMENTO'
@@ -216,11 +245,19 @@ def finish_service(request, technician_id):
             
         form = FinishServiceForm(request.POST, request.FILES)
         if form.is_valid():
-            active_alloc.data_fim = timezone.now()
+            now_time = timezone.now()
+            active_alloc.data_fim = now_time
             active_alloc.observacao_conclusao = form.cleaned_data['observacao_conclusao']
             if 'foto_anexo' in request.FILES:
                 active_alloc.foto_anexo = request.FILES['foto_anexo']
-            active_alloc.status = 'EM_ATENDIMENTO'  # preservar o status original ao fechar
+            active_alloc.status = 'CONCLUIDO'
+            
+            # Garante que se houver uma pausa aberta (sem data de retorno), preenche a data_retorno
+            pausa_aberta = active_alloc.pausas.filter(data_retorno__isnull=True).order_by('-data_pausa').first()
+            if pausa_aberta:
+                pausa_aberta.data_retorno = now_time
+                pausa_aberta.save()
+                
             active_alloc.save()
             
             # Recalcula status do técnico
@@ -251,10 +288,19 @@ def finish_allocation(request, allocation_id):
         
         form = FinishServiceForm(request.POST, request.FILES)
         if form.is_valid():
-            alloc.data_fim = timezone.now()
+            now_time = timezone.now()
+            alloc.data_fim = now_time
             alloc.observacao_conclusao = form.cleaned_data['observacao_conclusao']
             if 'foto_anexo' in request.FILES:
                 alloc.foto_anexo = request.FILES['foto_anexo']
+                
+            # Garante que se houver uma pausa aberta (sem data de retorno), preenche a data_retorno
+            pausa_aberta = alloc.pausas.filter(data_retorno__isnull=True).order_by('-data_pausa').first()
+            if pausa_aberta:
+                pausa_aberta.data_retorno = now_time
+                pausa_aberta.save()
+                
+            alloc.status = 'CONCLUIDO'
             alloc.save()
             
             # Recalcula status do técnico com base nas alocações abertas restantes

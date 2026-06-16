@@ -97,6 +97,7 @@ class Allocation(models.Model):
     STATUS_CHOICES = [
         ('EM_ATENDIMENTO', 'Em Atendimento'),
         ('EM_PAUSA', 'Em Pausa'),
+        ('CONCLUIDO', 'Concluído'),
     ]
 
     tecnico = models.ForeignKey(Technician, on_delete=models.CASCADE, related_name="allocations", verbose_name="Técnico")
@@ -127,8 +128,12 @@ class Allocation(models.Model):
         # Calculate time spent up to completion or current time or pause start
         fim = self.data_fim or timezone.now()
         
-        # If currently paused, time elapsed is calculated up to the point of pause
-        if self.data_pausa and not self.data_fim:
+        # Use the relational pause history to see if it is currently paused
+        ultimo_historico = self.pausas.order_by('-data_pausa').first()
+        if ultimo_historico and not ultimo_historico.data_retorno and not self.data_fim:
+            fim = ultimo_historico.data_pausa
+        elif self.data_pausa and not self.data_fim:
+            # Fallback for compatibility/unit tests
             fim = self.data_pausa
 
         delta = fim - self.data_inicio
@@ -143,3 +148,25 @@ class Allocation(models.Model):
     class Meta:
         verbose_name = "Alocação"
         verbose_name_plural = "Alocações"
+
+
+class HistoricoPausa(models.Model):
+    alocacao = models.ForeignKey(
+        Allocation, 
+        on_delete=models.CASCADE, 
+        related_name='pausas', 
+        verbose_name="Alocação"
+    )
+    data_pausa = models.DateTimeField(verbose_name="Data/Hora de Pausa")
+    data_retorno = models.DateTimeField(null=True, blank=True, verbose_name="Data/Hora de Retorno")
+    motivo_pausa = models.TextField(verbose_name="Motivo da Pausa")
+
+    def __str__(self):
+        retorno_str = self.data_retorno.strftime('%d/%m/%Y %H:%M') if self.data_retorno else "Em aberto"
+        return f"Pausa em {self.data_pausa.strftime('%d/%m/%Y %H:%M')} - Retorno: {retorno_str}"
+
+    class Meta:
+        verbose_name = "Histórico de Pausa"
+        verbose_name_plural = "Histórico de Pausas"
+        ordering = ['data_pausa']
+

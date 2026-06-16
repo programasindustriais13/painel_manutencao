@@ -4,7 +4,7 @@ from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import Sector, Machine, Technician, Allocation
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
 
 class MaintenanceSystemTestCase(TestCase):
     def setUp(self):
@@ -147,8 +147,63 @@ class MaintenanceSystemTestCase(TestCase):
         # Ensure active allocation is closed
         active_alloc.refresh_from_db()
         self.assertIsNotNone(active_alloc.data_fim)
+        self.assertEqual(active_alloc.status, 'CONCLUIDO')
         self.assertEqual(active_alloc.observacao_conclusao, 'Serviço executado perfeitamente')
         self.assertIsNone(self.tech.active_allocation)
+
+    def test_multiple_pauses_relational(self):
+        """Test multiple pause/resume relational history and automatic closure on completion."""
+        client = Client()
+        client.force_login(self.operador_user)
+        
+        # 1. Start Service
+        client.post(
+            reverse('start_service', args=[self.tech.id]),
+            data={'maquina': self.machine_low.id, 'atividade_observacao': 'Conserto Geral'}
+        )
+        self.tech.refresh_from_db()
+        alloc = self.tech.active_allocation
+        self.assertIsNotNone(alloc)
+        self.assertEqual(alloc.pausas.count(), 0)
+
+        # 2. First Pause
+        client.post(
+            reverse('pause_service', args=[self.tech.id]),
+            data={'motivo_pausa': 'Pausa 1'}
+        )
+        self.assertEqual(alloc.pausas.count(), 1)
+        pausa1 = alloc.pausas.first()
+        self.assertEqual(pausa1.motivo_pausa, 'Pausa 1')
+        self.assertIsNone(pausa1.data_retorno)
+
+        # 3. Resume
+        client.post(reverse('resume_service', args=[self.tech.id]))
+        pausa1.refresh_from_db()
+        self.assertIsNotNone(pausa1.data_retorno)
+
+        # 4. Second Pause
+        client.post(
+            reverse('pause_service', args=[self.tech.id]),
+            data={'motivo_pausa': 'Pausa 2'}
+        )
+        self.assertEqual(alloc.pausas.count(), 2)
+        pausas = alloc.pausas.order_by('data_pausa')
+        pausa2 = pausas[1]
+        self.assertEqual(pausa2.motivo_pausa, 'Pausa 2')
+        self.assertIsNone(pausa2.data_retorno)
+
+        # 5. Finish directly while paused
+        client.post(
+            reverse('finish_allocation', args=[alloc.id]),
+            data={'observacao_conclusao': 'Feito'}
+        )
+        alloc.refresh_from_db()
+        self.assertIsNotNone(alloc.data_fim)
+        self.assertEqual(alloc.status, 'CONCLUIDO')
+        
+        # Check that the open pause is automatically closed at data_fim
+        pausa2.refresh_from_db()
+        self.assertEqual(pausa2.data_retorno, alloc.data_fim)
 
     def test_start_service_form_custom_label(self):
         """Test StartServiceForm queryset optimization and label formatting."""

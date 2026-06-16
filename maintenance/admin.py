@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.contrib.admin.models import LogEntry
-from .models import Sector, Machine, Technician, Allocation
+from django.utils.html import format_html
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
 
 @admin.register(Sector)
 class SectorAdmin(admin.ModelAdmin):
@@ -19,12 +20,27 @@ class TecnicoAdmin(admin.ModelAdmin):
     list_filter = ('status',)
     search_fields = ('nome', 'matricula')
 
+class HistoricoPausaInline(admin.TabularInline):
+    model = HistoricoPausa
+    extra = 0
+    readonly_fields = ['data_pausa', 'data_retorno', 'motivo_pausa']
+
 @admin.register(Allocation)
 class AlocacaoAdmin(admin.ModelAdmin):
-    list_display = ('tecnico', 'maquina', 'status', 'data_inicio', 'data_pausa', 'data_fim')
+    list_display = ('tecnico', 'maquina', 'exibir_status_real', 'data_inicio', 'data_pausa', 'data_fim')
     list_filter = ('status', 'data_inicio', 'data_pausa', 'data_fim')
     search_fields = ('tecnico__nome', 'maquina__nome')
     date_hierarchy = 'data_inicio'
+    inlines = [HistoricoPausaInline]
+
+    def exibir_status_real(self, obj):
+        if obj.data_fim is not None:
+            return format_html('<span style="color: #2e7d32; font-weight: bold;">Concluído</span>')
+        if obj.pausas.filter(data_retorno__isnull=True).exists():
+            return format_html('<span style="color: #d84315; font-weight: bold;">Em Pausa</span>')
+        return format_html('<span style="color: #1565c0; font-weight: bold;">Em Atendimento</span>')
+
+    exibir_status_real.short_description = "Status Real"
 
 @admin.register(LogEntry)
 class LogEntryAdmin(admin.ModelAdmin):
