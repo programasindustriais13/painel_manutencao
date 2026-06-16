@@ -431,7 +431,7 @@ footer { display: none !important; }
         <span style="color:#27272a;">|</span>
         <span style="color:#3f3f46;">{{ technicians|length }} técnicos</span>
         <span style="color:#27272a;">|</span>
-        <span style="color:#3f3f46; font-size:0.65rem;">↻ 30s</span>
+        <span style="color:#3f3f46; font-size:0.65rem;">↻ 10s</span>
     </div>
 
     {# Relógio #}
@@ -545,7 +545,7 @@ document.addEventListener('DOMContentLoaded', function () {
     updateStats();
 
     /* ── Barra de progresso de refresh ── */
-    const REFRESH_SECS = 30;
+    const REFRESH_SECS = 10;
     let remaining = REFRESH_SECS;
     const bar = document.getElementById('refreshBar');
 

@@ -1,12 +1,14 @@
 from django.contrib import admin
 from django.contrib.admin.models import LogEntry
 from django.utils.html import format_html
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala
+
 
 @admin.register(Sector)
 class SectorAdmin(admin.ModelAdmin):
     list_display = ('nome',)
     search_fields = ('nome',)
+
 
 @admin.register(Machine)
 class MaquinaAdmin(admin.ModelAdmin):
@@ -14,16 +16,39 @@ class MaquinaAdmin(admin.ModelAdmin):
     list_filter = ('setor', 'criticidade')
     search_fields = ('nome', 'setor__nome')
 
+
+# ---------------------------------------------------------------------------
+# Inline: exibe o histórico de escalas diretamente na ficha do Técnico
+# ---------------------------------------------------------------------------
+class HistoricoEscalaInline(admin.TabularInline):
+    model = HistoricoEscala
+    extra = 0
+    readonly_fields = ('status_definido_label', 'data_alteracao', 'usuario_responsavel')
+    fields = ('status_definido_label', 'data_alteracao', 'usuario_responsavel')
+    ordering = ('-data_alteracao',)
+    can_delete = False
+
+    def status_definido_label(self, obj):
+        return obj.get_status_definido_display_label()
+    status_definido_label.short_description = "Status Definido"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Technician)
 class TecnicoAdmin(admin.ModelAdmin):
     list_display = ('nome', 'matricula', 'status')
     list_filter = ('status',)
     search_fields = ('nome', 'matricula')
+    inlines = [HistoricoEscalaInline]
+
 
 class HistoricoPausaInline(admin.TabularInline):
     model = HistoricoPausa
     extra = 0
     readonly_fields = ['data_pausa', 'data_retorno', 'motivo_pausa']
+
 
 @admin.register(Allocation)
 class AlocacaoAdmin(admin.ModelAdmin):
@@ -42,6 +67,34 @@ class AlocacaoAdmin(admin.ModelAdmin):
 
     exibir_status_real.short_description = "Status Real"
 
+
+# ---------------------------------------------------------------------------
+# Admin dedicado ao Histórico de Escalas (listagem global de auditoria)
+# ---------------------------------------------------------------------------
+@admin.register(HistoricoEscala)
+class HistoricoEscalaAdmin(admin.ModelAdmin):
+    list_display = ('tecnico', 'status_definido_label', 'data_alteracao', 'usuario_responsavel')
+    list_filter = ('data_alteracao', 'status_definido')
+    search_fields = ('tecnico__nome', 'tecnico__matricula')
+    date_hierarchy = 'data_alteracao'
+    readonly_fields = ('tecnico', 'status_definido', 'data_alteracao', 'usuario_responsavel')
+    ordering = ('-data_alteracao',)
+
+    def status_definido_label(self, obj):
+        return obj.get_status_definido_display_label()
+    status_definido_label.short_description = "Status Definido"
+    status_definido_label.admin_order_field = 'status_definido'
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(LogEntry)
 class LogEntryAdmin(admin.ModelAdmin):
     list_display = ('action_time', 'user', 'content_type', 'object_repr', 'action_flag', 'change_message')
@@ -58,4 +111,3 @@ class LogEntryAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
-

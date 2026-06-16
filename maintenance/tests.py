@@ -216,5 +216,29 @@ class MaintenanceSystemTestCase(TestCase):
         label = form.fields['maquina'].label_from_instance(self.machine_low)
         self.assertEqual(label, f"{self.machine_low.nome} [Setor: {self.sector.nome}]")
 
+    def test_post_login_redirect(self):
+        """Test redirection after login and for home_redirect view based on roles."""
+        client = Client()
+        
+        # 1. User with Visualizador group -> tv_dashboard
+        client.force_login(self.viewer_user)
+        response = client.get(reverse('home_redirect'))
+        self.assertRedirects(response, reverse('tv_dashboard'))
+        client.logout()
+
+        # 2. User named 'tv' -> tv_dashboard
+        tv_user = User.objects.create_user('tv', 'tv@test.com', 'pwd123')
+        client.force_login(tv_user)
+        response = client.get(reverse('home_redirect'))
+        self.assertRedirects(response, reverse('tv_dashboard'))
+        client.logout()
+        
+        # 3. Other users (like operador_user or admin) -> dashboard
+        client.force_login(self.operador_user)
+        response = client.get(reverse('home_redirect'))
+        self.assertRedirects(response, reverse('dashboard'))
+        client.logout()
+
+
 
 

@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+from django.contrib.auth.models import User
 
 class Sector(models.Model):
     nome = models.CharField(max_length=100, verbose_name="Nome do Setor")
@@ -81,6 +82,12 @@ class Technician(models.Model):
     @property
     def active_allocation(self):
         """Retorna apenas a alocação com status EM_ATENDIMENTO e sem data_fim."""
+        if hasattr(self, '_prefetched_objects_cache') and 'allocations' in self._prefetched_objects_cache:
+            active = [a for a in self.allocations.all() if a.data_fim is None and a.status == 'EM_ATENDIMENTO']
+            if active:
+                active.sort(key=lambda x: x.data_inicio, reverse=True)
+                return active[0]
+            return None
         return self.allocations.filter(data_fim__isnull=True, status='EM_ATENDIMENTO').order_by('-data_inicio').first()
 
     @property
@@ -129,7 +136,16 @@ class Allocation(models.Model):
         fim = self.data_fim or timezone.now()
         
         # Use the relational pause history to see if it is currently paused
-        ultimo_historico = self.pausas.order_by('-data_pausa').first()
+        if hasattr(self, '_prefetched_objects_cache') and 'pausas' in self._prefetched_objects_cache:
+            pausas_list = list(self.pausas.all())
+            if pausas_list:
+                pausas_list.sort(key=lambda x: x.data_pausa, reverse=True)
+                ultimo_historico = pausas_list[0]
+            else:
+                ultimo_historico = None
+        else:
+            ultimo_historico = self.pausas.order_by('-data_pausa').first()
+
         if ultimo_historico and not ultimo_historico.data_retorno and not self.data_fim:
             fim = ultimo_historico.data_pausa
         elif self.data_pausa and not self.data_fim:
@@ -170,3 +186,41 @@ class HistoricoPausa(models.Model):
         verbose_name_plural = "Histórico de Pausas"
         ordering = ['data_pausa']
 
+
+class HistoricoEscala(models.Model):
+    """Registra cada alteração de escala/disponibilidade de um técnico para fins de auditoria."""
+
+    tecnico = models.ForeignKey(
+        Technician,
+        on_delete=models.CASCADE,
+        related_name='historico_escalas',
+        verbose_name="Técnico"
+    )
+    status_definido = models.CharField(
+        max_length=20,
+        verbose_name="Status Definido"
+    )
+    data_alteracao = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Data/Hora da Alteração"
+    )
+    usuario_responsavel = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Usuário Responsável"
+    )
+
+    def get_status_definido_display_label(self):
+        """Retorna o rótulo legível do status, aproveitando as choices do Technician."""
+        return dict(Technician.STATUS_CHOICES).get(self.status_definido, self.status_definido)
+
+    def __str__(self):
+        label = self.get_status_definido_display_label()
+        return f"{self.tecnico.nome} → {label} em {self.data_alteracao.strftime('%d/%m/%Y %H:%M')}"
+
+    class Meta:
+        verbose_name = "Histórico de Escala"
+        verbose_name_plural = "Histórico de Escalas"
+        ordering = ['-data_alteracao']

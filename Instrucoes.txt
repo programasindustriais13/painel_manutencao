@@ -327,4 +327,225 @@ C. Exibição no Django Admin (admin.py):
 - Ao visualizar ou editar uma Alocação antiga, uma tabela completa e elegante do histórico de pausas do técnico é renderizada diretamente na página de detalhes.
 
 
+14. OTIMIZAÇÃO DA TAXA DE REFRESH E PERFORMANCE DO PAINEL TV (2026-06-16)
+--------------------------------------------------------------------------------
+Arquivos modificados: 
+- maintenance/templates/maintenance/tv_dashboard.html
+- maintenance/views.py
+- maintenance/models.py
 
+Alterações realizadas:
+A. Tempo de Refresh do Painel (Frontend):
+- Redução da taxa de atualização do Painel TV (/tv/) de 30 segundos para 10 segundos.
+- Atualização do indicador no cabeçalho (de "↻ 30s" para "↻ 10s").
+- Atualização do script JavaScript (REFRESH_SECS = 10) para recarregar a tela a cada 10 segundos.
+
+B. Otimização de Performance (Backend):
+- Uso de Prefetch e select_related/prefetch_related na view `tv_dashboard` para carregar 
+  apenas as alocações ativas com suas respectivas máquinas, setores e histórico de pausas.
+- Ajuste nas propriedades `active_allocation` (Technician) e `tempo_decorrido_str` 
+  (Allocation) para consultar o prefetch cache (`_prefetched_objects_cache`) em memória.
+  Isso evita problemas de N+1 consultas ao banco de dados SQLite, reduzindo a carga do servidor.
+
+
+15. REDIRECIONAMENTO DINÂMICO PÓS-LOGIN POR PERFIL DE USUÁRIO (2026-06-16)
+--------------------------------------------------------------------------------
+Arquivos modificados:
+- maintenance_project/settings.py
+- maintenance/views.py
+- maintenance/tests.py
+
+Alterações realizadas:
+A. Configuração de Redirecionamento (settings.py):
+- Ajustada a variável LOGIN_REDIRECT_URL para 'home_redirect' para passar a usar a view intermediária de redirecionamento dinâmico ao invés do valor estático 'tv_dashboard'.
+
+B. Lógica de Validação e Redirecionamento (views.py):
+- A view `home_redirect` foi modificada para validar o perfil/grupo do usuário ou seu nome de usuário.
+- Se o usuário pertencer ao grupo 'Visualizador' ou se seu username for exatamente 'tv', ele é redirecionado para a tela do painel de TV (`/tv/`).
+- Para todos os outros perfis (como Operadores, Gestores e Administradores), o usuário é redirecionado automaticamente para o dashboard analítico (`/dashboard/`).
+- Ambas as telas `/tv/` e `/dashboard/` exigem login do usuário por meio dos decoradores `@login_required` e `@operador_required` respectivamente, garantindo a integridade e segurança de cada ambiente.
+
+C. Validação e Testes Unitários (tests.py):
+- Adicionado o caso de teste `test_post_login_redirect` que simula logins de usuários com perfil de 'Visualizador', usuário com username 'tv', e usuários comuns/operadores, garantindo a conformidade e prevenindo regressões futuras.
+
+D. Como testar os diferentes comportamentos:
+- Para testar o comportamento do Visualizador (TV):
+  1. Crie um grupo com o nome exato 'Visualizador' no admin do Django e associe um usuário a ele, OU crie um usuário com o username 'tv'.
+  2. Faça login com este usuário. O sistema deverá abrir diretamente na tela de TV (/tv/).
+- Para testar o comportamento dos demais perfis (Operadores/Gestores/Admin):
+  1. Faça login com qualquer outro usuário (ex: admin padrão com senha @Freedom1234, ou usuário do grupo 'Operador').
+  2. O sistema deverá abrir diretamente no dashboard de análise (/dashboard/).
+
+
+16. LIMPEZA DE MÉTRICAS NO DASHBOARD (2026-06-16)
+--------------------------------------------------------------------------------
+Arquivos modificados:
+- maintenance/templates/maintenance/dashboard.html
+- maintenance/views.py
+- Instrucoes.txt
+
+Alterações realizadas:
+A. Remoção da métrica "Máquinas Paradas":
+- O card correspondente a "Máquinas Paradas" foi removido da página de dashboard (/dashboard/).
+- Para balancear o layout do grid do Bootstrap com as 3 métricas restantes (Total Técnicos, Em Atendimento, Em Pausa), as colunas dos cards correspondentes foram ajustadas de `col-6 col-lg-3` para `col-12 col-md-4`. Isso faz com que os cards preencham a tela de maneira uniforme e harmônica em resoluções de tela a partir de tablets (md), e fiquem empilhados de forma limpa (col-12) em telas menores.
+
+B. Otimização no Backend (Processamento do Servidor):
+- A consulta ao banco de dados que calculava a contagem de máquinas paradas (`machines_in_maintenance`) na view `dashboard` do arquivo `maintenance/views.py` foi comentada.
+- O campo correspondente no dicionário `context` enviado para o template também foi comentado para poupar recursos do servidor e reduzir a carga de processamento das requisições ao dashboard.
+
+
+17. HISTÓRICO DE ALTERAÇÃO DE ESCALAS E AUDITORIA (2026-06-16)
+--------------------------------------------------------------------------------
+Implementação de trilha de auditoria para cada alteração de status de escala/
+disponibilidade de técnicos, com exibição completa no Django Admin.
+
+Arquivos modificados:
+- maintenance/models.py
+- maintenance/views.py
+- maintenance/admin.py
+- maintenance/migrations/0006_historico_escala.py  [NOVO]
+- Instrucoes.txt
+
+A. Novo Modelo de Banco de Dados (HistoricoEscala — models.py):
+---------------------------------------------------------------
+Tabela: maintenance_historicoescala
+
+Campos:
+  id                  → PK automática (BigAutoField)
+  tecnico_id          → ForeignKey para Technician (related_name='historico_escalas')
+                        CASCADE: se o técnico for excluído, o histórico vai junto.
+  status_definido     → CharField(max_length=20) — código do status atribuído
+                        (ex: 'AUSENTE_FOLGA', 'OCIOSO', 'AUSENTE_FERIAS', etc.)
+  data_alteracao      → DateTimeField(auto_now_add=True) — momento exato da mudança,
+                        preenchido automaticamente pelo banco; não editável.
+  usuario_responsavel → ForeignKey para auth.User (SET_NULL, null=True, blank=True)
+                        Registra qual operador logado realizou a alteração.
+                        SET_NULL: se o usuário for excluído, o registro é mantido
+                        com o campo nulo (preservação do histórico).
+
+Método auxiliar:
+  get_status_definido_display_label() → retorna o rótulo legível do status
+  utilizando Technician.STATUS_CHOICES como referência de tradução.
+
+Meta:
+  ordering = ['-data_alteracao']  (mais recentes primeiro)
+
+B. Registro Automático (views.py — set_availability):
+------------------------------------------------------
+- Após o técnico ter seu status salvo com sucesso, a view set_availability
+  cria automaticamente um novo registro HistoricoEscala com:
+    * tecnico        → o técnico que foi alterado
+    * status_definido → o novo status aplicado (ex: 'AUSENTE_FOLGA')
+    * usuario_responsavel → request.user (operador autenticado na sessão)
+- Nenhuma ação manual é necessária: o registro ocorre de forma transparente
+  sempre que o widget de disponibilidade for usado na tela do operador (/technicians/).
+
+C. Exibição no Django Admin (admin.py):
+----------------------------------------
+1. HistoricoEscalaInline — embutido na ficha de cada Técnico (TecnicoAdmin):
+   - Tipo: TabularInline (leitura apenas, sem botão de adição ou exclusão).
+   - Colunas: Status Definido (rótulo legível), Data/Hora da Alteração, Usuário Responsável.
+   - Ordenação: mais recentes no topo (-data_alteracao).
+   - Como acessar: /admin/maintenance/technician/<id>/change/
+     → Role para o final da página para ver a tabela "Histórico de Escalas".
+
+2. HistoricoEscalaAdmin — listagem global dedicada (somente leitura):
+   - URL: /admin/maintenance/historicoescala/
+   - Colunas da listagem: Técnico, Status Definido, Data/Hora da Alteração, Usuário Responsável.
+   - Filtros laterais: por data_alteracao (hierarquia de data) e por status_definido.
+   - Campo de busca: nome e matrícula do técnico.
+   - Hierarquia de datas (date_hierarchy): navega por ano → mês → dia.
+   - Permissões: add=False, change=False, delete=False (registro de auditoria imutável).
+
+D. Migração de Banco:
+---------------------
+- Arquivo: maintenance/migrations/0006_historico_escala.py
+- Operação: CREATE TABLE — não altera nenhuma tabela existente.
+- Dados existentes: 100% preservados.
+- Comandos executados:
+    python manage.py makemigrations maintenance --name historico_escala
+    python manage.py migrate
+- Resultado: maintenance.0006_historico_escala... OK
+
+E. Regras de Segurança e Integridade:
+--------------------------------------
+- O campo data_alteracao usa auto_now_add=True, portanto é imutável após criação.
+- O registro HistoricoEscala não pode ser criado, alterado ou excluído via Admin
+  (apenas visualizado), garantindo a integridade da trilha de auditoria.
+- Se o Usuário responsável for removido do sistema, o registro de auditoria é
+  mantido com usuario_responsavel = NULL (comportamento SET_NULL).
+- Se o Técnico for excluído, todos os seus registros de histórico de escala também
+  são excluídos em cascata (CASCADE), evitando registros órfãos no banco.
+
+
+18. EXPORTAÇÃO DE RELATÓRIO EXCEL NO DASHBOARD (2026-06-16)
+--------------------------------------------------------------------------------
+Permite ao gestor baixar um relatório completo de todas as alocações registradas
+no sistema, diretamente pela tela de Dashboard (/dashboard/).
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/urls.py
+- maintenance/templates/maintenance/dashboard.html
+- requirements.txt  (já continha openpyxl>=3.1.0)
+- Instrucoes.txt
+
+Biblioteca necessária (já no requirements.txt):
+  openpyxl >= 3.1.0
+  → Instalar (se necessário): pip install openpyxl>=3.1.0
+
+A. Nova View de Exportação (views.py — exportar_relatorio_excel):
+------------------------------------------------------------------
+- Protegida pelo decorador @operador_required (exige login + grupo Operador/Staff).
+- Consulta todas as alocações usando:
+    Allocation.objects.select_related('tecnico', 'maquina', 'maquina__setor')
+                      .prefetch_related('pausas')
+                      .order_by('-data_inicio')
+  (otimização: nenhuma consulta N+1 ao banco de dados)
+- Gera a planilha Excel em memória (io.BytesIO) — sem gravação em disco.
+- Retorna HttpResponse com:
+    Content-Type : application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+    Content-Disposition: attachment; filename="relatorio_manutencao_AAAAMMDD_HHMM.xlsx"
+
+B. Estrutura da Planilha Gerada:
+---------------------------------
+Linha 1  → Título mesclado (A1:J1) com data/hora da exportação.
+Linha 2  → Cabeçalho (fundo azul escuro #1E3A5F, texto branco, negrito).
+Linha 3+ → Uma linha por alocação, com alternância de fundo (linhas pares em #EBF0F8).
+
+Colunas exportadas (10 no total):
+  Col A  → Técnico (nome completo)
+  Col B  → Matrícula
+  Col C  → Setor (nome do setor da máquina)
+  Col D  → Máquina (nome da máquina)
+  Col E  → Criticidade (Baixa / Média / Alta)
+  Col F  → Status (Em Atendimento / Em Pausa / Concluído)
+  Col G  → Data de Início (DD/MM/AAAA HH:MM)
+  Col H  → Data de Fim (DD/MM/AAAA HH:MM ou "—" se em aberto)
+  Col I  → Qtd. Pausas (número de pausas no HistoricoPausa)
+  Col J  → Tempo Total em minutos (descontando pausas; se em aberto, calcula até agora)
+
+Funcionalidades extras da planilha:
+  - Bordas finas em todas as células (cor #CCCCCC).
+  - Cabeçalho congelado (freeze_panes = 'A3'): rolar os dados sem perder o cabeçalho.
+  - Larguras de colunas pré-definidas para boa legibilidade sem ajuste manual.
+
+C. Nova Rota de URL (urls.py):
+--------------------------------
+  URL  : /dashboard/exportar-excel/
+  Name : exportar_relatorio_excel
+  View : views.exportar_relatorio_excel
+
+D. Botão no Dashboard (dashboard.html):
+-----------------------------------------
+- Botão Bootstrap verde (btn-success btn-lg) com ícone bi-file-earmark-excel-fill.
+- Posicionado no cabeçalho do dashboard, à direita do título, responsivo (col-md-4).
+- ID único para testes: id="btn-exportar-excel"
+- Acessível via href (link GET simples); não usa AJAX — garante download nativo do browser.
+- O download ocorre SEM deslogar o usuário e SEM recarregar o dashboard.
+
+E. Segurança:
+--------------
+- Nenhuma tabela do banco de dados foi criada, alterada ou excluída.
+- Somente usuários autenticados com permissão Operador/Staff/Superuser podem acessar.
+- Tentativa de acesso não autorizado redireciona automaticamente para /tv/.

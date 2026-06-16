@@ -2,10 +2,16 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.utils import timezone
+from django.http import HttpResponse
 from functools import wraps
 import json
+import io
+from django.db.models import Prefetch
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala
 from .forms import (
     SectorForm, MachineForm, TechnicianForm, 
     StartServiceForm, PauseServiceForm, FinishServiceForm
@@ -25,9 +31,11 @@ def operador_required(view_func):
 
 @login_required
 def home_redirect(request):
-    if request.user.is_superuser or request.user.is_staff or request.user.groups.filter(name='Operador').exists():
-        return redirect('technician_management')
-    return redirect('tv_dashboard')
+    user = request.user
+    if user.groups.filter(name='Visualizador').exists() or user.username == 'tv':
+        return redirect('tv_dashboard')
+    else:
+        return redirect('dashboard')
 
 
 # ----------------------------------------------------
@@ -35,7 +43,15 @@ def home_redirect(request):
 # ----------------------------------------------------
 @login_required
 def tv_dashboard(request):
-    technicians = Technician.objects.all().order_by('nome')
+    active_allocations = Allocation.objects.filter(
+        data_fim__isnull=True,
+        status='EM_ATENDIMENTO'
+    ).select_related('maquina', 'maquina__setor').prefetch_related('pausas')
+    
+    technicians = Technician.objects.all().prefetch_related(
+        Prefetch('allocations', queryset=active_allocations)
+    ).order_by('nome')
+    
     context = {
         'technicians': technicians,
         'now': timezone.now(),
@@ -364,6 +380,13 @@ def set_availability(request, technician_id):
         technician.status = novo_status
         technician.save()
 
+        # Registra a alteração de escala no histórico de auditoria
+        HistoricoEscala.objects.create(
+            tecnico=technician,
+            status_definido=novo_status,
+            usuario_responsavel=request.user if request.user.is_authenticated else None,
+        )
+
         if novo_status == 'OCIOSO':
             messages.success(request, f"{technician.nome} retornou como Disponível (Ocioso).")
         else:
@@ -387,9 +410,9 @@ def dashboard(request):
     ).count()
 
     # Distinct machines currently undergoing maintenance (data_fim is null)
-    machines_in_maintenance = Machine.objects.filter(
-        allocations__data_fim__isnull=True
-    ).distinct().count()
+    # machines_in_maintenance = Machine.objects.filter(
+    #     allocations__data_fim__isnull=True
+    # ).distinct().count()
 
     # 1. Pie/Doughnut Chart Data: Distribution of tech status (inclui ausências)
     status_distribution = {
@@ -417,7 +440,7 @@ def dashboard(request):
         'paused_techs': paused_techs,
         'idle_techs': idle_techs,
         'absent_techs': absent_techs,
-        'machines_in_maintenance': machines_in_maintenance,
+        # 'machines_in_maintenance': machines_in_maintenance,  # commented out to optimize performance
         
         # Serialize to pass safely to javascript block
         'status_labels': json.dumps(list(status_distribution.keys())),
@@ -557,5 +580,157 @@ def technician_delete(request, pk):
     return render(request, 'maintenance/crud_confirm_delete.html', {'object': technician, 'type': 'Técnico'})
 
 
+# ----------------------------------------------------
+# 5. EXPORTAÇÃO DE RELATÓRIO EXCEL
+# ----------------------------------------------------
+@operador_required
+def exportar_relatorio_excel(request):
+    """
+    Gera e retorna um arquivo Excel (.xlsx) com o relatório completo de alocações.
+    Inclui: Técnico, Matrícula, Setor, Máquina, Criticidade, Status, Data de Início,
+    Data de Fim, Quantidade de Pausas e Tempo Total de Atendimento (em minutos).
+    Requer: openpyxl >= 3.1.0
+    """
+    # Busca todas as alocações com dados relacionados
+    allocations = Allocation.objects.select_related(
+        'tecnico', 'maquina', 'maquina__setor'
+    ).prefetch_related('pausas').order_by('-data_inicio')
 
+    # ── Workbook ──────────────────────────────────────────
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Relatório de Alocações"
 
+    # ── Estilos ───────────────────────────────────────────
+    header_font  = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
+    header_fill  = PatternFill(start_color='1E3A5F', end_color='1E3A5F', fill_type='solid')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    alt_fill     = PatternFill(start_color='EBF0F8', end_color='EBF0F8', fill_type='solid')
+    center_align = Alignment(horizontal='center', vertical='center')
+    left_align   = Alignment(horizontal='left',   vertical='center', wrap_text=True)
+
+    thin_border  = Border(
+        left=Side(style='thin', color='CCCCCC'),
+        right=Side(style='thin', color='CCCCCC'),
+        top=Side(style='thin', color='CCCCCC'),
+        bottom=Side(style='thin', color='CCCCCC'),
+    )
+
+    # Mapa de criticidade → rótulo
+    CRIT_LABELS = {'BAIXA': 'Baixa', 'MEDIA': 'Média', 'ALTA': 'Alta'}
+    STATUS_LABELS = {
+        'EM_ATENDIMENTO': 'Em Atendimento',
+        'EM_PAUSA': 'Em Pausa',
+        'CONCLUIDO': 'Concluído',
+    }
+
+    # ── Título da planilha ────────────────────────────────
+    ws.merge_cells('A1:J1')
+    title_cell = ws['A1']
+    title_cell.value = f"Relatório de Manutenção — Exportado em {timezone.localtime(timezone.now()).strftime('%d/%m/%Y %H:%M')}"
+    title_cell.font  = Font(name='Calibri', bold=True, size=13, color='1E3A5F')
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 28
+
+    # ── Cabeçalhos ────────────────────────────────────────
+    HEADERS = [
+        'Técnico', 'Matrícula', 'Setor', 'Máquina', 'Criticidade',
+        'Status', 'Data de Início', 'Data de Fim',
+        'Qtd. Pausas', 'Tempo Total (min)',
+    ]
+    COL_WIDTHS = [22, 14, 18, 22, 12, 16, 20, 20, 12, 18]
+
+    for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), start=1):
+        cell = ws.cell(row=2, column=col_idx, value=header)
+        cell.font      = header_font
+        cell.fill      = header_fill
+        cell.alignment = header_align
+        cell.border    = thin_border
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.row_dimensions[2].height = 30
+
+    # ── Linhas de dados ───────────────────────────────────
+    BR_TZ = timezone.get_current_timezone()
+
+    for row_idx, alloc in enumerate(allocations, start=3):
+        is_alt = (row_idx % 2 == 0)
+        row_fill = alt_fill if is_alt else None
+
+        # Dados derivados
+        setor_nome = alloc.maquina.setor.nome if alloc.maquina and alloc.maquina.setor else '—'
+        maquina_nome = alloc.maquina.nome if alloc.maquina else '—'
+        crit_label = CRIT_LABELS.get(alloc.maquina.criticidade, '—') if alloc.maquina else '—'
+        status_label = STATUS_LABELS.get(alloc.status, alloc.status)
+
+        data_inicio = timezone.localtime(alloc.data_inicio, BR_TZ).strftime('%d/%m/%Y %H:%M') if alloc.data_inicio else '—'
+        data_fim    = timezone.localtime(alloc.data_fim, BR_TZ).strftime('%d/%m/%Y %H:%M') if alloc.data_fim else '—'
+
+        qtd_pausas = alloc.pausas.count()
+
+        # Tempo total de atendimento (descontando pausas)
+        if alloc.data_inicio:
+            fim = alloc.data_fim or timezone.now()
+            total_delta = fim - alloc.data_inicio
+            total_seconds = int(total_delta.total_seconds())
+
+            # Subtrai o tempo somado de cada pausa registrada
+            for pausa in alloc.pausas.all():
+                if pausa.data_retorno:
+                    pausa_delta = pausa.data_retorno - pausa.data_pausa
+                    total_seconds -= int(pausa_delta.total_seconds())
+                else:
+                    # Pausa ainda aberta: desconta até agora ou até data_fim
+                    pausa_fim = alloc.data_fim or timezone.now()
+                    pausa_delta = pausa_fim - pausa.data_pausa
+                    total_seconds -= int(pausa_delta.total_seconds())
+
+            total_seconds = max(0, total_seconds)
+            tempo_min = round(total_seconds / 60, 1)
+        else:
+            tempo_min = '—'
+
+        row_data = [
+            alloc.tecnico.nome,
+            alloc.tecnico.matricula,
+            setor_nome,
+            maquina_nome,
+            crit_label,
+            status_label,
+            data_inicio,
+            data_fim,
+            qtd_pausas,
+            tempo_min,
+        ]
+
+        for col_idx, value in enumerate(row_data, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = thin_border
+            if row_fill:
+                cell.fill = row_fill
+            # Colunas de texto longo ficam alinhadas à esquerda
+            if col_idx in (1, 3, 4, 6):
+                cell.alignment = left_align
+            else:
+                cell.alignment = center_align
+
+        ws.row_dimensions[row_idx].height = 20
+
+    # Congela cabeçalhos
+    ws.freeze_panes = 'A3'
+
+    # ── Geração do arquivo em memória ─────────────────────
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    data_str = timezone.localtime(timezone.now()).strftime('%Y%m%d_%H%M')
+    filename = f'relatorio_manutencao_{data_str}.xlsx'
+
+    response = HttpResponse(
+        buffer.read(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response

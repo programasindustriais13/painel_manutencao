@@ -29,7 +29,10 @@ urlpatterns = [
     
     # CRUD central page
     path('cruds/', views.crud_list, name='crud_list'),
-    
+
+    # Exportação de relatório Excel
+    path('dashboard/exportar-excel/', views.exportar_relatorio_excel, name='exportar_relatorio_excel'),
+
     # Sector CRUD
     path('sectors/create/', views.sector_create, name='sector_create'),
     path('sectors/<int:pk>/edit/', views.sector_edit, name='sector_edit'),
