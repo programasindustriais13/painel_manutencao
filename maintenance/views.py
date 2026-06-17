@@ -6,6 +6,7 @@ from django.http import HttpResponse
 from functools import wraps
 import json
 import io
+import datetime
 from django.db.models import Prefetch
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -103,6 +104,7 @@ def start_service(request, technician_id):
             allocation.tecnico = technician
             allocation.data_inicio = timezone.now()
             allocation.status = 'EM_ATENDIMENTO'
+            allocation.usuario_operador = request.user
             allocation.save()
             
             # Status do técnico sempre reflete a alocação ativa
@@ -400,11 +402,41 @@ def set_availability(request, technician_id):
 # ----------------------------------------------------
 @operador_required
 def dashboard(request):
-    # Top KPI cards
-    total_techs = Technician.objects.count()
+    # ── Filtro de Período (GET) ─────────────────────────────────────────────
+    # Captura parâmetros data_inicio e data_final da query string.
+    # Valida o formato DD/MM/YYYY ou YYYY-MM-DD (input type="date" envia YYYY-MM-DD).
+    # Fallback: últimos 30 dias se os parâmetros forem ausentes ou inválidos.
+    today = timezone.localdate()
+    default_inicio = today - datetime.timedelta(days=30)
+
+    data_inicio_str = request.GET.get('data_inicio', '').strip()
+    data_final_str  = request.GET.get('data_final',  '').strip()
+
+    try:
+        data_inicio = datetime.date.fromisoformat(data_inicio_str) if data_inicio_str else default_inicio
+    except ValueError:
+        data_inicio = default_inicio
+        data_inicio_str = ''
+
+    try:
+        data_final = datetime.date.fromisoformat(data_final_str) if data_final_str else today
+    except ValueError:
+        data_final = today
+        data_final_str = ''
+
+    # Garante ordem correta (inicio <= fim)
+    if data_inicio > data_final:
+        data_inicio, data_final = data_final, data_inicio
+
+    # Strings formatadas para popular os inputs do formulário (formato YYYY-MM-DD)
+    data_inicio_str = data_inicio.isoformat()
+    data_final_str  = data_final.isoformat()
+
+    # ── KPI cards (snapshot do status ATUAL dos técnicos — sem filtro temporal) ──
+    total_techs  = Technician.objects.count()
     active_techs = Technician.objects.filter(status='EM_ATENDIMENTO').count()
     paused_techs = Technician.objects.filter(status='EM_PAUSA').count()
-    idle_techs = Technician.objects.filter(status='OCIOSO').count()
+    idle_techs   = Technician.objects.filter(status='OCIOSO').count()
     absent_techs = Technician.objects.filter(
         status__in=list(Technician.STATUS_AUSENCIA)
     ).count()
@@ -414,6 +446,11 @@ def dashboard(request):
     #     allocations__data_fim__isnull=True
     # ).distinct().count()
 
+    # ── Base queryset filtrado pelo período ────────────────────────────────
+    alloc_filtrado = Allocation.objects.filter(
+        data_inicio__date__range=[data_inicio, data_final]
+    )
+
     # 1. Pie/Doughnut Chart Data: Distribution of tech status (inclui ausências)
     status_distribution = {
         'Ocioso': idle_techs,
@@ -421,34 +458,40 @@ def dashboard(request):
         'Em Pausa': paused_techs,
         'Ausente/Externo': absent_techs,
     }
-    
-    # 2. Bar Chart Data: Allocations by Criticidade
-    criticidades = ['BAIXA', 'MEDIA', 'ALTA']
+
+    # 2. Bar Chart Data: Allocations by Criticidade (filtrado por período)
     alloc_by_criticidade = {
-        'Baixa': Allocation.objects.filter(maquina__criticidade='BAIXA').count(),
-        'Média': Allocation.objects.filter(maquina__criticidade='MEDIA').count(),
-        'Alta': Allocation.objects.filter(maquina__criticidade='ALTA').count(),
+        'Baixa': alloc_filtrado.filter(maquina__criticidade='BAIXA').count(),
+        'Média': alloc_filtrado.filter(maquina__criticidade='MEDIA').count(),
+        'Alta':  alloc_filtrado.filter(maquina__criticidade='ALTA').count(),
     }
-    
-    # 3. Bar Chart Data: Allocations by Sector
+
+    # 3. Bar Chart Data: Allocations by Sector (filtrado por período)
     sectors = Sector.objects.all()
-    alloc_by_sector = {s.nome: Allocation.objects.filter(maquina__setor=s).count() for s in sectors}
+    alloc_by_sector = {
+        s.nome: alloc_filtrado.filter(maquina__setor=s).count()
+        for s in sectors
+    }
 
     context = {
-        'total_techs': total_techs,
+        'total_techs':  total_techs,
         'active_techs': active_techs,
         'paused_techs': paused_techs,
-        'idle_techs': idle_techs,
+        'idle_techs':   idle_techs,
         'absent_techs': absent_techs,
         # 'machines_in_maintenance': machines_in_maintenance,  # commented out to optimize performance
-        
+
+        # Datas do filtro (repopulam os inputs após recarregar a página)
+        'data_inicio_str': data_inicio_str,
+        'data_final_str':  data_final_str,
+
         # Serialize to pass safely to javascript block
         'status_labels': json.dumps(list(status_distribution.keys())),
         'status_values': json.dumps(list(status_distribution.values())),
-        
+
         'crit_labels': json.dumps(list(alloc_by_criticidade.keys())),
         'crit_values': json.dumps(list(alloc_by_criticidade.values())),
-        
+
         'sector_labels': json.dumps(list(alloc_by_sector.keys())),
         'sector_values': json.dumps(list(alloc_by_sector.values())),
     }
@@ -586,22 +629,53 @@ def technician_delete(request, pk):
 @operador_required
 def exportar_relatorio_excel(request):
     """
-    Gera e retorna um arquivo Excel (.xlsx) com o relatório completo de alocações.
-    Inclui: Técnico, Matrícula, Setor, Máquina, Criticidade, Status, Data de Início,
-    Data de Fim, Quantidade de Pausas e Tempo Total de Atendimento (em minutos).
+    Gera e retorna um arquivo Excel (.xlsx) com o relatório detalhado de alocações.
+    Respeita os parâmetros GET data_inicio e data_final (formato YYYY-MM-DD) para
+    filtrar somente o período selecionado no Dashboard — o mesmo filtro unificado
+    que restringe os gráficos da tela.
+
+    Colunas exportadas (13 no total):
+      A  Técnico          B  Matrícula        C  Setor
+      D  Máquina          E  Criticidade      F  Operador
+      G  Status           H  Data de Início   I  Data de Término
+      J  Tempo Total(min) K  Obs. Inicial     L  Obs. de Conclusão
+      M  Histórico de Pausas (pausas concatenadas, quebra de linha)
+
     Requer: openpyxl >= 3.1.0
     """
-    # Busca todas as alocações com dados relacionados
-    allocations = Allocation.objects.select_related(
-        'tecnico', 'maquina', 'maquina__setor'
+    # ── Filtro de Período (mesmos parâmetros GET do Dashboard) ─────────────
+    today = timezone.localdate()
+    default_inicio = today - datetime.timedelta(days=30)
+
+    data_inicio_str = request.GET.get('data_inicio', '').strip()
+    data_final_str  = request.GET.get('data_final',  '').strip()
+
+    try:
+        data_inicio = datetime.date.fromisoformat(data_inicio_str) if data_inicio_str else default_inicio
+    except ValueError:
+        data_inicio = default_inicio
+
+    try:
+        data_final = datetime.date.fromisoformat(data_final_str) if data_final_str else today
+    except ValueError:
+        data_final = today
+
+    if data_inicio > data_final:
+        data_inicio, data_final = data_final, data_inicio
+
+    # ── Busca alocações do período com todos os dados relacionados ──────────
+    allocations = Allocation.objects.filter(
+        data_inicio__date__range=[data_inicio, data_final]
+    ).select_related(
+        'tecnico', 'maquina', 'maquina__setor', 'usuario_operador'
     ).prefetch_related('pausas').order_by('-data_inicio')
 
-    # ── Workbook ──────────────────────────────────────────
+    # ── Workbook ──────────────────────────────────────────────────────────
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Relatório de Alocações"
 
-    # ── Estilos ───────────────────────────────────────────
+    # ── Estilos ───────────────────────────────────────────────────────────
     header_font  = Font(name='Calibri', bold=True, color='FFFFFF', size=11)
     header_fill  = PatternFill(start_color='1E3A5F', end_color='1E3A5F', fill_type='solid')
     header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
@@ -617,29 +691,34 @@ def exportar_relatorio_excel(request):
         bottom=Side(style='thin', color='CCCCCC'),
     )
 
-    # Mapa de criticidade → rótulo
     CRIT_LABELS = {'BAIXA': 'Baixa', 'MEDIA': 'Média', 'ALTA': 'Alta'}
     STATUS_LABELS = {
         'EM_ATENDIMENTO': 'Em Atendimento',
         'EM_PAUSA': 'Em Pausa',
         'CONCLUIDO': 'Concluído',
     }
+    BR_TZ = timezone.get_current_timezone()
 
-    # ── Título da planilha ────────────────────────────────
-    ws.merge_cells('A1:J1')
+    # ── Título da planilha (13 colunas: A1:M1) ────────────────────────────
+    periodo_label = f"{data_inicio.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}"
+    ws.merge_cells('A1:M1')
     title_cell = ws['A1']
-    title_cell.value = f"Relatório de Manutenção — Exportado em {timezone.localtime(timezone.now()).strftime('%d/%m/%Y %H:%M')}"
-    title_cell.font  = Font(name='Calibri', bold=True, size=13, color='1E3A5F')
+    title_cell.value = (
+        f"Relatório de Manutenção — Período: {periodo_label} — "
+        f"Exportado em {timezone.localtime(timezone.now()).strftime('%d/%m/%Y %H:%M')}"
+    )
+    title_cell.font      = Font(name='Calibri', bold=True, size=13, color='1E3A5F')
     title_cell.alignment = Alignment(horizontal='center', vertical='center')
     ws.row_dimensions[1].height = 28
 
-    # ── Cabeçalhos ────────────────────────────────────────
+    # ── Cabeçalhos (13 colunas) ───────────────────────────────────────────
     HEADERS = [
         'Técnico', 'Matrícula', 'Setor', 'Máquina', 'Criticidade',
-        'Status', 'Data de Início', 'Data de Fim',
-        'Qtd. Pausas', 'Tempo Total (min)',
+        'Operador', 'Status', 'Data de Início', 'Data de Término',
+        'Tempo Total (min)', 'Obs. Inicial', 'Obs. de Conclusão',
+        'Histórico de Pausas',
     ]
-    COL_WIDTHS = [22, 14, 18, 22, 12, 16, 20, 20, 12, 18]
+    COL_WIDTHS = [22, 14, 18, 22, 12, 20, 16, 20, 20, 18, 35, 35, 45]
 
     for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), start=1):
         cell = ws.cell(row=2, column=col_idx, value=header)
@@ -651,82 +730,107 @@ def exportar_relatorio_excel(request):
 
     ws.row_dimensions[2].height = 30
 
-    # ── Linhas de dados ───────────────────────────────────
-    BR_TZ = timezone.get_current_timezone()
-
+    # ── Linhas de dados ───────────────────────────────────────────────────
     for row_idx, alloc in enumerate(allocations, start=3):
-        is_alt = (row_idx % 2 == 0)
+        is_alt   = (row_idx % 2 == 0)
         row_fill = alt_fill if is_alt else None
 
-        # Dados derivados
-        setor_nome = alloc.maquina.setor.nome if alloc.maquina and alloc.maquina.setor else '—'
-        maquina_nome = alloc.maquina.nome if alloc.maquina else '—'
-        crit_label = CRIT_LABELS.get(alloc.maquina.criticidade, '—') if alloc.maquina else '—'
+        # Dados básicos derivados
+        setor_nome   = alloc.maquina.setor.nome if alloc.maquina and alloc.maquina.setor else '—'
+        maquina_nome = alloc.maquina.nome        if alloc.maquina else '—'
+        crit_label   = CRIT_LABELS.get(alloc.maquina.criticidade, '—') if alloc.maquina else '—'
         status_label = STATUS_LABELS.get(alloc.status, alloc.status)
 
-        data_inicio = timezone.localtime(alloc.data_inicio, BR_TZ).strftime('%d/%m/%Y %H:%M') if alloc.data_inicio else '—'
-        data_fim    = timezone.localtime(alloc.data_fim, BR_TZ).strftime('%d/%m/%Y %H:%M') if alloc.data_fim else '—'
+        # Operador responsável pela alocação
+        if alloc.usuario_operador:
+            nome_completo = alloc.usuario_operador.get_full_name()
+            operador_label = nome_completo if nome_completo.strip() else alloc.usuario_operador.username
+        else:
+            operador_label = '—'
 
-        qtd_pausas = alloc.pausas.count()
+        # Datas formatadas
+        data_inicio_fmt = (
+            timezone.localtime(alloc.data_inicio, BR_TZ).strftime('%d/%m/%Y %H:%M')
+            if alloc.data_inicio else '—'
+        )
+        data_fim_fmt = (
+            timezone.localtime(alloc.data_fim, BR_TZ).strftime('%d/%m/%Y %H:%M')
+            if alloc.data_fim else '—'
+        )
 
         # Tempo total de atendimento (descontando pausas)
         if alloc.data_inicio:
             fim = alloc.data_fim or timezone.now()
-            total_delta = fim - alloc.data_inicio
-            total_seconds = int(total_delta.total_seconds())
-
-            # Subtrai o tempo somado de cada pausa registrada
+            total_seconds = int((fim - alloc.data_inicio).total_seconds())
             for pausa in alloc.pausas.all():
                 if pausa.data_retorno:
-                    pausa_delta = pausa.data_retorno - pausa.data_pausa
-                    total_seconds -= int(pausa_delta.total_seconds())
+                    total_seconds -= int((pausa.data_retorno - pausa.data_pausa).total_seconds())
                 else:
-                    # Pausa ainda aberta: desconta até agora ou até data_fim
                     pausa_fim = alloc.data_fim or timezone.now()
-                    pausa_delta = pausa_fim - pausa.data_pausa
-                    total_seconds -= int(pausa_delta.total_seconds())
-
-            total_seconds = max(0, total_seconds)
-            tempo_min = round(total_seconds / 60, 1)
+                    total_seconds -= int((pausa_fim - pausa.data_pausa).total_seconds())
+            tempo_min = round(max(0, total_seconds) / 60, 1)
         else:
             tempo_min = '—'
 
+        # Observação inicial
+        obs_inicial = alloc.atividade_observacao or '—'
+
+        # Observação de conclusão
+        obs_conclusao = alloc.observacao_conclusao or '—'
+
+        # Histórico de pausas — concatenado com quebras de linha
+        pausas_linhas = []
+        for pausa in alloc.pausas.all().order_by('data_pausa'):
+            p_inicio = timezone.localtime(pausa.data_pausa, BR_TZ).strftime('%d/%m/%Y %H:%M')
+            if pausa.data_retorno:
+                p_retorno = timezone.localtime(pausa.data_retorno, BR_TZ).strftime('%d/%m/%Y %H:%M')
+            else:
+                p_retorno = 'Em aberto'
+            motivo = (pausa.motivo_pausa or '').strip()
+            pausas_linhas.append(f"↓ {p_inicio}  →  {p_retorno} | {motivo}")
+        historico_pausas = '\n'.join(pausas_linhas) if pausas_linhas else '—'
+
         row_data = [
-            alloc.tecnico.nome,
-            alloc.tecnico.matricula,
-            setor_nome,
-            maquina_nome,
-            crit_label,
-            status_label,
-            data_inicio,
-            data_fim,
-            qtd_pausas,
-            tempo_min,
+            alloc.tecnico.nome,   # A
+            alloc.tecnico.matricula,  # B
+            setor_nome,           # C
+            maquina_nome,         # D
+            crit_label,           # E
+            operador_label,       # F
+            status_label,         # G
+            data_inicio_fmt,      # H
+            data_fim_fmt,         # I
+            tempo_min,            # J
+            obs_inicial,          # K
+            obs_conclusao,        # L
+            historico_pausas,     # M
         ]
+
+        # Colunas de texto longo: A(1) C(3) D(4) F(6) G(7) K(11) L(12) M(13)
+        LEFT_COLS = {1, 3, 4, 6, 7, 11, 12, 13}
 
         for col_idx, value in enumerate(row_data, start=1):
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.border = thin_border
             if row_fill:
                 cell.fill = row_fill
-            # Colunas de texto longo ficam alinhadas à esquerda
-            if col_idx in (1, 3, 4, 6):
-                cell.alignment = left_align
-            else:
-                cell.alignment = center_align
+            cell.alignment = left_align if col_idx in LEFT_COLS else center_align
 
-        ws.row_dimensions[row_idx].height = 20
+        # Altura dinâmica: linhas com histórico de pausas recebem mais altura
+        n_pausas = len(pausas_linhas)
+        ws.row_dimensions[row_idx].height = max(20, 18 * max(1, n_pausas))
 
     # Congela cabeçalhos
     ws.freeze_panes = 'A3'
 
-    # ── Geração do arquivo em memória ─────────────────────
+    # ── Geração do arquivo em memória ─────────────────────────────────────
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
 
-    data_str = timezone.localtime(timezone.now()).strftime('%Y%m%d_%H%M')
-    filename = f'relatorio_manutencao_{data_str}.xlsx'
+    data_str   = timezone.localtime(timezone.now()).strftime('%Y%m%d_%H%M')
+    periodo_fn = f"{data_inicio.strftime('%Y%m%d')}-{data_final.strftime('%Y%m%d')}"
+    filename   = f'relatorio_manutencao_{periodo_fn}_{data_str}.xlsx'
 
     response = HttpResponse(
         buffer.read(),

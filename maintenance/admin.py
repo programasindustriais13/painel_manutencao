@@ -52,9 +52,9 @@ class HistoricoPausaInline(admin.TabularInline):
 
 @admin.register(Allocation)
 class AlocacaoAdmin(admin.ModelAdmin):
-    list_display = ('tecnico', 'maquina', 'exibir_status_real', 'data_inicio', 'data_pausa', 'data_fim')
-    list_filter = ('status', 'data_inicio', 'data_pausa', 'data_fim')
-    search_fields = ('tecnico__nome', 'maquina__nome')
+    list_display = ('tecnico', 'maquina', 'exibir_status_real', 'usuario_operador', 'data_inicio', 'data_pausa', 'data_fim')
+    list_filter = ('status', 'usuario_operador', 'data_inicio', 'data_pausa', 'data_fim')
+    search_fields = ('tecnico__nome', 'maquina__nome', 'usuario_operador__username')
     date_hierarchy = 'data_inicio'
     inlines = [HistoricoPausaInline]
 

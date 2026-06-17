@@ -83,7 +83,7 @@ a nova versão para o GitHub:
    > git add .
 
 2. Faça o commit descrevendo o que foi implementado:
-   > git commit -m "Melhoria: janela /admin com dados de pausa e retorno e com status corrigido"
+   > git commit -m "Melhoria: Export excel / tempo de atualização do painel / adição de dados de status de tecnico"
 
 3. Envie para o GitHub:
    > git push origin main
@@ -549,3 +549,116 @@ E. Segurança:
 - Nenhuma tabela do banco de dados foi criada, alterada ou excluída.
 - Somente usuários autenticados com permissão Operador/Staff/Superuser podem acessar.
 - Tentativa de acesso não autorizado redireciona automaticamente para /tv/.
+
+
+19. FILTRO DE PERÍODO UNIFICADO E RELATÓRIO EXCEL EXPANDIDO (2026-06-16)
+--------------------------------------------------------------------------------
+Implementação de um filtro por intervalo de datas no Dashboard que restringe
+simultaneamente os gráficos exibidos na tela e os dados exportados para o Excel.
+O relatório Excel também foi expandido para incluir o histórico completo de pausas,
+dados do operador e observações textuais.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/templates/maintenance/dashboard.html
+- Instrucoes.txt
+
+NENHUMA MIGRAÇÃO necessária — apenas filtros de QuerySet (sem alteração nos models).
+
+A. Filtro de Período no Dashboard (Frontend — dashboard.html):
+--------------------------------------------------------------
+- Adicionado um formulário horizontal (GET) no topo do Dashboard (/dashboard/)
+  com dois campos de data: "Data Inicial" e "Data Final".
+- Botão "Filtrar" (btn-primary) submete o formulário e recarrega a página com
+  os parâmetros ?data_inicio=YYYY-MM-DD&data_final=YYYY-MM-DD na URL.
+- Link "Limpar" (btn-outline-secondary) aponta para /dashboard/ sem parâmetros,
+  restaurando o padrão retroativo de 30 dias.
+- Badge indicativo exibe o período ativo em formato DD/MM/AAAA → DD/MM/AAAA.
+- Após o filtro, os inputs mantêm as datas escolhidas (repopulados pelo contexto).
+
+IDs dos elementos para testes:
+  id="form-filtro-periodo"   → formulário de filtro
+  id="id_data_inicio"        → input Data Inicial
+  id="id_data_final"         → input Data Final
+  id="btn-filtrar-periodo"   → botão Filtrar
+  id="btn-limpar-filtro"     → link Limpar
+  id="btn-exportar-excel"    → botão Exportar Excel (href atualizado com datas)
+
+B. Lógica na View do Dashboard (views.py — dashboard):
+------------------------------------------------------
+Parâmetros GET aceitos:
+  data_inicio  → string YYYY-MM-DD   (formato nativo do input type="date")
+  data_final   → string YYYY-MM-DD
+
+Comportamento e validação:
+  1. Captura os valores com request.GET.get('data_inicio', '').strip().
+  2. Tenta converter com datetime.date.fromisoformat().
+  3. Em caso de string inválida ou ausente, cai no padrão retroativo (30 dias atrás
+     para data_inicio, data de hoje para data_final) — nunca gera exceção.
+  4. Se data_inicio > data_final, as datas são trocadas automaticamente.
+  5. As strings no formato YYYY-MM-DD são passadas ao contexto como
+     'data_inicio_str' e 'data_final_str' para repopular os inputs do formulário.
+
+O que É filtrado por período:
+  - Gráfico "Manutenções por Criticidade" → conta Allocations com
+    data_inicio__date__range=[data_inicio, data_final] filtradas por criticidade.
+  - Gráfico "Volume de Atendimentos por Setor" → mesma lógica, filtrada por setor.
+
+O que NÃO é filtrado (estado atual, snapshot em tempo real):
+  - KPI cards: Total Técnicos, Em Atendimento, Em Pausa, Ausentes/Externos.
+  - Gráfico de distribuição de status dos técnicos (rosca).
+  Justificativa: esses indicadores refletem o estado AGORA da fábrica —
+  não têm semântica temporal de "quantos estavam assim naquele período".
+
+C. Filtro na Exportação Excel (views.py — exportar_relatorio_excel):
+--------------------------------------------------------------------
+- A view de exportação captura os mesmos parâmetros GET (data_inicio, data_final)
+  com a mesma lógica de validação e fallback.
+- O queryset aplica:
+    Allocation.objects.filter(data_inicio__date__range=[data_inicio, data_final])
+- Quando o usuário clica "Exportar para Excel" no Dashboard, o href já contém
+  automaticamente os parâmetros do filtro ativo:
+    /dashboard/exportar-excel/?data_inicio=YYYY-MM-DD&data_final=YYYY-MM-DD
+- O Excel baixado contém APENAS as alocações do período selecionado.
+- Nome do arquivo inclui o período: relatorio_manutencao_AAAAMMDD-AAAAMMDD_AAAAMMDD_HHMM.xlsx
+
+D. Estrutura Expandida do Relatório Excel (13 colunas):
+-------------------------------------------------------
+Linha 1  → Título mesclado A1:M1 com período e data/hora da exportação.
+Linha 2  → Cabeçalho (fundo azul escuro #1E3A5F, texto branco, negrito).
+Linha 3+ → Uma linha por alocação, com alternância de fundo (linhas pares em #EBF0F8).
+
+Colunas exportadas (13 no total):
+  Col A  → Técnico (nome completo)
+  Col B  → Matrícula
+  Col C  → Setor (nome do setor da máquina)
+  Col D  → Máquina (nome da máquina)
+  Col E  → Criticidade (Baixa / Média / Alta)
+  Col F  → Operador (nome completo ou username de quem realizou a alocação)
+  Col G  → Status (Em Atendimento / Em Pausa / Concluído)
+  Col H  → Data/Hora de Início (DD/MM/AAAA HH:MM)
+  Col I  → Data/Hora de Término (DD/MM/AAAA HH:MM ou "—" se em aberto)
+  Col J  → Tempo Total em minutos (descontando pausas; se em aberto, calcula até agora)
+  Col K  → Observação Inicial do Serviço (campo atividade_observacao)
+  Col L  → Observação de Conclusão do Serviço (campo observacao_conclusao)
+  Col M  → Histórico de Pausas (pausas concatenadas com quebras de linha no formato:
+            "↓ DD/MM/AAAA HH:MM  →  DD/MM/AAAA HH:MM | Motivo da Pausa"
+            Uma linha por pausa. Se não há pausas, exibe "—".)
+
+Funcionalidades extras da planilha:
+  - Cabeçalho e linha de título mesclados automaticamente.
+  - Cabeçalho congelado em A3 (scroll vertical sem perder o cabeçalho).
+  - Bordas finas em todas as células (#CCCCCC).
+  - Larguras pré-definidas para cada coluna (sem necessidade de ajuste manual).
+  - Altura dinâmica das linhas: calculada com base na quantidade de pausas da
+    alocação (18 pixels × nº de pausas), garantindo que o texto não fique cortado.
+  - Alinhamento à esquerda com wrap_text nas colunas de texto longo (A, C, D, F, G, K, L, M).
+  - Alinhamento centralizado nas colunas numéricas e de datas (B, E, H, I, J).
+
+E. Segurança e Integridade:
+---------------------------
+- Nenhuma tabela do banco de dados foi criada, alterada ou excluída.
+- Somente usuários autenticados com permissão Operador/Staff/Superuser podem acessar.
+- Tentativa de acesso não autorizado redireciona automaticamente para /tv/.
+- Strings de data inválidas nunca travam a aplicação (sempre há fallback seguro).
+- O Excel é gerado em memória (io.BytesIO) — sem gravação em disco.

@@ -3,20 +3,56 @@
 {% block title %}Dashboard Analítico - Gestão de Manutenção{% endblock %}
 
 {% block content %}
-<div class="row mb-4 align-items-center">
+<div class="row mb-3 align-items-center">
     <div class="col-12 col-md-8">
         <h1 class="h2 fw-bold text-dark mb-1"><i class="bi bi-graph-up text-primary me-2"></i>Dashboard de Análise</h1>
         <p class="text-muted mb-0">Métricas de produtividade, criticidade e distribuição do setor operacional.</p>
     </div>
     <div class="col-12 col-md-4 text-md-end mt-3 mt-md-0">
         <a id="btn-exportar-excel"
-           href="{% url 'exportar_relatorio_excel' %}"
+           href="{% url 'exportar_relatorio_excel' %}?data_inicio={{ data_inicio_str }}&data_final={{ data_final_str }}"
            class="btn btn-success btn-lg shadow-sm d-inline-flex align-items-center gap-2"
-           title="Baixar relatório completo de alocações em formato Excel">
+           title="Baixar relatório do período selecionado em formato Excel">
             <i class="bi bi-file-earmark-excel-fill fs-5"></i>
             <span class="fw-semibold">Exportar para Excel</span>
         </a>
     </div>
+</div>
+
+<!-- Filtro de Período -->
+<div class="card card-custom p-3 mb-4 bg-white shadow-sm">
+    <form id="form-filtro-periodo" method="GET" action="" class="row g-2 align-items-end">
+        <div class="col-12 col-md-auto">
+            <label for="id_data_inicio" class="form-label fw-semibold text-muted small mb-1">Data Inicial</label>
+            <input type="date" id="id_data_inicio" name="data_inicio"
+                   class="form-control form-control-sm"
+                   value="{{ data_inicio_str }}"
+                   max="{{ data_final_str }}">
+        </div>
+        <div class="col-12 col-md-auto">
+            <label for="id_data_final" class="form-label fw-semibold text-muted small mb-1">Data Final</label>
+            <input type="date" id="id_data_final" name="data_final"
+                   class="form-control form-control-sm"
+                   value="{{ data_final_str }}"
+                   min="{{ data_inicio_str }}">
+        </div>
+        <div class="col-12 col-md-auto d-flex gap-2">
+            <button id="btn-filtrar-periodo" type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-funnel-fill me-1"></i>Filtrar
+            </button>
+            <a id="btn-limpar-filtro" href="{% url 'dashboard' %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-x-circle me-1"></i>Limpar
+            </a>
+        </div>
+        <div class="col-12 col-md-auto ms-auto">
+            <span class="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle px-3 py-2 small">
+                <i class="bi bi-calendar-range me-1"></i>
+                Período: {{ data_inicio_str|slice:"8:10" }}/{{ data_inicio_str|slice:"5:7" }}/{{ data_inicio_str|slice:":4" }}
+                &rarr;
+                {{ data_final_str|slice:"8:10" }}/{{ data_final_str|slice:"5:7" }}/{{ data_final_str|slice:":4" }}
+            </span>
+        </div>
+    </form>
 </div>
 
 <!-- Key Performance Indicators (KPIs) -->

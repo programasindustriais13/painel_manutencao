@@ -116,6 +116,13 @@ class Allocation(models.Model):
         default='EM_ATENDIMENTO',
         verbose_name="Status da Alocação"
     )
+    usuario_operador = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Operador Responsável"
+    )
     data_inicio = models.DateTimeField(verbose_name="Data/Hora de Início")
     data_pausa = models.DateTimeField(null=True, blank=True, verbose_name="Data/Hora de Pausa")
     motivo_pausa = models.TextField(null=True, blank=True, verbose_name="Motivo da Pausa")
