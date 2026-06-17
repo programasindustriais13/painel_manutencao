@@ -9,8 +9,10 @@ from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
 class MaintenanceSystemTestCase(TestCase):
     def setUp(self):
         # Create groups
-        self.operator_group = Group.objects.create(name='Operador')
-        self.viewer_group = Group.objects.create(name='Visualizador')
+        self.operator_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.viewer_group, _ = Group.objects.get_or_create(name='Visualizador')
+        self.tech_group, _ = Group.objects.get_or_create(name='Tecnicos')
+        self.lider_group, _ = Group.objects.get_or_create(name='Tecnicos_Lideres')
         
         # Create users
         self.admin_user = User.objects.create_superuser('admin_test', 'admin@test.com', 'pwd123')
@@ -76,8 +78,8 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         
         response = client.get(reverse('technician_management'))
-        # Custom decorator redirects to tv_dashboard on access violations
-        self.assertRedirects(response, reverse('tv_dashboard'))
+        # Custom decorator redirects to login on access violations
+        self.assertRedirects(response, reverse('login'))
         
         # Operator user can access both
         client.force_login(self.operador_user)

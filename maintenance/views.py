@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.models import User
 from django.contrib import messages
 from django.utils import timezone
 from django.http import HttpResponse
@@ -14,29 +15,108 @@ from openpyxl.utils import get_column_letter
 
 from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala
 from .forms import (
-    SectorForm, MachineForm, TechnicianForm, 
+    SectorForm, MachineForm, TechnicianForm,
     StartServiceForm, PauseServiceForm, FinishServiceForm
 )
 
-# Custom decorator to check if user is Operador/Gestor or superuser
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers de permissão de grupo
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _user_is_operador(user):
+    """Retorna True apenas para Operadores/Administradores (grupo 'Operadores', superuser, staff, ou grupo legado 'Operador')."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    return user.groups.filter(name__in=['Operadores', 'Operador']).exists()
+
+
+def _user_is_lider_ou_operador(user):
+    """Retorna True para Operadores e Técnicos Líderes (grupos 'Operadores', 'Tecnicos_Lideres', 'Operador', superuser, staff)."""
+    if _user_is_operador(user):
+        return True
+    return user.groups.filter(name='Tecnicos_Lideres').exists()
+
+
+def _get_technician_proprio(user):
+    """Retorna o Técnico vinculado ao usuário, ou None se não houver."""
+    try:
+        return user.technician_profile
+    except Exception:
+        return None
+
+
+# Decorator para views que exigem Operador/Admin COMPLETO (cadastros, etc.).
+# Redireciona usuários sem acesso para /management/ com alerta.
 def operador_required(view_func):
     @login_required
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
-        if request.user.is_superuser or request.user.is_staff or request.user.groups.filter(name='Operador').exists():
+        if _user_is_operador(request.user):
             return view_func(request, *args, **kwargs)
-        messages.error(request, "Acesso restrito. Apenas operadores e gestores podem acessar esta página.")
-        return redirect('tv_dashboard')
+        messages.error(
+            request,
+            "Acesso restrito a Operadores/Administradores. Esta seção não está disponível para o seu perfil."
+        )
+        return redirect('technician_management')
+    return wrapper
+
+
+# Decorator para /dashboard/ e exportação Excel.
+# Permite: Operadores e Tecnicos_Lideres. Bloqueia outros (redireciona para /management/).
+def lider_ou_operador_required(view_func):
+    @login_required
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if _user_is_lider_ou_operador(request.user):
+            return view_func(request, *args, **kwargs)
+        messages.error(
+            request,
+            "Acesso restrito. Esta página requer perfil de Técnico Líder ou superior."
+        )
+        return redirect('technician_management')
+    return wrapper
+
+
+# Decorator para /management/ — acessível por todos os perfis com login vinculado ou do grupo adequado.
+def tecnico_or_operador_required(view_func):
+    @login_required
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        user = request.user
+        if (user.is_superuser or user.is_staff or 
+            user.groups.filter(name__in=['Operadores', 'Tecnicos_Lideres', 'Tecnicos', 'Operador']).exists() or 
+            _get_technician_proprio(user)):
+            return view_func(request, *args, **kwargs)
+        messages.error(request, "Acesso negado. Faça login com credenciais válidas.")
+        return redirect('login')
     return wrapper
 
 
 @login_required
 def home_redirect(request):
     user = request.user
+    # Visualizador / usuário 'tv' → painel TV
     if user.groups.filter(name='Visualizador').exists() or user.username == 'tv':
         return redirect('tv_dashboard')
-    else:
+    # Técnico Líder → dashboard (tem acesso a métricas)
+    if user.groups.filter(name='Tecnicos_Lideres').exists():
         return redirect('dashboard')
+    # Técnico comum (se estiver no grupo Tecnicos) → painel de controle de técnicos
+    if user.groups.filter(name='Tecnicos').exists():
+        return redirect('technician_management')
+        
+    # Fallback para perfis legados / técnicos vinculados
+    tecnico = _get_technician_proprio(user)
+    if tecnico and tecnico.perfil == 'TECNICO_LIDER':
+        return redirect('dashboard')
+    if tecnico and tecnico.perfil == 'TECNICO':
+        return redirect('technician_management')
+        
+    # Operadores, staff, superuser, técnicos OPERADOR → dashboard
+    return redirect('dashboard')
 
 
 # ----------------------------------------------------
@@ -44,15 +124,24 @@ def home_redirect(request):
 # ----------------------------------------------------
 @login_required
 def tv_dashboard(request):
+    user = request.user
+    # Permitir apenas se for Operador/Admin ou se estiver no grupo Visualizador ou username tv
+    is_tv_viewer = user.groups.filter(name='Visualizador').exists() or user.username == 'tv'
+    is_operador = user.is_superuser or user.is_staff or user.groups.filter(name__in=['Operadores', 'Operador']).exists()
+    
+    if not (is_tv_viewer or is_operador):
+        messages.error(request, "Acesso negado. A TV de exibição é restrita para o seu perfil.")
+        return redirect('technician_management')
+
     active_allocations = Allocation.objects.filter(
         data_fim__isnull=True,
         status='EM_ATENDIMENTO'
     ).select_related('maquina', 'maquina__setor').prefetch_related('pausas')
-    
+
     technicians = Technician.objects.all().prefetch_related(
         Prefetch('allocations', queryset=active_allocations)
     ).order_by('nome')
-    
+
     context = {
         'technicians': technicians,
         'now': timezone.now(),
@@ -61,32 +150,50 @@ def tv_dashboard(request):
 
 
 # ----------------------------------------------------
-# 2. TELA C: GERENCIAMENTO DE TÉCNICOS EM TEMPO REAL (OPERADOR)
+# 2. TELA C: GERENCIAMENTO DE TÉCNICOS EM TEMPO REAL
+# Acessível por Operadores (acesso total) e Técnicos vinculados (somente próprio card).
 # ----------------------------------------------------
-@operador_required
+@tecnico_or_operador_required
 def technician_management(request):
     technicians = Technician.objects.all().order_by('nome')
-    
+
     # Instantiate blank forms to render in the modals
     start_form = StartServiceForm()
     pause_form = PauseServiceForm()
     finish_form = FinishServiceForm()
-    
+
+    # Determina contexto de permissão do usuário logado
+    is_operador = _user_is_operador(request.user)          # True apenas para OPERADOR puro
+    can_manage  = _user_is_lider_ou_operador(request.user) # True para OPERADOR e TECNICO_LIDER
+    tecnico_proprio = _get_technician_proprio(request.user)
+    technician_proprio_id = tecnico_proprio.id if tecnico_proprio else None
+
     context = {
         'technicians': technicians,
         'start_form': start_form,
         'pause_form': pause_form,
         'finish_form': finish_form,
+        'user_is_operador': is_operador,   # usado apenas para o botão "Cadastros"
+        'user_can_manage': can_manage,     # usado para ações dos cards e widget de escala
+        'technician_proprio_id': technician_proprio_id,
     }
     return render(request, 'maintenance/technician_management.html', context)
 
 
 # Action: Start Service
-@operador_required
+@login_required
 def start_service(request, technician_id):
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
-        
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        # TECNICO_LIDER e OPERADOR podem agir em qualquer card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode iniciar serviços no seu próprio card.")
+                return redirect('technician_management')
+
         # Bloquear se o técnico estiver ausente/fora da fábrica.
         if technician.is_ausente:
             messages.error(request, f"Técnico {technician.nome} está marcado como '{technician.get_status_display()}' e não pode receber novas ordens. Altere a disponibilidade antes de alocar.")
@@ -97,7 +204,7 @@ def start_service(request, technician_id):
         if technician.active_allocation is not None:
             messages.error(request, f"Técnico {technician.nome} já possui um atendimento ativo. Pause-o antes de iniciar outro.")
             return redirect('technician_management')
-            
+
         form = StartServiceForm(request.POST)
         if form.is_valid():
             allocation = form.save(commit=False)
@@ -106,112 +213,133 @@ def start_service(request, technician_id):
             allocation.status = 'EM_ATENDIMENTO'
             allocation.usuario_operador = request.user
             allocation.save()
-            
+
             # Status do técnico sempre reflete a alocação ativa
             technician.status = 'EM_ATENDIMENTO'
             technician.save()
-            
+
             messages.success(request, f"Serviço iniciado com sucesso para {technician.nome}.")
         else:
             for field, errors in form.errors.items():
                 for error in errors:
                     messages.error(request, f"Erro: {error}")
-                    
+
     return redirect('technician_management')
 
 
 # Action: Pause Service (pausa a alocação ativa do técnico)
-@operador_required
+@login_required
 def pause_service(request, technician_id):
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
-        
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode pausar serviços no seu próprio card.")
+                return redirect('technician_management')
+
         if technician.status != 'EM_ATENDIMENTO':
             messages.error(request, f"Técnico {technician.nome} não está em atendimento ativo.")
             return redirect('technician_management')
-            
+
         active_alloc = technician.active_allocation
         if not active_alloc:
             messages.error(request, f"Nenhuma alocação ativa encontrada para {technician.nome}.")
             return redirect('technician_management')
-            
+
         form = PauseServiceForm(request.POST)
         if form.is_valid():
             now_time = timezone.now()
             motivo = form.cleaned_data['motivo_pausa']
-            
+
             # Cria registro de histórico de pausa
             HistoricoPausa.objects.create(
                 alocacao=active_alloc,
                 data_pausa=now_time,
                 motivo_pausa=motivo
             )
-            
+
             # Marca a alocação como EM_PAUSA (mantendo campos legados)
             active_alloc.data_pausa = now_time
             active_alloc.motivo_pausa = motivo
             active_alloc.status = 'EM_PAUSA'
             active_alloc.save()
-            
+
             # Atualiza status do técnico: EM_PAUSA se não houver outra ativa
             if technician.active_allocation is None:
                 technician.status = 'EM_PAUSA'
                 technician.save()
-            
+
             messages.warning(request, f"Serviço pausado para {technician.nome}.")
         else:
             for field, errors in form.errors.items():
                 for error in errors:
                     messages.error(request, f"Erro: {error}")
-                    
+
     return redirect('technician_management')
 
 
 # Action: Resume Service (retoma o ÚNICO serviço pausado — caso simples)
-@operador_required
+@login_required
 def resume_service(request, technician_id):
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
-        
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode retomar serviços no seu próprio card.")
+                return redirect('technician_management')
+
         if technician.status != 'EM_PAUSA':
             messages.error(request, f"Técnico {technician.nome} não está em pausa.")
             return redirect('technician_management')
-        
+
         # Pega a única pausada (caso simples sem alocação ativa)
         paused_allocs = technician.paused_allocations
         if not paused_allocs.exists():
             messages.error(request, f"Nenhuma alocação pausada encontrada para {technician.nome}.")
             return redirect('technician_management')
-        
+
         # Retoma a alocação pausada mais antiga
         alloc = paused_allocs.first()
-        
+
         # Localiza o último registro de HistoricoPausa onde data_retorno é nulo e preenche
         pausa_aberta = alloc.pausas.filter(data_retorno__isnull=True).order_by('-data_pausa').first()
         if pausa_aberta:
             pausa_aberta.data_retorno = timezone.now()
             pausa_aberta.save()
-            
+
         alloc.data_pausa = None
         alloc.motivo_pausa = None
         alloc.status = 'EM_ATENDIMENTO'
         alloc.save()
-        
+
         technician.status = 'EM_ATENDIMENTO'
         technician.save()
-        
+
         messages.success(request, f"Serviço retomado por {technician.nome}.")
-        
+
     return redirect('technician_management')
 
 
 # Action: Resume Paused Allocation (troca de contexto — ativa alocação específica por ID)
-@operador_required
+@login_required
 def resume_paused_allocation(request, allocation_id):
     if request.method == 'POST':
         alloc_to_resume = get_object_or_404(Allocation, id=allocation_id)
         technician = alloc_to_resume.tecnico
-        
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode retomar alocações do seu próprio card.")
+                return redirect('technician_management')
+
         if alloc_to_resume.status != 'EM_PAUSA' or alloc_to_resume.data_fim is not None:
             messages.error(request, "Esta alocação não está em pausa ou já foi encerrada.")
             return redirect('technician_management')
@@ -251,10 +379,17 @@ def resume_paused_allocation(request, allocation_id):
 
 
 # Action: Finish Service (finaliza a alocação ATIVA do técnico)
-@operador_required
+@login_required
 def finish_service(request, technician_id):
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode concluir serviços no seu próprio card.")
+                return redirect('technician_management')
         
         active_alloc = technician.active_allocation
         if not active_alloc:
@@ -294,11 +429,18 @@ def finish_service(request, technician_id):
 
 
 # Action: Finish Allocation (finaliza uma alocação específica por ID — ativa OU pausada)
-@operador_required
+@login_required
 def finish_allocation(request, allocation_id):
     if request.method == 'POST':
         alloc = get_object_or_404(Allocation, id=allocation_id)
         technician = alloc.tecnico
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode finalizar alocações do seu próprio card.")
+                return redirect('technician_management')
         
         if alloc.data_fim is not None:
             messages.error(request, "Esta alocação já foi encerrada.")
@@ -340,9 +482,11 @@ def finish_allocation(request, allocation_id):
 
 
 # Action: Set Availability / Absence status
-@operador_required
+@login_required
 def set_availability(request, technician_id):
-    """Permite ao operador definir o status de escala/ausência do técnico.
+    """Permite ao OPERADOR definir o status de escala/ausência do técnico.
+
+    Técnicos com perfil TECNICO NÃO podem alterar escalas.
 
     Status aceitos:
         OCIOSO          → retorna o técnico ao fluxo normal
@@ -357,6 +501,10 @@ def set_availability(request, technician_id):
         - O status EM_ATENDIMENTO não pode ser definido manualmente aqui;
           ele é controlado exclusivamente pelas views start/pause/finish.
     """
+    # OPERADOR e TECNICO_LIDER podem alterar escala. Técnico comum não.
+    if not _user_is_lider_ou_operador(request.user):
+        messages.error(request, "Acesso negado. Somente Técnicos Líderes e Operadores podem alterar escalas e disponibilidade.")
+        return redirect('technician_management')
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
         novo_status = request.POST.get('novo_status', '').strip()
@@ -400,7 +548,7 @@ def set_availability(request, technician_id):
 # ----------------------------------------------------
 # 3. TELA D: DASHBOARD DE ANÁLISE (GESTÃO)
 # ----------------------------------------------------
-@operador_required
+@lider_ou_operador_required
 def dashboard(request):
     # ── Filtro de Período (GET) ─────────────────────────────────────────────
     # Captura parâmetros data_inicio e data_final da query string.
@@ -593,8 +741,30 @@ def technician_create(request):
     if request.method == 'POST':
         form = TechnicianForm(request.POST)
         if form.is_valid():
-            form.save()
-            messages.success(request, "Técnico cadastrado com sucesso.")
+            technician = form.save(commit=False)
+            # Processa criação de usuário se username foi fornecido
+            username = form.cleaned_data.get('username_login', '').strip()
+            senha = form.cleaned_data.get('senha_acesso', '').strip()
+            perfil = form.cleaned_data.get('perfil_acesso', 'TECNICO') or 'TECNICO'
+            if username and senha:
+                user = User.objects.create_user(username=username, password=senha)
+                technician.user = user
+
+            if technician.user:
+                # Sincroniza grupo nativo do Django
+                from django.contrib.auth.models import Group
+                technician.user.groups.clear()
+                if perfil == 'TECNICO':
+                    technician.user.groups.add(Group.objects.get(name='Tecnicos'))
+                elif perfil == 'TECNICO_LIDER':
+                    technician.user.groups.add(Group.objects.get(name='Tecnicos_Lideres'))
+                elif perfil == 'OPERADOR':
+                    technician.user.groups.add(Group.objects.get(name='Operadores'))
+            technician.perfil = perfil
+            technician.save()
+            messages.success(request, "Técnico cadastrado com sucesso." + (
+                f" Usuário '{username}' criado e vinculado." if username and senha else ""
+            ))
             return redirect('crud_list')
     else:
         form = TechnicianForm()
@@ -606,12 +776,47 @@ def technician_edit(request, pk):
     if request.method == 'POST':
         form = TechnicianForm(request.POST, instance=technician)
         if form.is_valid():
-            form.save()
-            messages.success(request, "Técnico atualizado com sucesso.")
+            technician = form.save(commit=False)
+            # Processa criação/atualização de usuário se username foi fornecido
+            username = form.cleaned_data.get('username_login', '').strip()
+            senha = form.cleaned_data.get('senha_acesso', '').strip()
+            perfil = form.cleaned_data.get('perfil_acesso', 'TECNICO') or 'TECNICO'
+            if username:
+                if technician.user:
+                    # Autoriza alteração do usuário já vinculado
+                    technician.user.username = username
+                    if senha:
+                        technician.user.set_password(senha)
+                    technician.user.save()
+                elif senha:
+                    # Cria um novo usuário e vincula
+                    user = User.objects.create_user(username=username, password=senha)
+                    technician.user = user
+
+            if technician.user:
+                # Sincroniza grupo nativo do Django
+                from django.contrib.auth.models import Group
+                technician.user.groups.clear()
+                if perfil == 'TECNICO':
+                    technician.user.groups.add(Group.objects.get(name='Tecnicos'))
+                elif perfil == 'TECNICO_LIDER':
+                    technician.user.groups.add(Group.objects.get(name='Tecnicos_Lideres'))
+                elif perfil == 'OPERADOR':
+                    technician.user.groups.add(Group.objects.get(name='Operadores'))
+            technician.perfil = perfil
+            technician.save()
+            msg_extra = ""
+            if username:
+                msg_extra = f" Usuário '{username}' atualizado/vinculado com perfil {perfil}."
+            messages.success(request, "Técnico atualizado com sucesso." + msg_extra)
             return redirect('crud_list')
     else:
         form = TechnicianForm(instance=technician)
-    return render(request, 'maintenance/technician_form.html', {'form': form, 'title': 'Editar Técnico'})
+        # Pré-preencher username e perfil se já houver usuário vinculado
+        if technician.user:
+            form.initial['username_login'] = technician.user.username
+        form.initial['perfil_acesso'] = technician.perfil or 'TECNICO'
+    return render(request, 'maintenance/technician_form.html', {'form': form, 'title': 'Editar Técnico', 'technician': technician})
 
 @operador_required
 def technician_delete(request, pk):
@@ -626,7 +831,7 @@ def technician_delete(request, pk):
 # ----------------------------------------------------
 # 5. EXPORTAÇÃO DE RELATÓRIO EXCEL
 # ----------------------------------------------------
-@operador_required
+@lider_ou_operador_required
 def exportar_relatorio_excel(request):
     """
     Gera e retorna um arquivo Excel (.xlsx) com o relatório detalhado de alocações.

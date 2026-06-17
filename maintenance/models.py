@@ -58,6 +58,12 @@ class Technician(models.Model):
         ('EXTERNO_PLANTAO', 'Plantão Fora da Fábrica'),
     ]
 
+    PERFIL_CHOICES = [
+        ('TECNICO', 'Técnico (Acesso apenas ao próprio card)'),
+        ('TECNICO_LIDER', 'Técnico Líder (Acesso ao painel e dashboard — sem cadastros)'),
+        ('OPERADOR', 'Operador/Administrador (Acesso total incluindo cadastros)'),
+    ]
+
     # Conjunto de status que indicam que o técnico está ausente/fora da fábrica
     # e não pode receber novas ordens de serviço.
     STATUS_AUSENCIA = {'AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO'}
@@ -69,6 +75,25 @@ class Technician(models.Model):
         choices=STATUS_CHOICES, 
         default='OCIOSO', 
         verbose_name="Status"
+    )
+    # Vínculo opcional com usuário Django para autenticação do técnico.
+    # null=True, blank=True: técnicos sem usuário continuam funcionando normalmente.
+    user = models.OneToOneField(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='technician_profile',
+        verbose_name="Usuário do Sistema"
+    )
+    # Perfil de acesso: TECNICO (apenas próprio card) ou OPERADOR (acesso total).
+    perfil = models.CharField(
+        max_length=15,
+        choices=PERFIL_CHOICES,
+        default='TECNICO',
+        null=True,
+        blank=True,
+        verbose_name="Perfil de Acesso"
     )
 
     def __str__(self):

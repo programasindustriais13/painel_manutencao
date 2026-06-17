@@ -122,24 +122,35 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                    <!-- Painel TV (Modo TV) - Visível apenas para Operadores, Visualizador e admins/staff -->
+                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Visualizador' or request.user.groups.all.0.name == 'Operador' %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'tv_dashboard' %}active{% endif %}" href="{% url 'tv_dashboard' %}">
                             <i class="bi bi-tv me-1"></i> Painel TV (Modo TV)
                         </a>
                     </li>
+                    {% endif %}
                     
-                    <!-- Operator / manager check -->
-                    {% if user.is_superuser or user.is_staff or user.groups.filter.name == 'Operador' or 'Operador' in user.groups.all|stringformat:'s' %}
+                    <!-- Controle Técnico - Visível para todos os autenticados com perfil apropriado -->
+                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Tecnicos' or request.user.groups.all.0.name == 'Operador' or request.user.technician_profile %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'technician_management' %}active{% endif %}" href="{% url 'technician_management' %}">
                             <i class="bi bi-people me-1"></i> Controle Técnico
                         </a>
                     </li>
+                    {% endif %}
+
+                    <!-- Dashboard - Visível para Operadores, Tecnicos_Lideres e admins/staff -->
+                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Operador' %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
                             <i class="bi bi-graph-up-arrow me-1"></i> Dashboard
                         </a>
                     </li>
+                    {% endif %}
+
+                    <!-- Cadastros - Visível apenas para Operadores, admins e staff -->
+                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Operador' %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'crud_list' %}active{% endif %}" href="{% url 'crud_list' %}">
                             <i class="bi bi-sliders me-1"></i> Cadastros

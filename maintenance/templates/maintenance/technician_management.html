@@ -148,12 +148,16 @@
         <p class="text-muted">Gerenciamento e alocação de técnicos na linha de produção em tempo real.</p>
     </div>
     <div class="col-12 col-md-6 text-md-end d-flex align-items-center justify-content-md-end gap-2">
+        {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Visualizador' or request.user.groups.all.0.name == 'Operador' %}
         <a href="{% url 'tv_dashboard' %}" class="btn btn-outline-dark rounded-pill px-3">
             <i class="bi bi-tv me-1"></i> Ver Painel TV
         </a>
+        {% endif %}
+        {% if user_is_operador %}
         <a href="{% url 'crud_list' %}" class="btn btn-primary-custom rounded-pill px-3">
             <i class="bi bi-plus-circle me-1"></i> Cadastros
         </a>
+        {% endif %}
     </div>
 </div>
 
@@ -297,6 +301,8 @@
                                         {% if p_alloc.motivo_pausa %}
                                             <p class="mb-2 text-warning-emphasis" style="font-size:.75rem;"><i class="bi bi-info-circle-fill me-1"></i>{{ p_alloc.motivo_pausa|truncatechars:60 }}</p>
                                         {% endif %}
+                                        <!-- Botões de ação nas pausas: visíveis somente para quem pode gerenciar OU próprio técnico -->
+                                        {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or tech.user == request.user %}
                                         <div class="d-flex gap-2">
                                             <!-- Retomar esta alocação específica -->
                                             {% if tech.is_ausente %}
@@ -320,6 +326,7 @@
                                                 <i class="bi bi-check-lg me-1"></i>Finalizar
                                             </button>
                                         </div>
+                                        {% endif %}
                                     </div>
                                 {% endfor %}
                             </div>
@@ -329,6 +336,9 @@
                 
                 <!-- Card Footer controls -->
                 <div class="card-footer bg-white border-0 pb-4 px-4 pt-2">
+
+                    <!-- Botões de ação: visíveis para quem pode gerenciar todos (OPERADOR/TECNICO_LIDER) ou TECNICO (apenas próprio card) -->
+                    {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or tech.user == request.user %}
                     <div class="d-flex gap-2 justify-content-end flex-wrap">
 
                         {% if tech.is_ausente %}
@@ -366,9 +376,16 @@
                         {% endif %}
 
                     </div>
+                    {% else %}
+                    <!-- Técnico TECNICO vendo card de colega: apenas visualização -->
+                    <div class="w-100 text-center py-1">
+                        <span class="text-muted small fst-italic"><i class="bi bi-eye me-1"></i>Visualização — sem ações disponíveis</span>
+                    </div>
+                    {% endif %}
 
                     <!-- Widget: Definir Escala / Disponibilidade -->
-                    <!-- Oculto apenas quando o técnico está EM_ATENDIMENTO ativo -->
+                    <!-- Visível para OPERADOR e TECNICO_LIDER; técnicos TECNICO não podem alterar escala -->
+                    {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' %}
                     {% if tech.status != 'EM_ATENDIMENTO' %}
                     <div class="availability-widget">
                         <label><i class="bi bi-gear-fill me-1"></i>Definir Escala / Disponibilidade</label>
@@ -386,6 +403,7 @@
                             </button>
                         </form>
                     </div>
+                    {% endif %}
                     {% endif %}
 
                 </div>

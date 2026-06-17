@@ -662,3 +662,271 @@ E. Segurança e Integridade:
 - Tentativa de acesso não autorizado redireciona automaticamente para /tv/.
 - Strings de data inválidas nunca travam a aplicação (sempre há fallback seguro).
 - O Excel é gerado em memória (io.BytesIO) — sem gravação em disco.
+
+
+20. CRIAÇÃO DA CONSTITUIÇÃO E DIRETRIZES DE BLINDAGEM DO SISTEMA (2026-06-17)
+--------------------------------------------------------------------------------
+Arquivo criado: constitution.md na raiz do projeto.
+
+Este arquivo documenta as diretrizes essenciais para:
+- Princípio da Não-Destruição de Dados (migrações seguras, campos opcionais e tabelas de históricos incremental);
+- Preservação das Regras de Negócio Críticas (concorrência de técnicos, histórico relacional de pausas, otimização da tela da TV e rastreabilidade/auditoria de ações);
+- Limitações de Escopo Técnico (sem novos apps Django ou venv desnecessários, fallbacks de arquivos nulos e filtros unificados no dashboard);
+- Protocolo de documentação no arquivo Instrucoes.txt ao final de cada tarefa;
+- Reconhecimento obrigatório do agente de IA antes de realizar qualquer alteração futura no código.
+
+
+21. VINCULAÇÃO DE USUÁRIOS A TÉCNICOS E PERMISSÕES DE CHÃO DE FÁBRICA (2026-06-17)
+--------------------------------------------------------------------------------
+Permite que técnicos tenham login próprio no sistema para gerenciar seu próprio
+card de serviços. Um líder/operador pode gerenciar todos os cards e cadastros.
+
+Arquivos modificados:
+- maintenance/models.py
+- maintenance/migrations/0008_technician_user_perfil.py  [NOVO]
+- maintenance/forms.py
+- maintenance/views.py
+- maintenance/admin.py
+- maintenance/templates/maintenance/technician_management.html
+- maintenance/templates/maintenance/technician_form.html
+- Instrucoes.txt
+
+A. Novos Campos no Model Technician (models.py):
+-------------------------------------------------
+Campo                | Tipo                        | Descrição
+---------------------|-----------------------------|---------------------------------
+user                 | OneToOneField → auth.User   | Usuário Django vinculado (optional)
+                     | SET_NULL, null=True, blank=True | Técnicos sem user: sem acesso
+perfil               | CharField(max_length=10)    | 'TECNICO' ou 'OPERADOR'
+                     | null=True, blank=True, default='TECNICO'
+
+Choices do perfil:
+  TECNICO  → Acessa apenas o próprio card em /management/
+  OPERADOR → Acesso total (dashboard, cadastros e todos os cards)
+
+Migração gerada: 0008_technician_user_perfil.py
+Tipo: AddField apenas — dados existentes 100% preservados.
+
+B. Como o Operador Líder Cria o Usuário de um Técnico:
+------------------------------------------------------
+1. Acesse o sistema com uma conta Operador/Admin.
+2. Navegue até Cadastros → Técnicos → clique em "Editar" (ícone de lápis) no técnico desejado.
+3. Na seção "Acesso ao Sistema" (parte inferior do formulário):
+   a. Preencha o campo "Login (Username)": ex. 'joao.silva' ou 'tec001'.
+   b. Preencha o campo "Senha de Acesso" com uma senha simples (mínimo 4 caracteres).
+      ATENÇÃO: Os validadores complexos do Django (comprimento mínimo 8, histórico, etc.)
+      estão DESATIVADOS para este formulário específico de chão de fábrica. Use senhas
+      simples como o número de matrícula ou um PIN de 4-6 dígitos.
+   c. Selecione o "Perfil de Acesso":
+      - "Técnico" → o funcionário vê apenas o próprio card (sem acesso a dashboard ou cadastros).
+      - "Operador/Líder" → acesso total (equivale a um gestor de fábrica).
+4. Clique em "Salvar".
+   → O sistema criará automaticamente o User Django com create_user() e o vinculará
+     ao registro do Técnico através do campo OneToOneField.
+   → Uma mensagem de confirmação aparecerá: "Usuário '<username>' criado e vinculado."
+
+Para atualizar o usuário de um técnico já vinculado:
+   - O campo "Login" vem pré-preenchido com o username atual.
+   - Para trocar a senha: preencha o campo "Senha de Acesso" com a nova senha.
+   - Para manter a senha: deixe o campo "Senha de Acesso" em branco.
+   - Alterar o Perfil de Acesso entra em vigor imediatamente após o Salvar.
+
+C. Como o Técnico Faz Login:
+----------------------------
+1. Acesse: /login/  (ou a URL raiz do sistema)
+2. Informe o Username e Senha definidos pelo Operador.
+3. O sistema redireciona automaticamente para /management/ (Controle de Técnicos).
+4. Apenas o próprio card do técnico terá botões de ação (Iniciar, Pausar, Concluir).
+5. Os cards dos colegas aparecem em modo de visualização somente-leitura.
+
+D. Regras de Controle de Acesso por Perfil:
+-------------------------------------------
+Ação / Tela                          | Perfil TECNICO | Perfil OPERADOR
+-------------------------------------|----------------|------------------
+/management/ (ver todos os cards)    | ✅ Sim         | ✅ Sim
+Iniciar/Pausar/Concluir próprio card | ✅ Sim         | ✅ Sim
+Iniciar/Pausar/Concluir card alheio  | ❌ Não         | ✅ Sim
+Widget "Definir Escala/Disponibil."  | ❌ Não         | ✅ Sim
+/dashboard/                          | ❌ Redirecionado| ✅ Sim
+/cruds/ (cadastros)                  | ❌ Redirecionado| ✅ Sim
+/tv/ (painel TV)                     | ✅ Sim (login) | ✅ Sim
+
+E. Decorators e Helpers Criados (views.py):
+-------------------------------------------
+- _user_is_operador(user)         → bool: True se superuser/staff/grupo Operador/perfil OPERADOR
+- _get_technician_proprio(user)   → Technician | None: retorna o técnico vinculado ao usuário
+- tecnico_or_operador_required    → decorator para /management/ (permite TECNICO + OPERADOR)
+- operador_required               → refatorado: redireciona TECNICO para /management/ (antes ia para /tv/)
+
+F. Migração de Banco:
+---------------------
+- Arquivo: maintenance/migrations/0008_technician_user_perfil.py
+- Operações: AddField user (OneToOneField SET_NULL) + AddField perfil (CharField)
+- Dados existentes: 100% preservados (ambos os campos são null=True, blank=True)
+- Comandos executados:
+    python manage.py makemigrations maintenance --name technician_user_perfil
+    python manage.py migrate
+- Resultado: maintenance.0008_technician_user_perfil... OK
+
+G. Admin Django (/admin/):
+--------------------------
+- TecnicoAdmin atualizado: list_display e list_filter incluem 'perfil' e 'user'.
+- Busca por username do usuário vinculado habilitada (search_fields inclui user__username).
+- Para visualizar/editar vínculos: /admin/maintenance/technician/
+
+
+22. PERFIL TÉCNICO LÍDER — NOVO NÍVEL DE ACESSO INTERMEDIÁRIO (2026-06-17)
+--------------------------------------------------------------------------------
+Adicionado o perfil TECNICO_LIDER ao sistema. Este perfil fica entre o Técnico comum
+e o Operador/Administrador, sendo ideal para líderes de equipe que precisam gerenciar
+o painel e visualizar métricas, mas não devem alterar cadastros base.
+
+Arquivos modificados:
+- maintenance/models.py          (PERFIL_CHOICES + max_length=15)
+- maintenance/migrations/0009_perfil_max_length_tecnico_lider.py  [NOVO]
+- maintenance/forms.py           (choice TECNICO_LIDER adicionada ao TechnicianForm)
+- maintenance/views.py           (novos helpers + decorators + regras de acesso)
+- maintenance/templates/maintenance/technician_management.html
+- maintenance/templates/maintenance/technician_form.html
+- Instrucoes.txt
+
+A. Três Perfis de Acesso (campo perfil no model Technician):
+------------------------------------------------------------
+Valor         | Nome na UI             | Descrição
+--------------|------------------------|------------------------------------------
+TECNICO       | Técnico                | Acessa apenas o próprio card em /management/
+TECNICO_LIDER | Técnico Líder          | Acessa /management/ (poder total) + /dashboard/
+OPERADOR      | Operador/Administrador | Acesso total: /management/ + /dashboard/ + /cruds/
+
+B. Tabela de Permissões por Tela:
+----------------------------------
+Tela / Ação                          | TECNICO  | TECNICO_LIDER | OPERADOR
+-------------------------------------|----------|---------------|----------
+/management/ (ver todos os cards)    | ✅ Sim   | ✅ Sim        | ✅ Sim
+Iniciar/Pausar/Concluir próprio card | ✅ Sim   | ✅ Sim        | ✅ Sim
+Iniciar/Pausar/Concluir card alheio  | ❌ Não   | ✅ Sim        | ✅ Sim
+Widget "Definir Escala"              | ❌ Não   | ✅ Sim        | ✅ Sim
+/dashboard/ (métricas + gráficos)    | ❌ Não   | ✅ Sim        | ✅ Sim
+Exportar relatório Excel             | ❌ Não   | ✅ Sim        | ✅ Sim
+/cruds/ (cadastros)                  | ❌ Não   | ❌ Não        | ✅ Sim
+/tv/ (Painel TV)                     | ✅ Sim   | ❌ Não*       | ✅ Sim
+
+* TECNICO_LIDER é bloqueado no /tv/ e redirecionado para /management/ com aviso.
+
+C. Redirecionamento Pós-Login (home_redirect):
+----------------------------------------------
+- TECNICO       → /management/
+- TECNICO_LIDER → /dashboard/
+- OPERADOR      → /dashboard/
+- Visualizador  → /tv/
+
+D. Como Criar um Técnico Líder:
+--------------------------------
+1. Acesse o sistema como Operador/Administrador.
+2. Vá em Cadastros → Técnicos → Editar o técnico desejado.
+3. Na seção "Acesso ao Sistema", preencha:
+   - Login (Username): ex. 'lider.joao'
+   - Senha de Acesso: ex. '12345' (mínimo 4 caracteres)
+   - Perfil de Acesso: selecione "Técnico Líder — Acesso ao painel e dashboard (sem cadastros)"
+4. Clique em Salvar.
+
+E. Helpers e Decorators Adicionados (views.py):
+-----------------------------------------------
+- _user_is_lider_ou_operador(user) → True para OPERADOR e TECNICO_LIDER
+  (usado nas views de ação: start, pause, resume, finish, set_availability)
+
+- @lider_ou_operador_required → decorator para /dashboard/ e /exportar_excel/
+  Permite: OPERADOR e TECNICO_LIDER.
+  Bloqueia: TECNICO (redireciona para /management/).
+
+- @operador_required → restrito apenas a OPERADOR puro para /cruds/.
+  TECNICO_LIDER é redirecionado para /management/ com mensagem.
+
+- @tecnico_or_operador_required → mantido para /management/.
+  Permite todos os perfis com user vinculado (TECNICO, TECNICO_LIDER, OPERADOR).
+
+F. Migração de Banco:
+----------------------
+- Arquivo: maintenance/migrations/0009_perfil_max_length_tecnico_lider.py
+- Operação: AlterField — max_length de 10 para 15 (para acomodar 'TECNICO_LIDER' = 13 chars)
+- Dados existentes: 100% preservados (apenas aumenta tamanho de coluna)
+- Comandos executados:
+    python manage.py makemigrations maintenance --name perfil_max_length_tecnico_lider
+    python manage.py migrate
+- Resultado: maintenance.0009_perfil_max_length_tecnico_lider... OK
+
+
+23. CORREÇÃO CRÍTICA DE FRONTEND: ALINHAMENTO DE PERMISSÕES DO TÉCNICO LÍDER NA UI (2026-06-17)
+--------------------------------------------------------------------------------
+Ajustadas as diretivas condicionais nos templates HTML para garantir a correta aplicação das permissões de Técnico Líder no painel de gerenciamento e na barra de navegação (navbar).
+
+Arquivos modificados:
+- maintenance/templates/maintenance/technician_management.html
+- maintenance/templates/maintenance/base.html
+
+A. Liberação de Ações em Cards Alheios e Escala no Painel:
+- Alteradas as travas condicionais do template de `user_can_manage` para verificações diretas baseadas no perfil do técnico logado e no proprietário do card:
+  - Botões de Ações (Iniciar/Pausar/Concluir):
+    {% if request.user.technician_profile.perfil == 'OPERADOR' or request.user.technician_profile.perfil == 'TECNICO_LIDER' or tech.user == request.user %}
+  - Widget "Definir Escala / Disponibilidade":
+    {% if request.user.technician_profile.perfil == 'OPERADOR' or request.user.technician_profile.perfil == 'TECNICO_LIDER' %} (com status != 'EM_ATENDIMENTO' aninhado)
+
+B. Menu de Navegação (Navbar) no base.html:
+- Configurados os itens da navbar de forma alinhada à matriz de permissões:
+  - Painel TV (Modo TV): Estritamente oculto para o perfil `TECNICO_LIDER`.
+  - Dashboard: Visível para `TECNICO_LIDER` e `OPERADOR` (além de administradores e staff).
+  - Cadastros: Estritamente oculto para o perfil `TECNICO_LIDER` e `TECNICO` (visível apenas para `OPERADOR` e staff).
+
+
+24. REFATORAÇÃO DE ARQUITETURA: MIGRAÇÃO PARA SISTEMA NATIVO DE GRUPOS E PERMISSÕES DO DJANGO (2026-06-17)
+--------------------------------------------------------------------------------
+Migrada a lógica de permissões e controle de acesso para o sistema nativo de Grupos do Django (django.contrib.auth.models.Group), garantindo alta escalabilidade.
+
+Arquivos modificados:
+- maintenance/apps.py
+- maintenance/views.py
+- maintenance/templates/maintenance/technician_management.html
+- maintenance/templates/maintenance/base.html
+- maintenance/tests.py
+
+A. Inicialização Automática de Grupos:
+- Adicionada a função ready() no app config (apps.py) que garante que os seguintes grupos existam no banco de dados na inicialização:
+  - 'Tecnicos'
+  - 'Tecnicos_Lideres'
+  - 'Operadores'
+
+B. Lógica de Sincronização no Formulário:
+- Ao salvar um técnico (technician_create e technician_edit), se um usuário estiver associado, limpa-se todos os seus grupos antigos (user.groups.clear()) e adiciona-se o grupo correspondente ao perfil selecionado:
+  - 'TECNICO' -> Grupo 'Tecnicos'
+  - 'TECNICO_LIDER' -> Grupo 'Tecnicos_Lideres'
+  - 'OPERADOR' -> Grupo 'Operadores'
+
+C. Decorators e Segurança de Views:
+- Refatorados os decorators operador_required e lider_ou_operador_required para usar verificação de grupo nativo.
+- View tv_dashboard (/tv/): Restrita aos grupos 'Operadores' ou visualizadores autorizados (grupo 'Visualizador' ou username 'tv'). Tentativas de acesso não autorizadas redirecionam para /management/ com Django Messages.
+
+D. Regras de Interface Dinâmicas (Templates):
+- As checagens nos templates HTML foram migradas para o uso nativo de grupos do Django:
+  - Ações em cards: {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or tech.user == request.user %}
+  - Widget Escala: {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' %}
+  - Navbar em base.html adaptado de forma análoga.
+- Removido o link/botão "Ver Painel TV" do cabeçalho da tela de gerenciamento de técnicos (technician_management.html) e o link "Painel TV (Modo TV)" da barra de navegação superior (base.html) para os técnicos (grupos 'Tecnicos' e 'Tecnicos_Lideres'). O Painel TV agora só é visível na interface para membros do grupo 'Operadores', 'Visualizador' ou administradores.
+
+25. AJUSTE DE USABILIDADE: LINK DE RETORNO DINÂMICO NO PAINEL TV (2026-06-17)
+--------------------------------------------------------------------------------
+Adicionado um atalho de navegação no título principal do Painel TV (/tv/) para 
+redirecionamento dinâmico baseado no perfil do usuário logado.
+
+Arquivos modificados:
+- maintenance/templates/maintenance/tv_dashboard.html
+- Instrucoes.txt
+
+A. Comportamento do Link (HTML/CSS):
+- O título principal "Status da Manutenção" foi envolvido por uma tag de link <a> apontando para a view `home_redirect`.
+- CSS customizado (.tv-title-link) foi adicionado para remover o sublinhado padrão dos links (`text-decoration: none !important`), mantendo as cores, tamanhos e o gradiente originais do texto intactos.
+- O cursor do mouse foi alterado para o formato de clique (mãozinha/`cursor: pointer`) ao passar por cima do título.
+
+B. Redirecionamento Dinâmico (Lógica de Perfis):
+- Usuário Operador ou Técnico Líder → Redirecionado de volta para o Dashboard (/dashboard/).
+- Usuário genérico da TV (Visualizador) ou username 'tv' → Apenas recarrega a própria tela do Painel TV (/tv/).
+- Se a sessão do usuário expirar, o link encaminhará o usuário para a tela de login.

@@ -75,6 +75,15 @@ footer { display: none !important; }
     white-space: nowrap;
 }
 
+.tv-title-link {
+    text-decoration: none !important;
+    cursor: pointer;
+}
+
+.tv-title-link:hover {
+    text-decoration: none !important;
+}
+
 .tv-stats {
     display: flex;
     gap: 16px;
@@ -407,7 +416,9 @@ footer { display: none !important; }
 <div class="tv-header">
     <div class="d-flex align-items-center gap-3">
         <i class="bi bi-display text-warning" style="font-size:1.1rem;"></i>
-        <span class="tv-title">Status da Manutenção</span>
+        <a href="{% url 'home_redirect' %}" class="tv-title-link">
+            <span class="tv-title">Status da Manutenção</span>
+        </a>
     </div>
 
     {# Contadores por status #}
