@@ -1,9 +1,19 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Gestão de Manutenção{% endblock %}</title>
+
+    <!-- PWA: Manifesto e Meta-tags Mobile -->
+    <link rel="manifest" href="{% static 'maintenance/manifest.json' %}">
+    <meta name="theme-color" content="#1e1b4b">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Manutenção">
+    <link rel="apple-touch-icon" href="{% static 'maintenance/pwa-icons/icon-192.png' %}">
+    <meta name="mobile-web-app-capable" content="yes">
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -222,6 +232,21 @@
                 });
             }, 5000);
         });
+    </script>
+
+    <!-- PWA: Registro do Service Worker -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+                    .then(function (registration) {
+                        console.log('[PWA] Service Worker registrado com sucesso. Escopo:', registration.scope);
+                    })
+                    .catch(function (error) {
+                        console.warn('[PWA] Falha ao registrar Service Worker:', error);
+                    });
+            });
+        }
     </script>
     {% block extra_js %}{% endblock %}
 </body>

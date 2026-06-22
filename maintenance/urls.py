@@ -4,6 +4,9 @@ from django.shortcuts import redirect
 from . import views
 
 urlpatterns = [
+    # PWA: Service Worker servido da raiz para escopo global
+    path('service-worker.js', views.service_worker_view, name='service_worker'),
+    
     # Home redirect based on role
     path('', views.home_redirect, name='home_redirect'),
     

@@ -1,0 +1,23 @@
+Leia primeiro o constitution.md
+
+Agora utilize abordagem SPEC-DRIVEN.
+
+Crie uma SPEC baseada no template (SPEC_TEMPLATE.md que está na pasta regras_programacao) e somente depois implemente.
+
+[cole aqui sua demanda]
+
+Siga obrigatoriamente:
+- não criar novo projeto
+- não criar novo .venv
+- não duplicar código
+- trabalhar apenas no código existente
+
+Utilize subagentes:
+1. Arquiteto
+2. Backend
+3. QA
+
+Ao final, entregue:
+- arquivos lidos
+- arquivos alterados
+- testes realizados

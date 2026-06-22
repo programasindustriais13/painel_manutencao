@@ -424,6 +424,7 @@ def finish_service(request, technician_id):
             for field, errors in form.errors.items():
                 for error in errors:
                     messages.error(request, f"Erro: {error}")
+            return redirect(f'/management/?open_modal=finish_tech&tech_id={technician_id}')
                     
     return redirect('technician_management')
 
@@ -477,6 +478,7 @@ def finish_allocation(request, allocation_id):
             for field, errors in form.errors.items():
                 for error in errors:
                     messages.error(request, f"Erro: {error}")
+            return redirect(f'/management/?open_modal=finish_alloc&alloc_id={allocation_id}')
                     
     return redirect('technician_management')
 
@@ -1043,3 +1045,32 @@ def exportar_relatorio_excel(request):
     )
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PWA: View para servir o Service Worker a partir da raiz do site
+# ─────────────────────────────────────────────────────────────────────────────
+def service_worker_view(request):
+    """Serve o arquivo service-worker.js com Content-Type e Service-Worker-Allowed
+    adequados para que o Service Worker tenha escopo sobre toda a aplicação (/).
+    
+    Não requer autenticação para que o SW possa ser registrado na tela de login.
+    """
+    import os
+    from django.conf import settings
+
+    sw_path = os.path.join(
+        settings.BASE_DIR, 'maintenance', 'static', 'maintenance', 'service-worker.js'
+    )
+
+    try:
+        with open(sw_path, 'r', encoding='utf-8') as f:
+            sw_content = f.read()
+    except FileNotFoundError:
+        return HttpResponse('// Service Worker not found', content_type='application/javascript', status=404)
+
+    response = HttpResponse(sw_content, content_type='application/javascript')
+    response['Service-Worker-Allowed'] = '/'
+    response['Cache-Control'] = 'no-cache'
+    return response
+

@@ -46,9 +46,15 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "maintenance.middleware.SessionExpiryByProfileMiddleware",  # Expiração de sessão por perfil (após AuthenticationMiddleware)
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# ── Controle de Sessão por Turno (Absolute Session Timeout) ──────────────────
+SESSION_COOKIE_AGE = 14400              # 4 horas — tempo médio de turno de trabalho
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # Expira também ao fechar o navegador
+SESSION_SAVE_EVERY_REQUEST = False      # NÃO renovar a cada request (expiração absoluta)
 
 ROOT_URLCONF = "maintenance_project.urls"
 

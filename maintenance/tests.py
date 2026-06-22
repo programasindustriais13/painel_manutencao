@@ -241,6 +241,48 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertRedirects(response, reverse('dashboard'))
         client.logout()
 
+    def test_finish_service_validation_failure_redirect(self):
+        """Test that validation failure in finish_service redirects back with query parameters."""
+        client = Client()
+        client.force_login(self.operador_user)
+        
+        # Start a service first
+        client.post(
+            reverse('start_service', args=[self.tech.id]),
+            data={'maquina': self.machine_low.id, 'atividade_observacao': 'Conserto'}
+        )
+        self.tech.refresh_from_db()
+        self.assertEqual(self.tech.status, 'EM_ATENDIMENTO')
+        
+        # Post to finish_service with invalid form (missing observacao_conclusao)
+        response = client.post(
+            reverse('finish_service', args=[self.tech.id]),
+            data={}
+        )
+        expected_redirect = f'/management/?open_modal=finish_tech&tech_id={self.tech.id}'
+        self.assertRedirects(response, expected_redirect, target_status_code=200)
+
+    def test_finish_allocation_validation_failure_redirect(self):
+        """Test that validation failure in finish_allocation redirects back with query parameters."""
+        client = Client()
+        client.force_login(self.operador_user)
+        
+        # Start a service first
+        client.post(
+            reverse('start_service', args=[self.tech.id]),
+            data={'maquina': self.machine_low.id, 'atividade_observacao': 'Conserto'}
+        )
+        self.tech.refresh_from_db()
+        alloc = self.tech.active_allocation
+        
+        # Post to finish_allocation with invalid form (missing observacao_conclusao)
+        response = client.post(
+            reverse('finish_allocation', args=[alloc.id]),
+            data={}
+        )
+        expected_redirect = f'/management/?open_modal=finish_alloc&alloc_id={alloc.id}'
+        self.assertRedirects(response, expected_redirect, target_status_code=200)
+
 
 
 

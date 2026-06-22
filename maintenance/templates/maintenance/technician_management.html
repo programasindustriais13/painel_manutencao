@@ -148,7 +148,7 @@
         <p class="text-muted">Gerenciamento e alocação de técnicos na linha de produção em tempo real.</p>
     </div>
     <div class="col-12 col-md-6 text-md-end d-flex align-items-center justify-content-md-end gap-2">
-        {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Visualizador' or request.user.groups.all.0.name == 'Operador' %}
+        {% if user.is_superuser or user.is_staff or user_can_manage or request.user.groups.all.0.name == 'Visualizador' or request.user.groups.all.1.name == 'Visualizador' %}
         <a href="{% url 'tv_dashboard' %}" class="btn btn-outline-dark rounded-pill px-3">
             <i class="bi bi-tv me-1"></i> Ver Painel TV
         </a>
@@ -302,7 +302,7 @@
                                             <p class="mb-2 text-warning-emphasis" style="font-size:.75rem;"><i class="bi bi-info-circle-fill me-1"></i>{{ p_alloc.motivo_pausa|truncatechars:60 }}</p>
                                         {% endif %}
                                         <!-- Botões de ação nas pausas: visíveis somente para quem pode gerenciar OU próprio técnico -->
-                                        {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or tech.user == request.user %}
+                                        {% if user_can_manage or tech.id == technician_proprio_id %}
                                         <div class="d-flex gap-2">
                                             <!-- Retomar esta alocação específica -->
                                             {% if tech.is_ausente %}
@@ -320,11 +320,43 @@
                                             <!-- Finalizar esta alocação específica -->
                                             <button class="btn btn-outline-danger btn-paused-finish rounded-pill"
                                                     data-bs-toggle="modal"
-                                                    data-bs-target="#finishAllocModal"
-                                                    data-alloc-id="{{ p_alloc.id }}"
-                                                    data-alloc-info="{{ p_alloc.maquina.nome }} — {{ tech.nome }}">
+                                                    data-bs-target="#finishAllocModal-{{ p_alloc.id }}">
                                                 <i class="bi bi-check-lg me-1"></i>Finalizar
                                             </button>
+                                        </div>
+
+                                        <!-- MODAL: FINALIZAR ALOCAÇÃO ESPECÍFICA (Individualizado) -->
+                                        <div class="modal fade" id="finishAllocModal-{{ p_alloc.id }}" tabindex="-1" aria-labelledby="finishAllocModalLabel-{{ p_alloc.id }}" aria-hidden="true">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                                <div class="modal-content border-0 shadow-lg text-start" style="border-radius: 16px;">
+                                                    <div class="modal-header bg-danger text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                                                        <h5 class="modal-title fw-bold" id="finishAllocModalLabel-{{ p_alloc.id }}">Finalizar Serviço Pausado</h5>
+                                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <form method="post" action="{% url 'finish_allocation' p_alloc.id %}" enctype="multipart/form-data">
+                                                        {% csrf_token %}
+                                                        <div class="modal-body p-4">
+                                                            <div class="alert alert-warning border-warning-subtle mb-3 py-2" style="font-size:.875rem;">
+                                                                <i class="bi bi-info-circle-fill me-1"></i>
+                                                                <span>{{ p_alloc.maquina.nome }} — {{ tech.nome }}</span>
+                                                            </div>
+                                                            <div class="mb-3">
+                                                                <label for="id_fa_observacao_conclusao-{{ p_alloc.id }}" class="form-label fw-semibold">Observações Finais de Conclusão <span class="text-danger">*</span></label>
+                                                                <textarea name="observacao_conclusao" id="id_fa_observacao_conclusao-{{ p_alloc.id }}" class="form-control" rows="3" placeholder="Descreva o que foi concluído na manutenção..." required></textarea>
+                                                            </div>
+                                                            <div class="mb-2">
+                                                                <label for="id_fa_foto_anexo-{{ p_alloc.id }}" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
+                                                                <input type="file" name="foto_anexo" id="id_fa_foto_anexo-{{ p_alloc.id }}" class="form-control" accept="image/*">
+                                                                <div class="form-text text-muted">Ideal para registrar o estado pós-manutenção via smartphone ou PC.</div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="modal-footer border-0 p-4 pt-0">
+                                                            <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                                                            <button type="submit" class="btn btn-danger rounded-pill px-4">Concluir Ordem</button>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
                                         </div>
                                         {% endif %}
                                     </div>
@@ -338,7 +370,7 @@
                 <div class="card-footer bg-white border-0 pb-4 px-4 pt-2">
 
                     <!-- Botões de ação: visíveis para quem pode gerenciar todos (OPERADOR/TECNICO_LIDER) ou TECNICO (apenas próprio card) -->
-                    {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or tech.user == request.user %}
+                    {% if user_can_manage or tech.id == technician_proprio_id %}
                     <div class="d-flex gap-2 justify-content-end flex-wrap">
 
                         {% if tech.is_ausente %}
@@ -385,7 +417,7 @@
 
                     <!-- Widget: Definir Escala / Disponibilidade -->
                     <!-- Visível para OPERADOR e TECNICO_LIDER; técnicos TECNICO não podem alterar escala -->
-                    {% if request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' %}
+                    {% if user_can_manage %}
                     {% if tech.status != 'EM_ATENDIMENTO' %}
                     <div class="availability-widget">
                         <label><i class="bi bi-gear-fill me-1"></i>Definir Escala / Disponibilidade</label>
@@ -506,8 +538,14 @@
                 {% csrf_token %}
                 <div class="modal-body p-4">
                     <div class="mb-3">
-                        <label for="id_observacao_conclusao" class="form-label fw-semibold">Observações Finais de Conclusão</label>
+                        <label for="id_observacao_conclusao" class="form-label fw-semibold">Observações Finais de Conclusão <span class="text-danger">*</span></label>
                         {{ finish_form.observacao_conclusao }}
+                        {% if finish_form.observacao_conclusao.errors %}
+                        <div class="text-danger small mt-1">
+                            {{ finish_form.observacao_conclusao.errors.0 }}
+                        </div>
+                        {% endif %}
+                        <div class="form-text text-muted">A observação de conclusão é obrigatória.</div>
                     </div>
                     <div class="mb-2">
                         <label for="id_foto_anexo" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
@@ -524,42 +562,7 @@
     </div>
 </div>
 
-<!-- ========================================== -->
-<!-- MODAL: FINALIZAR ALOCAÇÃO ESPECÍFICA       -->
-<!-- (para serviços pausados pendentes)         -->
-<!-- ========================================== -->
-<div class="modal fade" id="finishAllocModal" tabindex="-1" aria-labelledby="finishAllocModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
-            <div class="modal-header bg-danger text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
-                <h5 class="modal-title fw-bold" id="finishAllocModalLabel">Finalizar Serviço Pausado</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <form method="post" action="" enctype="multipart/form-data" id="finishAllocForm">
-                {% csrf_token %}
-                <div class="modal-body p-4">
-                    <div class="alert alert-warning border-warning-subtle mb-3 py-2" id="finishAllocInfo" style="font-size:.875rem;">
-                        <i class="bi bi-info-circle-fill me-1"></i>
-                        <span id="finishAllocInfoText">Finalizando serviço pausado...</span>
-                    </div>
-                    <div class="mb-3">
-                        <label for="id_fa_observacao_conclusao" class="form-label fw-semibold">Observações Finais de Conclusão</label>
-                        <textarea name="observacao_conclusao" id="id_fa_observacao_conclusao" class="form-control" rows="3" placeholder="Descreva o que foi concluído na manutenção..."></textarea>
-                    </div>
-                    <div class="mb-2">
-                        <label for="id_fa_foto_anexo" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
-                        <input type="file" name="foto_anexo" id="id_fa_foto_anexo" class="form-control" accept="image/*">
-                        <div class="form-text text-muted">Ideal para registrar o estado pós-manutenção via smartphone ou PC.</div>
-                    </div>
-                </div>
-                <div class="modal-footer border-0 p-4 pt-0">
-                    <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
-                    <button type="submit" class="btn btn-danger rounded-pill px-4">Concluir Ordem</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
+
 {% endblock %}
 
 {% block extra_js %}
@@ -593,6 +596,7 @@
         if (startModal) {
             startModal.addEventListener('show.bs.modal', function(event) {
                 const button = event.relatedTarget;
+                if (!button) return;
                 const techId = button.getAttribute('data-tech-id');
                 const techName = button.getAttribute('data-tech-name');
                 
@@ -611,6 +615,7 @@
         if (pauseModal) {
             pauseModal.addEventListener('show.bs.modal', function(event) {
                 const button = event.relatedTarget;
+                if (!button) return;
                 const techId = button.getAttribute('data-tech-id');
                 const techName = button.getAttribute('data-tech-name');
                 
@@ -624,6 +629,7 @@
         if (finishModal) {
             finishModal.addEventListener('show.bs.modal', function(event) {
                 const button = event.relatedTarget;
+                if (!button) return;
                 const techId = button.getAttribute('data-tech-id');
                 const techName = button.getAttribute('data-tech-name');
                 
@@ -632,23 +638,7 @@
             });
         }
 
-        // Dynamic Setup for Finish Allocation Modal (serviço pausado específico)
-        const finishAllocModal = document.getElementById('finishAllocModal');
-        if (finishAllocModal) {
-            finishAllocModal.addEventListener('show.bs.modal', function(event) {
-                const button = event.relatedTarget;
-                const allocId = button.getAttribute('data-alloc-id');
-                const allocInfo = button.getAttribute('data-alloc-info');
-                
-                document.getElementById('finishAllocModalLabel').textContent = `Finalizar Serviço Pausado`;
-                document.getElementById('finishAllocInfoText').textContent = allocInfo;
-                document.getElementById('finishAllocForm').action = `/allocations/${allocId}/finish/`;
 
-                // Reset fields
-                document.getElementById('id_fa_observacao_conclusao').value = '';
-                document.getElementById('id_fa_foto_anexo').value = '';
-            });
-        }
 
         // Auto-expand collapse when there's only 1 paused service (UX: show immediately)
         document.querySelectorAll('[id^="pausedList-"]').forEach(function(collapseEl) {
@@ -681,6 +671,40 @@
                 btn.innerHTML = btn.innerHTML.replace('Ocultar', 'Ver');
             });
         });
+
+        // ── Auto-reabrir modal de finalização caso haja erros de validação ──
+        (function() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const openModal = urlParams.get('open_modal');
+            
+            if (openModal === 'finish_tech') {
+                const techId = urlParams.get('tech_id');
+                const fm = document.getElementById('finishModal');
+                if (fm && techId) {
+                    const button = document.querySelector(`button[data-bs-target="#finishModal"][data-tech-id="${techId}"]`);
+                    if (button) {
+                        const bsModal = new bootstrap.Modal(fm);
+                        bsModal.show(button);
+                    }
+                }
+            } else if (openModal === 'finish_alloc') {
+                const allocId = urlParams.get('alloc_id');
+                const fam = document.getElementById(`finishAllocModal-${allocId}`);
+                if (fam) {
+                    const button = document.querySelector(`button[data-bs-target="#finishAllocModal-${allocId}"]`);
+                    if (button) {
+                        // Tenta encontrar o colapso pai para expandir
+                        const collapseEl = button.closest('.collapse');
+                        if (collapseEl && !collapseEl.classList.contains('show')) {
+                            const bsCollapse = new bootstrap.Collapse(collapseEl, { toggle: false });
+                            bsCollapse.show();
+                        }
+                        const bsModal = new bootstrap.Modal(fam);
+                        bsModal.show(button);
+                    }
+                }
+            }
+        })();
     });
 </script>
 {% endblock %}

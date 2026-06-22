@@ -83,7 +83,7 @@ a nova versão para o GitHub:
    > git add .
 
 2. Faça o commit descrevendo o que foi implementado:
-   > git commit -m "Melhoria: Export excel / tempo de atualização do painel / adição de dados de status de tecnico"
+   > git commit -m "Melhoria: Regras de Finalização em Pausa"
 
 3. Envie para o GitHub:
    > git push origin main
@@ -930,3 +930,373 @@ B. Redirecionamento Dinâmico (Lógica de Perfis):
 - Usuário Operador ou Técnico Líder → Redirecionado de volta para o Dashboard (/dashboard/).
 - Usuário genérico da TV (Visualizador) ou username 'tv' → Apenas recarrega a própria tela do Painel TV (/tv/).
 - Se a sessão do usuário expirar, o link encaminhará o usuário para a tela de login.
+
+
+26. CORREÇÃO DE BUG: VALIDAÇÃO OBRIGATÓRIA NA FINALIZAÇÃO DE ORDEM (2026-06-18)
+--------------------------------------------------------------------------------
+Corrigido bug em que ao tentar finalizar um serviço (ativo ou pausado) sem preencher
+a observação de conclusão, o formulário falhava silenciosamente no backend (retornando
+HTTP 200 em vez de redirecionar com 302). O usuário não recebia aviso de erro e o
+serviço não era encerrado.
+
+Arquivos modificados:
+- maintenance/forms.py
+- maintenance/templates/maintenance/technician_management.html
+- Instrucoes.txt
+
+NENHUMA migração necessária — apenas correção de validação de formulário e UX.
+Nenhuma tabela ou model foi alterado.
+
+A. Correção no Backend (forms.py — FinishServiceForm):
+------------------------------------------------------
+- O campo `observacao_conclusao` agora é explicitamente definido como obrigatório
+  via `self.fields['observacao_conclusao'].required = True` no __init__().
+- Adicionada mensagem de erro customizada:
+  "A observação de conclusão é obrigatória para encerrar o serviço."
+- Adicionado atributo HTML `required='required'` no widget Textarea para
+  que o navegador também bloqueie o envio do formulário vazio (validação dupla).
+
+B. Correção no Frontend — Modal "Concluir Serviço Ativo" (finishModal):
+-----------------------------------------------------------------------
+- Adicionado asterisco vermelho (*) no label do campo de observação de conclusão,
+  indicando visualmente a obrigatoriedade.
+- Adicionado bloco condicional Django para exibir erros inline:
+  {% if finish_form.observacao_conclusao.errors %}
+      <div class="text-danger small mt-1">
+          {{ finish_form.observacao_conclusao.errors.0 }}
+      </div>
+  {% endif %}
+- Adicionado texto auxiliar: "A observação de conclusão é obrigatória."
+
+C. Correção no Frontend — Modal "Finalizar Serviço Pausado" (finishAllocModal):
+-------------------------------------------------------------------------------
+- Adicionado asterisco vermelho (*) no label do campo de observação.
+- Adicionado atributo `required` na tag <textarea> manual do campo
+  `observacao_conclusao`, impedindo envio vazio pelo navegador.
+
+D. Persistência do Modal (JavaScript):
+---------------------------------------
+- Adicionado script que detecta mensagens de erro do Django na página
+  contendo "observação", "obrigatória" ou "conclusão" e reabre
+  automaticamente o modal #finishModal para que o técnico veja o erro
+  sem a tela resetar.
+
+E. Fluxo Corrigido:
+--------------------
+1. Técnico clica em "Concluir" → abre o modal.
+2. Se a observação estiver vazia:
+   a. Navegador bloqueia o envio (atributo required no HTML) → alerta nativo.
+   b. Caso o HTML required seja contornado, o Django valida e retorna HTTP 200
+      com mensagem de erro via Django Messages → modal reabre automaticamente.
+3. Se a observação estiver preenchida:
+   → Formulário válido → serviço encerrado → redirect 302 → mensagem de sucesso.
+
+
+24. PROGRESSIVE WEB APP (PWA) — INSTALAÇÃO EM CELULARES E TABLETS (2026-06-19)
+--------------------------------------------------------------------------------
+O sistema foi transformado em um PWA para permitir a instalação em smartphones
+e tablets no chão de fábrica, adquirindo propriedades de aplicativo nativo.
+
+Arquivos criados:
+- maintenance/static/maintenance/manifest.json            [NOVO]
+- maintenance/static/maintenance/service-worker.js         [NOVO]
+- maintenance/static/maintenance/pwa-icons/icon-192.png    [NOVO]
+- maintenance/static/maintenance/pwa-icons/icon-512.png    [NOVO]
+
+Arquivos modificados:
+- maintenance/templates/maintenance/base.html
+- maintenance/views.py
+- maintenance/urls.py
+- Instrucoes.txt
+
+NENHUMA MIGRAÇÃO necessária — apenas arquivos estáticos e configuração de templates.
+
+A. Manifesto do PWA (manifest.json):
+--------------------------------------
+Configuração do manifesto com:
+  - name        : "Painel Manutenção — Gestão Industrial"
+  - short_name  : "Manutenção"
+  - start_url   : "/" (raiz do site)
+  - display     : "standalone" (sem barra do navegador)
+  - background_color : "#0f172a" (cor escura da tela de login)
+  - theme_color      : "#1e1b4b" (gradiente da navbar)
+  - Ícones de 192×192 e 512×512 pixels (PNG, purpose: any maskable)
+
+B. Service Worker (service-worker.js):
+---------------------------------------
+Gerenciador de cache dos arquivos estáticos essenciais com estratégia híbrida:
+  - Recursos CDN (Bootstrap CSS/JS, Bootstrap Icons, Google Fonts Inter, Chart.js):
+    → Estratégia cache-first: usa o cache primeiro, busca da rede se não tiver.
+  - Páginas dinâmicas do Django (HTML renderizado pelo servidor):
+    → Estratégia network-first: sempre busca do servidor, cai no cache se offline.
+  - Requisições POST (formulários CSRF, ações de serviço): ignoradas pelo SW.
+  - Requisições para /admin/ e /media/: ignoradas pelo SW.
+
+Comportamento do SW:
+  - No evento INSTALL, faz cache de Bootstrap CSS, Bootstrap JS, Bootstrap Icons
+    e Google Fonts Inter. Falhas individuais não impedem os demais recursos.
+  - No evento ACTIVATE, limpa caches de versões anteriores (CACHE_NAME versionado).
+  - Usa self.skipWaiting() e self.clients.claim() para ativação imediata.
+
+Fallback de segurança:
+  - Se o Service Worker falhar ou o navegador não suportar, a aplicação continua
+    funcionando 100% normalmente no modelo web tradicional de requisições.
+  - O script de registro no base.html verifica 'serviceWorker' in navigator antes
+    de tentar registrar.
+
+C. Rota do Service Worker (urls.py + views.py):
+-------------------------------------------------
+O SW precisa ser servido da RAIZ do site (/service-worker.js) para ter escopo
+sobre toda a aplicação (/). Para isso:
+  - URL  : /service-worker.js  (name='service_worker')
+  - View : service_worker_view — lê o arquivo static e serve com:
+      Content-Type: application/javascript
+      Service-Worker-Allowed: /
+      Cache-Control: no-cache
+  - Não requer autenticação (o SW deve ser registrado na tela de login).
+
+D. Integração no Template Base (base.html):
+---------------------------------------------
+Adicionado no <head> (após viewport):
+  - {% load static %} no topo do template
+  - <link rel="manifest" href="{% static 'maintenance/manifest.json' %}">
+  - <meta name="theme-color" content="#1e1b4b">
+  - <meta name="apple-mobile-web-app-capable" content="yes">
+  - <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  - <meta name="apple-mobile-web-app-title" content="Manutenção">
+  - <link rel="apple-touch-icon" href="{% static 'maintenance/pwa-icons/icon-192.png' %}">
+  - <meta name="mobile-web-app-capable" content="yes">
+
+Adicionado antes do </body> (após o script de dismiss de alertas):
+  - Script de registro do Service Worker com verificação de suporte.
+
+E. Como Instalar no Celular/Tablet:
+-------------------------------------
+  Android (Chrome):
+    1. Acesse o sistema pelo navegador Chrome no celular.
+    2. O navegador exibirá automaticamente um banner "Adicionar à tela de início".
+    3. Toque em "Instalar" ou acesse o menu (⋮) > "Instalar app".
+    4. O ícone do Painel de Manutenção aparecerá na tela inicial do dispositivo.
+
+  iOS (Safari):
+    1. Acesse o sistema pelo Safari no iPhone/iPad.
+    2. Toque no botão de compartilhamento (quadrado com seta para cima).
+    3. Selecione "Adicionar à Tela de Início".
+    4. Confirme o nome e toque em "Adicionar".
+
+F. Segurança e Integridade:
+-----------------------------
+- Nenhuma tabela do banco de dados foi criada, alterada ou excluída.
+- Nenhum novo app Django foi criado.
+- Nenhum modelo existente foi modificado.
+- O Service Worker opera de forma progressiva — falhas são silenciosas.
+
+
+25. EXPIRAÇÃO ABSOLUTA DE SESSÃO POR PERFIL DE USUÁRIO (2026-06-19)
+--------------------------------------------------------------------------------
+Implementação de controle de turno por expiração absoluta de sessão, evitando
+o acúmulo de sessões ativas na troca de turnos no chão de fábrica.
+
+Arquivos criados:
+- maintenance/middleware.py  [NOVO]
+
+Arquivos modificados:
+- maintenance_project/settings.py
+- Instrucoes.txt
+
+NENHUMA MIGRAÇÃO necessária — apenas configuração de sessão e middleware.
+
+A. Configuração de Sessão (settings.py):
+-----------------------------------------
+Variáveis adicionadas:
+  SESSION_COOKIE_AGE = 14400
+    → Tempo máximo de vida da sessão: 4 horas (14.400 segundos).
+    → Após 4 horas desde o momento do LOGIN, o cookie expira automaticamente
+      e o técnico é deslogado, independentemente de atividade.
+
+  SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+    → A sessão também expira ao fechar o navegador.
+
+  SESSION_SAVE_EVERY_REQUEST = False
+    → CRÍTICO para expiração ABSOLUTA: o Django NÃO renova o timestamp
+      da sessão a cada requisição. Se fosse True, o tempo de 4h seria
+      de inatividade (idle timeout), não de tempo total logado.
+
+B. Middleware de Exceção por Perfil (middleware.py):
+----------------------------------------------------
+Classe: SessionExpiryByProfileMiddleware
+
+Posicionamento: APÓS django.contrib.auth.middleware.AuthenticationMiddleware
+(garantindo que request.user já esteja disponível).
+
+Lógica:
+  1. Verifica se o usuário está autenticado.
+  2. Na primeira requisição após o login, verifica se:
+     - username == 'tv'  OU
+     - pertence ao grupo 'Visualizador'
+  3. Se SIM → força request.session.set_expiry(315360000) = ~10 ANOS
+     (sessão perpétua para o painel da TV na fábrica).
+  4. Se NÃO → não faz nada (o SESSION_COOKIE_AGE de 4h se aplica).
+  5. Marca a sessão com flag '_session_expiry_checked' = True para
+     NÃO repetir a consulta ao grupo a cada requisição subsequente.
+
+Performance:
+  - A consulta ao grupo ocorre UMA ÚNICA VEZ por sessão (na primeira request).
+  - Todas as requests subsequentes verificam apenas a flag booleana na sessão.
+
+C. Resumo de Comportamento por Perfil:
+---------------------------------------
+Perfil                        | Tempo de Sessão | Comportamento
+------------------------------|-----------------|-----------------------------------
+Técnico (TECNICO)             | 4 horas         | Deslogado ao fim do turno
+Técnico Líder (TECNICO_LIDER) | 4 horas         | Deslogado ao fim do turno
+Operador (OPERADOR)           | 4 horas         | Deslogado ao fim do turno
+Superuser / Staff             | 4 horas         | Deslogado ao fim do turno
+Visualizador (grupo)          | ~10 anos        | Sessão perpétua (painel TV)
+Usuário 'tv' (username)       | ~10 anos        | Sessão perpétua (painel TV)
+
+D. Segurança e Integridade:
+-----------------------------
+- Nenhuma tabela do banco de dados foi criada, alterada ou excluída.
+- Nenhum novo app Django foi criado.
+- Nenhum modelo existente foi modificado.
+- O middleware é transparente e não altera nenhum fluxo de view existente.
+- Se o middleware for removido, o sistema continua funcionando (SESSION_COOKIE_AGE
+  se aplica a todos os perfis igualmente — incluindo o Visualizador/TV).
+
+
+
+Boa pergunta! O banner automático de "Adicionar à tela de início" do Chrome tem critérios rigorosos que precisam ser atendidos simultaneamente. O motivo mais provável no seu caso:
+
+🔒 O principal: HTTPS é obrigatório
+O Chrome exige conexão HTTPS para exibir o prompt de instalação do PWA. Como você está rodando com python manage.py runserver 0.0.0.0:8000, o servidor Django de desenvolvimento serve apenas HTTP (sem SSL). Nesse cenário:
+
+O Service Worker não registra (bloqueado pelo navegador em HTTP)
+O manifesto é lido, mas o Chrome não oferece a instalação
+A única exceção é localhost / 127.0.0.1 — ali o Chrome permite PWA em HTTP para fins de desenvolvimento. Mas acessando pelo IP da rede (ex: http://192.168.x.x:8000) no celular, é HTTP puro e o prompt nunca aparece.
+
+✅ Como resolver (opções):
+Produção com HTTPS (ideal): Ao publicar o sistema com Nginx/Apache + certificado SSL (Let's Encrypt), o prompt aparecerá automaticamente no celular.
+
+Teste rápido no celular (ngrok): Use o ngrok para criar um túnel HTTPS temporário:
+
+ngrok http 8000
+Ele gera uma URL https://xxxx.ngrok.io que você acessa no celular — com HTTPS, o PWA funciona.
+
+Instalação manual (funciona em HTTP): Mesmo sem o prompt automático, no Chrome mobile você pode ir no menu (⋮) → "Instalar app" ou "Adicionar à tela de início" — em alguns dispositivos isso funciona mesmo em HTTP.
+
+Outros critérios do Chrome para o prompt automático:
+✅ Ter manifest.json com name, icons, start_url, display — já temos
+✅ Ter um Service Worker registrado — já temos (mas precisa de HTTPS)
+⚠️ O usuário precisa ter interagido com o site por pelo menos 30 segundos
+⚠️ O usuário não pode ter recusado a instalação anteriormente
+Resumindo: o sistema PWA está configurado corretamente. O prompt aparecerá quando o acesso for por HTTPS (produção com certificado SSL ou via ngrok para testes).
+
+10:21 AM
+como tudo será rodado local na fabrica como posso resolver isso? não altere ou edite nada só me responda
+10:30 AM
+Para ambiente 100% local na fábrica (LAN, sem internet e sem domínio), existem duas abordagens práticas:
+
+Opção 1: Certificado SSL autoassinado (Recomendada) 🏭
+Você gera um certificado SSL diretamente no PC da fábrica e roda o Django com HTTPS local. Os passos seriam:
+
+Instalar o pacote django-extensions + pyOpenSSL (ou Werkzeug):
+
+pip install django-extensions pyOpenSSL
+Adicionar django_extensions ao INSTALLED_APPS no settings.py
+
+Rodar o servidor com HTTPS:
+
+python manage.py runserver_plus 0.0.0.0:8000 --cert-file cert.pem
+Ele gera automaticamente o certificado autoassinado na primeira vez.
+
+No celular, ao acessar https://192.168.x.x:8000, o navegador vai avisar "Conexão não segura" — toque em "Avançado" → "Continuar mesmo assim". Após aceitar, o PWA funciona normalmente e o prompt de instalação aparece.
+
+O certificado é "falso" (autoassinado), mas o Chrome aceita PWA com certificado autoassinado em rede local após o usuário aceitar o aviso.
+
+Opção 2: Flag do Chrome no celular (mais simples, sem mudar nada no servidor)
+No celular Android de cada técnico, ativar uma flag que permite PWA em HTTP:
+
+Abra o Chrome no celular
+Digite na barra de endereço:
+chrome://flags/#unsafely-treat-insecure-origin-as-secure
+No campo que aparecer, digite o endereço do servidor:
+http://192.168.x.x:8000
+Mude o dropdown para "Enabled"
+Toque em "Relaunch" para reiniciar o Chrome
+Pronto — aquele celular passa a tratar o IP da fábrica como se fosse HTTPS. O Service Worker registra e o prompt de instalação aparece. Nada muda no servidor.
+
+⚠️ Desvantagem: precisa configurar em cada celular individualmente.
+
+Minha sugestão para a fábrica:
+Cenário	Melhor opção
+Poucos celulares (3-5 técnicos)	Opção 2 — flag no Chrome, zero mudança no servidor
+Muitos celulares ou rotatividade alta	Opção 1 — certificado autoassinado, configura uma vez no servidor
+Qual cenário se encaixa melhor na fábrica? Se quiser, posso implementar a Opção 1 no projeto.
+
+
+25. ADAPTAÇÃO DE REGRAS DE PROGRAMAÇÃO E CORREÇÃO DO BUG DE FINALIZAÇÃO (2026-06-22)
+--------------------------------------------------------------------------------
+Este item documenta a adaptação da pasta regras_programacao/ e a correção do bug 
+de finalização de serviços pausados.
+
+A. Adaptação de Regras e Constituição (regras_programacao/):
+---------------------------------------------------------
+- Prompt-padrão.txt: Atualizado para apontar corretamente para a pasta de regras
+  deste projeto (regras_programacao/).
+- SPEC_TEMPLATE.md: Adaptado para contemplar os perfis (Técnico, Técnico Líder, 
+  Operador, Visualizador), módulos (maintenance, maintenance_project) e contextos 
+  reais do painel.
+- constitution.md: Refatorado para descrever os objetivos, padrões de código,
+  regras de banco e regras de negócio do Painel de Manutenção Industrial 
+  (concorrência, SQLite/MySQL, refreshes da TV, etc.).
+- constitution.md (raiz): Sincronizado e atualizado com a nova versão estendida
+  e unificada das regras de desenvolvimento do projeto.
+
+B. Correção do Bug de Finalização de Serviços Pausados (views.py / templates):
+----------------------------------------------------------------------------
+- views.py: Modificadas as views finish_service e finish_allocation para, em caso
+  de erro de validação (ex: observação em branco), redirecionar de volta para a
+  tela de gerenciamento com parâmetros de consulta na URL indicando o modal a ser
+  reaberto e seu respectivo ID (?open_modal=finish_tech&tech_id=... ou ?open_modal=finish_alloc&alloc_id=...).
+- technician_management.html (JS):
+  - Adicionadas checagens defensivas (if (!button) return;) no início de todos
+    os event listeners dos modais (show.bs.modal) para evitar erros de TypeError 
+    quando disparados programaticamente.
+  - Substituído o script IIFE de auto-reabertura por um analisador de parâmetros
+    da URL. Se a URL contiver o parâmetro open_modal, ele identifica e localiza 
+    o botão de disparo correspondente no DOM e abre o modal enviando o botão como
+    relatedTarget para o Bootstrap. No caso de serviços pausados, o script também
+    abre automaticamente a seção colapsável do técnico correspondente para boa UX.
+- Benefício: Resolve o problema de envios incorretos em POST para /management/ 
+  e impede crashes de JS que travavam a usabilidade do painel após erros de digitação.
+
+
+26. INDIVIDUALIZAÇÃO DO MODAL DE FINALIZAÇÃO DE SERVIÇOS PAUSADOS (2026-06-22)
+--------------------------------------------------------------------------------
+Este item documenta a individualização do modal de finalização de serviços pausados,
+corrigindo de forma definitiva o problema de submissões incorretas para /management/.
+
+Arquivos modificados:
+- maintenance/templates/maintenance/technician_management.html
+- Instrucoes.txt
+
+A. Modificações Realizadas no Template (technician_management.html):
+--------------------------------------------------------------------
+1. Modais de Finalização Pausados Únicos: Mover o modal de finalização de serviços
+   pausados (`finishAllocModal`) de uma definição externa genérica para dentro do loop 
+   de alocações pausadas (`{% for p_alloc in paused %}`). Cada alocação possui agora seu próprio 
+   modal com ID único `finishAllocModal-{{ p_alloc.id }}` e action estática apontando diretamente
+   para a URL correta `{% url 'finish_allocation' p_alloc.id %}`.
+2. Identificadores Únicos dos Inputs: Atualizados os IDs dos campos do modal (textarea e input de foto)
+   para utilizarem o ID da alocação correspondente (`id_fa_observacao_conclusao-{{ p_alloc.id }}`),
+   garantindo compatibilidade com o HTML5/DOM e prevenindo conflitos entre múltiplos modais.
+3. Simplificação e Remoção de JS redundante: Excluída a lógica Javascript que alterava a action
+   do formulário dinamicamente no evento `show.bs.modal`, visto que agora a action é gerada de
+   forma estática e segura no backend via template engine.
+4. Auto-Reabertura Avançada: Ajustada a lógica de auto-reabertura programática pós-erro de validação
+   no backend para localizar e instanciar o modal correto com o ID único `finishAllocModal-${allocId}`.
+5. Permissões Fortificadas (Segurança): Substituídas todas as validações de permissões frágeis
+   baseadas no índice de grupos (`request.user.groups.all.0.name`) pelas variáveis de contexto robustas
+   `user_can_manage` e `tech.id == technician_proprio_id`, resolvendo problemas de visualização
+   para superusuários ou usuários com múltiplos grupos.

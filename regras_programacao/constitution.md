@@ -27,7 +27,7 @@ O sistema deve ser:
 ### ✅ Estrutura obrigatória:
 - Apenas **1 ambiente virtual (.venv)** na raiz.
 - Apenas **1 projeto Django**.
-- Apenas **1 base de código activa**.
+- Apenas **1 base de código ativa**.
 
 ---
 

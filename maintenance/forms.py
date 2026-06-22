@@ -141,7 +141,15 @@ class FinishServiceForm(forms.ModelForm):
             'observacao_conclusao': forms.Textarea(attrs={
                 'class': 'form-control', 
                 'rows': 3, 
-                'placeholder': 'Descreva o que foi concluído na manutenção...'
+                'placeholder': 'Descreva o que foi concluído na manutenção...',
+                'required': 'required',
             }),
             'foto_anexo': forms.FileInput(attrs={'class': 'form-control', 'accept': 'image/*'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['observacao_conclusao'].required = True
+        self.fields['observacao_conclusao'].error_messages = {
+            'required': 'A observação de conclusão é obrigatória para encerrar o serviço.'
         }
