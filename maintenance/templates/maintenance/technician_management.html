@@ -138,6 +138,25 @@
         border-radius: 8px;
         margin-top: 0.35rem;
     }
+
+    /* Feedback visual de gravação de voz (Pulse Red) */
+    @keyframes pulse-red {
+        0% {
+            box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7);
+        }
+        70% {
+            box-shadow: 0 0 0 10px rgba(220, 53, 69, 0);
+        }
+        100% {
+            box-shadow: 0 0 0 0 rgba(220, 53, 69, 0);
+        }
+    }
+    .voice-dictation-btn.recording {
+        background-color: #dc3545 !important;
+        color: white !important;
+        border-color: #dc3545 !important;
+        animation: pulse-red 1.5s infinite;
+    }
 </style>
 {% endblock %}
 
@@ -161,11 +180,23 @@
     </div>
 </div>
 
+<!-- Campo de Busca em Tempo Real (Live Search) -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="input-group shadow-sm" style="border-radius: 12px; overflow: hidden;">
+            <span class="input-group-text bg-white border-end-0 ps-3 text-muted">
+                <i class="bi bi-search"></i>
+            </span>
+            <input type="text" id="liveSearchTech" class="form-control border-start-0 py-2 ps-2" style="font-family: 'Inter', sans-serif; border-top-right-radius: 12px; border-bottom-right-radius: 12px;" placeholder="Buscar técnico por nome ou matrícula...">
+        </div>
+    </div>
+</div>
+
 <!-- Grid of Technicians with Actions -->
-<div class="row g-4">
+<div class="row g-4" id="techGrid">
     {% for tech in technicians %}
         {% with alloc=tech.active_allocation paused=tech.paused_allocations %}
-        <div class="col-12 col-md-6 col-lg-4">
+        <div class="col-12 col-md-6 col-lg-4 tech-card-wrapper" data-tech-name="{{ tech.nome }}" data-tech-matricula="{{ tech.matricula }}">
             <div class="card card-custom h-100 border-0">
                 <div class="card-header bg-white border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-start">
                     <div>
@@ -343,6 +374,16 @@
                                                             <div class="mb-3">
                                                                 <label for="id_fa_observacao_conclusao-{{ p_alloc.id }}" class="form-label fw-semibold">Observações Finais de Conclusão <span class="text-danger">*</span></label>
                                                                 <textarea name="observacao_conclusao" id="id_fa_observacao_conclusao-{{ p_alloc.id }}" class="form-control" rows="3" placeholder="Descreva o que foi concluído na manutenção..." required></textarea>
+                                                                <!-- Botões de Voz e Tags Rápidas -->
+                                                                <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                                                                    <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 voice-dictation-btn" data-target-id="id_fa_observacao_conclusao-{{ p_alloc.id }}">
+                                                                        <i class="bi bi-mic-fill me-1"></i> Falar
+                                                                    </button>
+                                                                    <span class="text-muted small ms-1 me-1">Tags:</span>
+                                                                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_fa_observacao_conclusao-{{ p_alloc.id }}" data-text="Falta de Peça">Falta de Peça</button>
+                                                                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_fa_observacao_conclusao-{{ p_alloc.id }}" data-text="Aguardando Produção">Aguardando Produção</button>
+                                                                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_fa_observacao_conclusao-{{ p_alloc.id }}" data-text="Limpeza">Limpeza</button>
+                                                                </div>
                                                             </div>
                                                             <div class="mb-2">
                                                                 <label for="id_fa_foto_anexo-{{ p_alloc.id }}" class="form-label fw-semibold">Anexar Foto do Serviço (Opcional)</label>
@@ -485,6 +526,12 @@
                     <div class="mb-2">
                         <label for="id_atividade_observacao" class="form-label fw-semibold">Observações / Atividade a Realizar <span class="text-danger">*</span></label>
                         {{ start_form.atividade_observacao }}
+                        <!-- Botão de Voz -->
+                        <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 voice-dictation-btn" data-target-id="id_atividade_observacao">
+                                <i class="bi bi-mic-fill me-1"></i> Falar
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer border-0 p-4 pt-0">
@@ -512,6 +559,16 @@
                     <div class="mb-2">
                         <label for="id_motivo_pausa" class="form-label fw-semibold text-warning-emphasis">Motivo da Pausa <span class="text-danger">*</span></label>
                         {{ pause_form.motivo_pausa }}
+                        <!-- Botões de Voz e Tags Rápidas -->
+                        <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 voice-dictation-btn" data-target-id="id_motivo_pausa">
+                                <i class="bi bi-mic-fill me-1"></i> Falar
+                            </button>
+                            <span class="text-muted small ms-1 me-1">Tags:</span>
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_motivo_pausa" data-text="Falta de Peça">Falta de Peça</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_motivo_pausa" data-text="Aguardando Produção">Aguardando Produção</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_motivo_pausa" data-text="Limpeza">Limpeza</button>
+                        </div>
                         <div class="form-text text-muted">A descrição do motivo é obrigatória para prosseguir.</div>
                     </div>
                 </div>
@@ -540,6 +597,16 @@
                     <div class="mb-3">
                         <label for="id_observacao_conclusao" class="form-label fw-semibold">Observações Finais de Conclusão <span class="text-danger">*</span></label>
                         {{ finish_form.observacao_conclusao }}
+                        <!-- Botões de Voz e Tags Rápidas -->
+                        <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                            <button type="button" class="btn btn-outline-danger btn-sm rounded-pill px-3 voice-dictation-btn" data-target-id="id_observacao_conclusao">
+                                <i class="bi bi-mic-fill me-1"></i> Falar
+                            </button>
+                            <span class="text-muted small ms-1 me-1">Tags:</span>
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_observacao_conclusao" data-text="Falta de Peça">Falta de Peça</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_observacao_conclusao" data-text="Aguardando Produção">Aguardando Produção</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_observacao_conclusao" data-text="Limpeza">Limpeza</button>
+                        </div>
                         {% if finish_form.observacao_conclusao.errors %}
                         <div class="text-danger small mt-1">
                             {{ finish_form.observacao_conclusao.errors.0 }}
@@ -705,6 +772,142 @@
                 }
             }
         })();
+
+        // ── Busca em Tempo Real (Live Search) ──
+        const searchInput = document.getElementById('liveSearchTech');
+        if (searchInput) {
+            searchInput.addEventListener('input', function() {
+                const query = normalizeText(this.value);
+                document.querySelectorAll('.tech-card-wrapper').forEach(function(card) {
+                    const name = normalizeText(card.getAttribute('data-tech-name') || '');
+                    const matricula = normalizeText(card.getAttribute('data-tech-matricula') || '');
+                    
+                    if (name.includes(query) || matricula.includes(query)) {
+                        card.style.setProperty('display', '', 'important');
+                    } else {
+                        card.style.setProperty('display', 'none', 'important');
+                    }
+                });
+            });
+        }
+
+        // ── Textos Rápidos (Quick Tags) ──
+        document.querySelectorAll('.quick-tag-btn').forEach(function(btn) {
+            btn.addEventListener('click', function(e) {
+                e.preventDefault();
+                const targetId = this.getAttribute('data-target-id');
+                const textToInsert = this.getAttribute('data-text');
+                const targetTextarea = document.getElementById(targetId);
+                if (targetTextarea) {
+                    const currentText = targetTextarea.value.trim();
+                    if (currentText) {
+                        targetTextarea.value = currentText + ' ' + textToInsert;
+                    } else {
+                        targetTextarea.value = textToInsert;
+                    }
+                    targetTextarea.dispatchEvent(new Event('input'));
+                }
+            });
+        });
+
+        // ── Ditado por Voz (Web Speech API) ──
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        const voiceBtns = document.querySelectorAll('.voice-dictation-btn');
+
+        if (!SpeechRecognition) {
+            // Se o navegador não suportar a API, esconde os botões de microfone silenciosamente
+            voiceBtns.forEach(function(btn) {
+                btn.style.display = 'none';
+            });
+        } else {
+            let recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'pt-BR';
+            recognition.interimResults = false;
+
+            let currentActiveBtn = null;
+
+            recognition.onstart = function() {
+                if (currentActiveBtn) {
+                    currentActiveBtn.classList.add('recording');
+                    const icon = currentActiveBtn.querySelector('i');
+                    if (icon) {
+                        icon.className = 'bi bi-record-fill me-1';
+                    }
+                    const textNode = Array.from(currentActiveBtn.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+                    if (textNode) {
+                        textNode.textContent = ' Escutando...';
+                    }
+                }
+            };
+
+            recognition.onend = function() {
+                if (currentActiveBtn) {
+                    currentActiveBtn.classList.remove('recording');
+                    const icon = currentActiveBtn.querySelector('i');
+                    if (icon) {
+                        icon.className = 'bi bi-mic-fill me-1';
+                    }
+                    const textNode = Array.from(currentActiveBtn.childNodes).find(n => n.nodeType === Node.TEXT_NODE);
+                    if (textNode) {
+                        textNode.textContent = ' Falar';
+                    }
+                    currentActiveBtn = null;
+                }
+            };
+
+            recognition.onresult = function(event) {
+                if (currentActiveBtn) {
+                    const targetId = currentActiveBtn.getAttribute('data-target-id');
+                    const targetTextarea = document.getElementById(targetId);
+                    const transcript = event.results[0][0].transcript;
+                    if (targetTextarea && transcript) {
+                        const currentText = targetTextarea.value.trim();
+                        if (currentText) {
+                            targetTextarea.value = currentText + ' ' + transcript;
+                        } else {
+                            targetTextarea.value = transcript;
+                        }
+                        targetTextarea.dispatchEvent(new Event('input'));
+                    }
+                }
+            };
+
+            recognition.onerror = function(event) {
+                console.error('Speech recognition error:', event.error);
+                if (event.error === 'not-allowed') {
+                    alert('Permissão de microfone negada. Ative o acesso ao microfone no navegador.');
+                } else if (event.error !== 'no-speech') {
+                    alert('Erro ao capturar voz: ' + event.error);
+                }
+            };
+
+            voiceBtns.forEach(function(btn) {
+                btn.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    if (currentActiveBtn === this) {
+                        recognition.stop();
+                    } else {
+                        if (currentActiveBtn) {
+                            recognition.stop();
+                        }
+                        currentActiveBtn = this;
+                        try {
+                            recognition.start();
+                        } catch (err) {
+                            console.error('Failed to start speech recognition:', err);
+                        }
+                    }
+                });
+            });
+        }
+
+        function normalizeText(text) {
+            return text
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .toLowerCase();
+        }
     });
 </script>
 {% endblock %}

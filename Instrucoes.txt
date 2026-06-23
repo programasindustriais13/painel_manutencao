@@ -1300,3 +1300,24 @@ A. Modificações Realizadas no Template (technician_management.html):
    baseadas no índice de grupos (`request.user.groups.all.0.name`) pelas variáveis de contexto robustas
    `user_can_manage` e `tech.id == technician_proprio_id`, resolvendo problemas de visualização
    para superusuários ou usuários com múltiplos grupos.
+
+
+27. MELHORIAS DE UX: BUSCA EM TEMPO REAL E DIGITAÇÃO POR VOZ/TAGS (2026-06-23)
+--------------------------------------------------------------------------------
+Foco: Otimizar a localização de técnicos no painel mobile e facilitar o preenchimento de campos de observações em chão de fábrica.
+
+Arquivos modificados:
+- maintenance/templates/maintenance/technician_management.html
+- Instrucoes.txt
+
+A. Busca em Tempo Real (Live Search):
+- Adicionado campo de busca (`liveSearchTech`) no topo da listagem de técnicos.
+- Modificado o container dos cards de cada técnico para incluir a classe `tech-card-wrapper` e atributos de dados `data-tech-name` e `data-tech-matricula`.
+- Implementado JavaScript de filtragem de cards baseado no evento `input` do campo de busca.
+- A filtragem ignora acentos/diacríticos e é case-insensitive, ocultando cards não correspondentes (`display: none`) mantendo a ordem alfabética original.
+
+B. Facilitador de Texto (Voz e Tags Rápidas):
+- Modais de Iniciar Serviço (`#startModal`), Pausa (`#pauseModal`), Conclusão (`#finishModal`) e Conclusão de Pausados (`#finishAllocModal-{{ p_alloc.id }}`) receberam botões de comando de voz e/ou de tags rápidas.
+- Comando de Voz: Utiliza a Web Speech API (`webkitSpeechRecognition`) nativa para transcrever a voz do técnico e anexar o texto ao campo de texto correspondente com um espaço antes. Se não for suportada pelo navegador, os botões de microfone são ocultados de forma silenciosa para evitar erros.
+- Animação Pulsante: Adicionada regra CSS `@keyframes pulse-red` para o botão de microfone pulsar em vermelho enquanto o navegador estiver gravando ("Escutando...").
+- Tags Rápidas: Inseridos os botões de atalho rápido para frases recorrentes ("Falta de Peça", "Aguardando Produção", "Limpeza") que concatenam o texto na caixa de observação sem sobrescrever o conteúdo atual.
