@@ -63,12 +63,15 @@ class TechnicianForm(forms.ModelForm):
         initial='TECNICO',
     )
 
+
+
     class Meta:
         model = Technician
-        fields = ['nome', 'matricula']
+        fields = ['nome', 'matricula', 'whatsapp']
         widgets = {
             'nome': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: João Silva'}),
             'matricula': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: TEC-12345'}),
+            'whatsapp': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: 31999999999'}),
         }
 
     def clean_username_login(self):

@@ -1413,3 +1413,79 @@ A. Reestruturação do Layout Grid (dashboard.html):
 - O gráfico de Pareto de Serviços Executados foi isolado em uma div de linha dedicada (`row g-4 mb-4`) com classe de coluna de largura total (`col-12`).
 - O gráfico de MTTR por Equipamento também foi posicionado em sua própria div de linha dedicada (`row g-4 mb-4`) com classe de coluna de largura total (`col-12`).
 - Isso evita que fiquem dispostos lado a lado e garante que cada gráfico possua o mesmo comportamento visual de destaque do gráfico de Desempenho por Técnico.
+
+
+32. FASE 1: GERADOR DE RELATÓRIO DE PASSAGEM DE TURNO (2026-06-25)
+--------------------------------------------------------------------------------
+Automatização do relatório de passagem de turno para técnicos, permitindo a visualização e edição de um resumo consolidado das atividades do dia (concluídas e pendentes). Adicionado também o campo de WhatsApp ao cadastro de técnicos.
+
+Arquivos criados:
+- maintenance/templates/maintenance/relatorio_turno.html    [NOVO]
+
+Arquivos modificados:
+- maintenance/models.py
+- maintenance/forms.py
+- maintenance/urls.py
+- maintenance/views.py
+- maintenance/templates/maintenance/technician_form.html
+- maintenance/templates/maintenance/base.html
+- Instrucoes.txt
+
+A. Novo Campo de WhatsApp (models.py e forms.py):
+- Adicionado o campo `whatsapp` no modelo `Technician` como um CharField de 20 caracteres (null=True, blank=True) para suportar migrações seguras sem impactar os técnicos já existentes.
+- Incluído o campo `whatsapp` no formulário `TechnicianForm` (campos fields e widgets).
+
+B. Template de Cadastro (technician_form.html):
+- Adicionado campo HTML de WhatsApp na tela de edição e cadastro de técnicos, localizado logo abaixo do campo de Matrícula.
+
+C. View de Geração do Relatório (views.py):
+- Criada a view `relatorio_turno` protegida com o decorator `@tecnico_or_operador_required`.
+- Busca apenas as alocações vinculadas ao técnico atualmente logado (`request.user.technician_profile`) cuja data de início ou fim ocorra na data atual (hoje).
+- Lógica de compilação do texto:
+  * Cabeçalho: "Boa noite\nPassagem de turno\n"
+  * Corpo: Uma lista com marcador asterisco (*) de todas as ordens de serviço concluídas no dia. Utiliza como texto a observação de conclusão ou, caso em branco, a observação inicial ou nome da máquina.
+  * Rodapé: Lista as pendências em andamento (EM_ATENDIMENTO) ou pausadas (EM_PAUSA) do técnico com o respectivo status e motivo da pausa (se houver). Se não houver pendências, exibe a mensagem "Sem pendências para o próximo turno".
+- A view renderiza o template `relatorio_turno.html` com o texto pré-compilado editável em um textarea.
+- Quando o formulário envia um POST (ação de Enviar), exibe uma mensagem de sucesso no Django Messages ("Relatório gerado com sucesso - Em breve integrado ao WhatsApp!") e redireciona de volta para a mesma tela.
+
+D. Rota e Navbar (urls.py e base.html):
+- Adicionada a rota `/relatorio-turno/` vinculada à view `relatorio_turno`.
+- Adicionado um link discreto de "Passagem de Turno" no menu de navegação da navbar, visível apenas para usuários com permissão/perfil adequado de técnico, líder ou operador.
+
+E. Migração de Banco:
+- Arquivo: maintenance/migrations/0010_technician_whatsapp.py
+- Operações: AddField whatsapp (CharField null=True, blank=True)
+- Comandos executados:
+    python manage.py makemigrations
+    python manage.py migrate
+
+
+33. FASE 2: INTEGRAÇÃO REAL COM WHATSAPP (BAILEYS) E MICROSERVIÇO NODE.JS (2026-06-25)
+--------------------------------------------------------------------------------
+Desenvolvimento de microserviço Node.js isolado que usa Express e a biblioteca @whiskeysockets/baileys para enviar mensagens reais no WhatsApp, e integração no backend Django para disparar o relatório real na passagem de turno.
+
+Arquivos criados:
+- whatsapp_service/package.json [NOVO]
+- whatsapp_service/server.js [NOVO]
+- SETUP_WHATSAPP.md [NOVO]
+
+Arquivos modificados:
+- maintenance/views.py
+- requirements.txt
+- Instrucoes.txt
+
+A. Microserviço de WhatsApp (Node.js + Baileys):
+- Pasta isolada 'whatsapp_service' na raiz do projeto (fora das pastas Django).
+- package.json contendo dependências do Express, Baileys (@whiskeysockets/baileys), Pino e qrcode-terminal.
+- server.js que inicializa o Baileys e gera o QR Code no terminal do Node para autenticação.
+- O script salva a sessão localmente em 'auth_info_baileys' para que não precise ler o QR Code toda vez que for reiniciado.
+- Expõe a rota HTTP POST /send para envio de mensagens com número higienizado e formatado para o padrão WhatsApp.
+
+B. Integração no Django (views.py):
+- A view relatorio_turno envia uma requisição POST com requests para http://localhost:3000/send se o técnico possuir WhatsApp cadastrado.
+- Caso o técnico não possua WhatsApp cadastrado, exibe um Django Message do tipo Warning: "Relatório salvo, mas o técnico não possui número de WhatsApp cadastrado."
+- Envolvido o disparo em um bloco try/except requests.exceptions.RequestException. Caso o microserviço esteja offline, exibe a mensagem de aviso amigável: "Relatório salvo, mas o servidor de WhatsApp está offline."
+- Adicionada a dependência 'requests' em requirements.txt.
+
+C. Manual de Instruções (SETUP_WHATSAPP.md):
+- Arquivo Markdown contendo o guia passo a passo para instalação do Node.js, instalação de pacotes locais (npm install), execução do microserviço, leitura de QR Code e instruções de deploy para o Windows Server com PM2 ou arquivo BAT de inicialização.

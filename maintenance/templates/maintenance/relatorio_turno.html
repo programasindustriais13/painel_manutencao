@@ -1,0 +1,160 @@
+{% extends 'maintenance/base.html' %}
+
+{% block title %}Passagem de Turno - Gestão de Manutenção{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Premium style for the shift report card */
+    .report-card {
+        background: #ffffff;
+        border: none;
+        border-radius: 16px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    
+    .report-card:hover {
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+
+    .tech-badge {
+        background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
+        color: #ffffff;
+        border-radius: 12px;
+        padding: 1.5rem;
+    }
+
+    /* Textarea premium styling */
+    .textarea-custom {
+        border: 2px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 1rem;
+        font-family: 'Courier New', Courier, monospace;
+        font-size: 0.95rem;
+        line-height: 1.5;
+        color: #1e293b;
+        background-color: #f8fafc;
+        resize: vertical;
+        transition: all 0.2s ease;
+    }
+
+    .textarea-custom:focus {
+        border-color: #4f46e5;
+        background-color: #ffffff;
+        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+        outline: none;
+    }
+
+    /* Gradient submit button with zoom micro-animation */
+    .btn-gradient-submit {
+        background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        border: none;
+        color: white;
+        font-weight: 600;
+        padding: 12px 24px;
+        border-radius: 30px;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2), 0 2px 4px -1px rgba(16, 185, 129, 0.1);
+    }
+
+    .btn-gradient-submit:hover {
+        background: linear-gradient(135deg, #059669 0%, #047857 100%);
+        transform: translateY(-2px) scale(1.02);
+        box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3), 0 4px 6px -2px rgba(16, 185, 129, 0.15);
+        color: white;
+    }
+
+    .btn-gradient-submit:active {
+        transform: translateY(0) scale(1.0);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-xl-10">
+        
+        <!-- Header with Back Button -->
+        <div class="d-flex align-items-center justify-content-between mb-4">
+            <div>
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb mb-1">
+                        <li class="breadcrumb-item"><a href="{% url 'technician_management' %}" class="text-decoration-none">Controle Técnico</a></li>
+                        <li class="breadcrumb-item active" aria-current="page">Passagem de Turno</li>
+                    </ol>
+                </nav>
+                <h2 class="fw-bold mb-0 text-dark">
+                    <i class="bi bi-chat-left-text text-primary me-2"></i>Passagem de Turno
+                </h2>
+            </div>
+            <a href="{% url 'technician_management' %}" class="btn btn-outline-secondary rounded-pill px-3">
+                <i class="bi bi-arrow-left me-1"></i> Voltar
+            </a>
+        </div>
+
+        <div class="row g-4">
+            <!-- Left Column: Instructions and Technician info -->
+            <div class="col-12 col-lg-4">
+                <div class="card report-card p-4 h-100">
+                    <div class="tech-badge mb-4">
+                        <div class="small text-white-50 uppercase fw-bold mb-1">Técnico Logado</div>
+                        <h4 class="fw-bold mb-2">{{ tecnico.nome }}</h4>
+                        <div class="d-flex flex-column gap-1 small">
+                            <span><i class="bi bi-card-text me-2"></i>Matrícula: {{ tecnico.matricula }}</span>
+                            {% if tecnico.whatsapp %}
+                                <span><i class="bi bi-whatsapp me-2"></i>WhatsApp: {{ tecnico.whatsapp }}</span>
+                            {% else %}
+                                <span class="text-white-50"><i class="bi bi-whatsapp me-2"></i>Sem WhatsApp cadastrado</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <h5 class="fw-bold text-dark mb-3"><i class="bi bi-info-circle text-primary me-2"></i>Como Funciona?</h5>
+                    <p class="text-muted small">
+                        O sistema compila automaticamente suas atividades de hoje e as pendências em aberto.
+                    </p>
+                    <p class="text-muted small">
+                        Você pode <strong>revisar, editar e adicionar mais observações</strong> ao texto pré-compilado na área ao lado antes de enviar.
+                    </p>
+                    
+                    <div class="alert alert-info border-info-subtle mt-auto mb-0 py-3" style="font-size: .85rem;">
+                        <i class="bi bi-lightbulb me-2 text-info fs-5"></i>
+                        Aperte o botão <strong>Enviar</strong> para simular a conclusão de turno e testar a geração do relatório.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Interactive Editor -->
+            <div class="col-12 col-lg-8">
+                <div class="card report-card p-4">
+                    <h5 class="fw-bold text-dark mb-4">
+                        <i class="bi bi-pencil-square text-success me-2"></i>Editar Texto do Relatório
+                    </h5>
+
+                    <form method="post">
+                        {% csrf_token %}
+                        
+                        <div class="mb-4">
+                            <label for="texto_relatorio" class="form-label fw-semibold text-muted small">Conteúdo do Relatório</label>
+                            <textarea id="texto_relatorio" name="texto_relatorio" class="form-control textarea-custom" rows="12">{{ texto_precompilado }}</textarea>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="text-muted small">
+                                <i class="bi bi-check2-all text-success me-1"></i>Pré-compilado em tempo real
+                            </span>
+                            <button type="submit" class="btn btn-gradient-submit">
+                                <i class="bi bi-send-fill"></i> Enviar Relatório
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}

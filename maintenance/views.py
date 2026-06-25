@@ -8,7 +8,7 @@ from functools import wraps
 import json
 import io
 import datetime
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -1292,4 +1292,89 @@ def service_worker_view(request):
     response['Service-Worker-Allowed'] = '/'
     response['Cache-Control'] = 'no-cache'
     return response
+
+
+# ----------------------------------------------------
+# 6. PASSAGEM DE TURNO (RELATÓRIO)
+# ----------------------------------------------------
+@tecnico_or_operador_required
+def relatorio_turno(request):
+    tecnico = _get_technician_proprio(request.user)
+    if not tecnico:
+        messages.error(request, "Seu usuário não possui um perfil de Técnico vinculado para gerar o relatório de turno.")
+        return redirect('technician_management')
+
+    hoje = timezone.localdate()
+    allocations = Allocation.objects.filter(
+        tecnico=tecnico
+    ).filter(
+        Q(data_inicio__date=hoje) | Q(data_fim__date=hoje)
+    ).select_related('maquina')
+
+    if request.method == 'POST':
+        texto = request.POST.get('texto_relatorio', '').strip()
+        whatsapp = (tecnico.whatsapp or '').strip()
+        
+        if not whatsapp:
+            messages.warning(request, "Relatório salvo, mas o técnico não possui número de WhatsApp cadastrado.")
+            return redirect('relatorio_turno')
+            
+        import requests
+        try:
+            payload = {
+                'numero': whatsapp,
+                'mensagem': texto
+            }
+            response = requests.post('http://localhost:3000/send', json=payload, timeout=10)
+            if response.status_code == 200:
+                messages.success(request, "Relatório enviado com sucesso via WhatsApp!")
+            else:
+                messages.warning(request, "Relatório salvo, mas o servidor de WhatsApp está offline.")
+        except requests.exceptions.RequestException:
+            messages.warning(request, "Relatório salvo, mas o servidor de WhatsApp está offline.")
+            
+        return redirect('relatorio_turno')
+
+    # Lógica de Construção do Texto (String)
+    texto_linhas = []
+    texto_linhas.append("Boa noite")
+    texto_linhas.append("Passagem de turno")
+    texto_linhas.append("")
+
+    # Corpo (Concluídos)
+    concluidas = allocations.filter(status='CONCLUIDO')
+    for alloc in concluidas:
+        nome_maquina = alloc.maquina.nome if alloc.maquina else "Sem máquina"
+        obs = (alloc.observacao_conclusao or "").strip()
+        if not obs:
+            obs = (alloc.atividade_observacao or "").strip()
+        if not obs:
+            obs = "Serviço sem descrição"
+        texto_linhas.append(f"* {nome_maquina} - {obs}")
+
+    texto_linhas.append("")
+
+    # Rodapé (Pendências)
+    pendentes = allocations.filter(status__in=['EM_ATENDIMENTO', 'EM_PAUSA'])
+    if not pendentes.exists():
+        texto_linhas.append("Sem pendências para o próximo turno")
+    else:
+        texto_linhas.append("Pendências para o próximo turno:")
+        for alloc in pendentes:
+            nome_maquina = alloc.maquina.nome if alloc.maquina else "Ocioso"
+            if alloc.status == 'EM_PAUSA':
+                motivo = (alloc.motivo_pausa or "").strip()
+                status_desc = f"Em Pausa - {motivo}" if motivo else "Em Pausa"
+            else:
+                status_desc = "Em Atendimento"
+            texto_linhas.append(f"* {nome_maquina} - {status_desc}")
+
+    texto_precompilado = "\n".join(texto_linhas)
+
+    context = {
+        'tecnico': tecnico,
+        'texto_precompilado': texto_precompilado,
+    }
+    return render(request, 'maintenance/relatorio_turno.html', context)
+
 

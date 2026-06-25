@@ -31,6 +31,17 @@
                     {% endif %}
                 </div>
 
+                <div class="mb-4">
+                    <label for="{{ form.whatsapp.id_for_label }}" class="form-label fw-semibold">WhatsApp (Número com DDD)</label>
+                    {{ form.whatsapp }}
+                    {% if form.whatsapp.errors %}
+                        <div class="invalid-feedback d-block">
+                            {% for error in form.whatsapp.errors %}{{ error }}{% endfor %}
+                        </div>
+                    {% endif %}
+                </div>
+
+
                 <!-- ================================================ -->
                 <!-- SEÇÃO: ACESSO AO SISTEMA (Opcional)               -->
                 <!-- ================================================ -->

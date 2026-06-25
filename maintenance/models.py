@@ -95,6 +95,13 @@ class Technician(models.Model):
         blank=True,
         verbose_name="Perfil de Acesso"
     )
+    whatsapp = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        verbose_name="WhatsApp"
+    )
+
 
     def __str__(self):
         return f"{self.nome} ({self.matricula})"

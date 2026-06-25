@@ -291,6 +291,98 @@ class MaintenanceSystemTestCase(TestCase):
         expected_redirect = f'/management/?open_modal=finish_alloc&alloc_id={alloc.id}'
         self.assertRedirects(response, expected_redirect, target_status_code=200)
 
+    def test_shift_report_view(self):
+        """Test shift report view access and compilation logic."""
+        client = Client()
+        
+        # 1. Anonymous user redirected to login
+        response = client.get(reverse('relatorio_turno'))
+        self.assertEqual(response.status_code, 302)
+        
+        # 2. Logged in user without technician profile is redirected
+        client.force_login(self.operador_user)
+        response = client.get(reverse('relatorio_turno'))
+        self.assertRedirects(response, reverse('technician_management'))
+        
+        # 3. Create technician profile with linked user
+        tech_user = User.objects.create_user('tech_user', 'tech@test.com', 'pwd123')
+        tech_user.groups.add(self.tech_group)
+        self.tech.user = tech_user
+        # Add whatsapp number
+        self.tech.whatsapp = "5511999999999"
+        self.tech.save()
+        
+        # 4. Access shift report as the technician
+        client.force_login(tech_user)
+        response = client.get(reverse('relatorio_turno'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Passagem de Turno")
+        
+        # 5. Verify pre-compiled report (initially no allocations, so "Sem pendências")
+        self.assertIn("Sem pendências para o próximo turno", response.context['texto_precompilado'])
+        
+        # 6. Create concluded allocation for today
+        now = timezone.now()
+        Allocation.objects.create(
+            tecnico=self.tech,
+            maquina=self.machine_low,
+            atividade_observacao="CheckingTorne",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(hours=2),
+            data_fim=now - timedelta(hours=1),
+            observacao_conclusao="Troca de correia efetuada"
+        )
+        
+        # 7. Create paused allocation for today
+        Allocation.objects.create(
+            tecnico=self.tech,
+            maquina=self.machine_high,
+            atividade_observacao="Prensa reparo",
+            status="EM_PAUSA",
+            data_inicio=now - timedelta(hours=1),
+            data_pausa=now - timedelta(minutes=30),
+            motivo_pausa="Aguardando peça"
+        )
+        
+        response = client.get(reverse('relatorio_turno'))
+        self.assertEqual(response.status_code, 200)
+        report_text = response.context['texto_precompilado']
+        self.assertIn("* Torno CNC - Troca de correia efetuada", report_text)
+        self.assertIn("* Prensa Hidráulica - Em Pausa - Aguardando peça", report_text)
+        
+        # 8. Post form submission simulates success with mocked requests
+        from unittest.mock import patch, MagicMock
+        
+        # Test case: WhatsApp microservice returns HTTP 200
+        mock_response_success = MagicMock()
+        mock_response_success.status_code = 200
+        
+        with patch('requests.post', return_value=mock_response_success) as mock_post:
+            response = client.post(reverse('relatorio_turno'), data={'texto_relatorio': report_text})
+            self.assertRedirects(response, reverse('relatorio_turno'))
+            mock_post.assert_called_once()
+            # Verify payload contains correct structure
+            args, kwargs = mock_post.call_args
+            self.assertEqual(kwargs['json']['numero'], "5511999999999")
+            self.assertEqual(kwargs['json']['mensagem'], report_text)
+
+        # Test case: WhatsApp microservice returns HTTP 503/error
+        mock_response_error = MagicMock()
+        mock_response_error.status_code = 503
+        
+        with patch('requests.post', return_value=mock_response_error) as mock_post:
+            response = client.post(reverse('relatorio_turno'), data={'texto_relatorio': report_text})
+            self.assertRedirects(response, reverse('relatorio_turno'))
+            mock_post.assert_called_once()
+
+        # Test case: Connection timeout/error raises RequestException
+        import requests
+        with patch('requests.post', side_effect=requests.exceptions.ConnectionError("Connection refused")) as mock_post:
+            response = client.post(reverse('relatorio_turno'), data={'texto_relatorio': report_text})
+            self.assertRedirects(response, reverse('relatorio_turno'))
+            mock_post.assert_called_once()
+
+
 
 
 

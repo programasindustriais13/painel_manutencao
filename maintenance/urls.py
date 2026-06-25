@@ -33,6 +33,9 @@ urlpatterns = [
     # CRUD central page
     path('cruds/', views.crud_list, name='crud_list'),
 
+    # Relatório de Passagem de Turno
+    path('relatorio-turno/', views.relatorio_turno, name='relatorio_turno'),
+
     # Exportação de relatório Excel
     path('dashboard/exportar-excel/', views.exportar_relatorio_excel, name='exportar_relatorio_excel'),
 

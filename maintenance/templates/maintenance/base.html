@@ -149,6 +149,15 @@
                         </a>
                     </li>
                     {% endif %}
+                    
+                    <!-- Passagem de Turno - Visível para Técnicos, Líderes e Operadores -->
+                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Tecnicos' or request.user.groups.all.0.name == 'Operador' or request.user.technician_profile %}
+                    <li class="nav-item">
+                        <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'relatorio_turno' %}active{% endif %}" href="{% url 'relatorio_turno' %}">
+                            <i class="bi bi-chat-left-text me-1"></i> Passagem de Turno
+                        </a>
+                    </li>
+                    {% endif %}
 
                     <!-- Dashboard - Visível para Operadores, Tecnicos_Lideres e admins/staff -->
                     {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Operador' %}
