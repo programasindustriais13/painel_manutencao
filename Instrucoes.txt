@@ -1504,3 +1504,26 @@ A. Novas Regras no .gitignore:
 - `whatsapp_service/package-lock.json` (evita subir o lock de dependências do app secundário)
 - `whatsapp_service/auth_info_baileys/` (ignora a pasta de sessão local e credenciais do Baileys)
 - `*.pyc` (adicionado explicitamente para conformidade com boas práticas do Python/Django)
+
+
+35. SPEC — RESTRIÇÃO DE ACESSO AO DASHBOARD PARA TÉCNICO LÍDER (2026-06-25)
+--------------------------------------------------------------------------------
+Revogação de acesso ao Dashboard (/dashboard/) e à exportação Excel (/dashboard/exportar-excel/) para o perfil de Técnico Líder (grupo 'Tecnicos_Lideres'), tornando-os exclusivos de Operadores e Administradores.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/templates/maintenance/base.html
+- maintenance/tests.py
+- Instrucoes.txt
+
+A. Modificações no Backend (views.py):
+- Alterado o decorator da view `dashboard` de `@lider_ou_operador_required` para `@operador_required`.
+- Alterado o decorator da view `exportar_relatorio_excel` de `@lider_ou_operador_required` para `@operador_required`.
+- Com isso, qualquer tentativa de acesso por perfis que não pertençam ao grupo de Operadores/Administradores (incluindo Técnico Líder) será bloqueada e redirecionada para a tela de gerenciamento de técnicos (/management/) com exibição de mensagem de erro.
+
+B. Modificações na Interface (base.html):
+- Removido o grupo 'Tecnicos_Lideres' da condicional `{% if %}` em volta do link do Dashboard na navbar principal.
+- Agora, o botão "Dashboard" na navbar é visível unicamente para Administradores, staff e membros dos grupos 'Operadores' ou 'Operador'.
+
+C. Testes e Validação (tests.py):
+- Adicionado o teste unitário `test_dashboard_access_restriction` que valida o redirecionamento/bloqueio correto para usuários anônimos e Técnico Líder, bem como a permissão com sucesso (HTTP 200) para usuários Operadores em ambos os endpoints (/dashboard/ e /dashboard/exportar-excel/).

@@ -550,7 +550,7 @@ def set_availability(request, technician_id):
 # ----------------------------------------------------
 # 3. TELA D: DASHBOARD DE ANÁLISE (GESTÃO)
 # ----------------------------------------------------
-@lider_ou_operador_required
+@operador_required
 def dashboard(request):
     # ── Filtro de Período (GET) ─────────────────────────────────────────────
     # Captura parâmetros data_inicio e data_final da query string.
@@ -1052,7 +1052,7 @@ def technician_delete(request, pk):
 # ----------------------------------------------------
 # 5. EXPORTAÇÃO DE RELATÓRIO EXCEL
 # ----------------------------------------------------
-@lider_ou_operador_required
+@operador_required
 def exportar_relatorio_excel(request):
     """
     Gera e retorna um arquivo Excel (.xlsx) com o relatório detalhado de alocações.

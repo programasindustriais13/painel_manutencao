@@ -159,8 +159,8 @@
                     </li>
                     {% endif %}
 
-                    <!-- Dashboard - Visível para Operadores, Tecnicos_Lideres e admins/staff -->
-                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Operador' %}
+                    <!-- Dashboard - Visível para Operadores e admins/staff -->
+                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.0.name == 'Operador' %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
                             <i class="bi bi-graph-up-arrow me-1"></i> Dashboard

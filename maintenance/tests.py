@@ -382,6 +382,38 @@ class MaintenanceSystemTestCase(TestCase):
             self.assertRedirects(response, reverse('relatorio_turno'))
             mock_post.assert_called_once()
 
+    def test_dashboard_access_restriction(self):
+        """Test that only operators/admins can access dashboard and excel export, while lideres are blocked."""
+        client = Client()
+        
+        # Create a leader user
+        lider_user = User.objects.create_user('lider_test_dash', 'lider_dash@test.com', 'pwd123')
+        lider_user.groups.add(self.lider_group)
+        
+        # 1. Anonymous user redirected to login
+        response = client.get(reverse('dashboard'))
+        self.assertEqual(response.status_code, 302)
+        
+        response = client.get(reverse('exportar_relatorio_excel'))
+        self.assertEqual(response.status_code, 302)
+        
+        # 2. Leader user (Tecnico Lider) is blocked and redirected to technician_management
+        client.force_login(lider_user)
+        response = client.get(reverse('dashboard'))
+        self.assertRedirects(response, reverse('technician_management'))
+        
+        response = client.get(reverse('exportar_relatorio_excel'))
+        self.assertRedirects(response, reverse('technician_management'))
+        client.logout()
+        
+        # 3. Operator user can access both dashboard and export
+        client.force_login(self.operador_user)
+        response = client.get(reverse('dashboard'))
+        self.assertEqual(response.status_code, 200)
+        
+        response = client.get(reverse('exportar_relatorio_excel'))
+        self.assertEqual(response.status_code, 200)
+
 
 
 
