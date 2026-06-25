@@ -1,5 +1,6 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 
@@ -30,3 +31,8 @@ ENV/
 # OS files
 .DS_Store
 Thumbs.db
+
+# WhatsApp Microservice
+whatsapp_service/node_modules/
+whatsapp_service/package-lock.json
+whatsapp_service/auth_info_baileys/

@@ -1489,3 +1489,18 @@ B. Integração no Django (views.py):
 
 C. Manual de Instruções (SETUP_WHATSAPP.md):
 - Arquivo Markdown contendo o guia passo a passo para instalação do Node.js, instalação de pacotes locais (npm install), execução do microserviço, leitura de QR Code e instruções de deploy para o Windows Server com PM2 ou arquivo BAT de inicialização.
+
+
+34. SPEC — ATUALIZAÇÃO E BLINDAGEM DO ARQUIVO .GITIGNORE (2026-06-25)
+--------------------------------------------------------------------------------
+Atualização das regras do arquivo `.gitignore` na raiz do projeto para ignorar dependências de Node.js, arquivos de sessão do WhatsApp Baileys e manter a proteção padrão de arquivos Django/Python.
+
+Arquivos modificados:
+- .gitignore
+- Instrucoes.txt
+
+A. Novas Regras no .gitignore:
+- `whatsapp_service/node_modules/` (ignora dependências Node.js locais)
+- `whatsapp_service/package-lock.json` (evita subir o lock de dependências do app secundário)
+- `whatsapp_service/auth_info_baileys/` (ignora a pasta de sessão local e credenciais do Baileys)
+- `*.pyc` (adicionado explicitamente para conformidade com boas práticas do Python/Django)
