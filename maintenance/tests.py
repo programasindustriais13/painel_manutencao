@@ -234,8 +234,16 @@ class MaintenanceSystemTestCase(TestCase):
         response = client.get(reverse('home_redirect'))
         self.assertRedirects(response, reverse('tv_dashboard'))
         client.logout()
+
+        # 3. User with Tecnicos_Lideres group -> technician_management
+        lider_user = User.objects.create_user('lider_test', 'lider@test.com', 'pwd123')
+        lider_user.groups.add(self.lider_group)
+        client.force_login(lider_user)
+        response = client.get(reverse('home_redirect'))
+        self.assertRedirects(response, reverse('technician_management'))
+        client.logout()
         
-        # 3. Other users (like operador_user or admin) -> dashboard
+        # 4. Other users (like operador_user or admin) -> dashboard
         client.force_login(self.operador_user)
         response = client.get(reverse('home_redirect'))
         self.assertRedirects(response, reverse('dashboard'))

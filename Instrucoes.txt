@@ -1321,3 +1321,95 @@ B. Facilitador de Texto (Voz e Tags Rápidas):
 - Comando de Voz: Utiliza a Web Speech API (`webkitSpeechRecognition`) nativa para transcrever a voz do técnico e anexar o texto ao campo de texto correspondente com um espaço antes. Se não for suportada pelo navegador, os botões de microfone são ocultados de forma silenciosa para evitar erros.
 - Animação Pulsante: Adicionada regra CSS `@keyframes pulse-red` para o botão de microfone pulsar em vermelho enquanto o navegador estiver gravando ("Escutando...").
 - Tags Rápidas: Inseridos os botões de atalho rápido para frases recorrentes ("Falta de Peça", "Aguardando Produção", "Limpeza") que concatenam o texto na caixa de observação sem sobrescrever o conteúdo atual.
+
+
+28. EVOLUÇÃO DO DASHBOARD COM KPIs AVANÇADOS E FILTRO UNIFICADO (2026-06-25)
+--------------------------------------------------------------------------------
+Transformação da tela de Dashboard (/dashboard/) em uma central de inteligência analítica com novos KPIs industriais e gráficos, respeitando rigorosamente o filtro de período.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/templates/maintenance/dashboard.html
+- Instrucoes.txt
+
+A. Novos KPIs Calculados no Backend (views.py):
+- Índice de Eficiência Operacional: Razão entre a soma dos tempos líquidos e a soma dos tempos brutos de todas as alocações do período.
+- Taxa de Utilização da Equipe: Razão entre as horas líquidas totais e a capacidade estimada da equipe no período (calculada sob a premissa de jornada de 8h/dia por técnico).
+- Remoção do card antigo de MTTR Líquido geral, substituindo por um gráfico de barras dedicado de MTTR por Equipamento.
+- Todos os cálculos possuem tratamento de divisão por zero e fallback seguro.
+
+B. Otimização de Performance e Consultas:
+- Refatoração da query principal de alocações do período utilizando `.select_related('tecnico', 'maquina', 'maquina__setor').prefetch_related('pausas')` para evitar o problema de N+1 consultas.
+- Processamento dos agrupamentos de gráficos em um único loop Python em memória.
+- Exclusão inteligente de "projeto" e "fábrica" nas estatísticas de máquinas (tanto de criticidade/ofensoras quanto de MTTR) por tratarem-se de projetos de melhorias e não de quebras reais de produção.
+
+C. Novos Gráficos Inteligentes (dashboard.html e views.py):
+- Gráfico 1 (Pareto de Pausas): Agrupa e soma as durações de todas as pausas de HistoricoPausa com início no período, exibindo-as em gráfico de barras horizontais ordenadas por duração decrescente (em horas).
+- Gráfico 2 (Top 5 Máquinas Ofensoras): Exibe as 5 máquinas reais com maior tempo bruto acumulado de manutenção no período (em horas), excluindo "projeto" e "fábrica".
+- Gráfico 3 (Distribuição por Criticidade): Exibe em formato de Rosca/Donut as horas acumuladas em manutenção por criticidade (Baixa, Média, Alta).
+- Gráfico 4 (MTTR por Equipamento): Exibe o tempo médio de reparo (MTTR em minutos) das alocações concluídas de cada equipamento no período, excluindo "projeto" e "fábrica", ordenado de forma decrescente.
+
+D. Atualização de Interface:
+- Ajustados os cards de KPIs para 2 colunas simétricas (Eficiência e Utilização da Equipe).
+- Configuração de fallback visual nos 4 gráficos quando o período selecionado não possui dados correspondentes, garantindo que a tela nunca quebre.
+
+
+29. GRÁFICO DE DESEMPENHO INDIVIDUAL POR TÉCNICO (2026-06-25)
+--------------------------------------------------------------------------------
+Criação de um novo gráfico combinado (Mixed Chart) no Dashboard (/dashboard/) para cruzar a quantidade de atendimentos concluídos por cada técnico com o MTTR líquido individual.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/templates/maintenance/dashboard.html
+- Instrucoes.txt
+
+A. Novo Cálculo por Técnico (views.py):
+- Filtra apenas alocações com status='CONCLUIDO' iniciadas no período do filtro.
+- Agrupa os resultados pelo nome do técnico.
+- Conta o volume de serviços concluídos e calcula o MTTR líquido individual (tempo bruto deduzido das pausas, dividido pelo volume de conclusões, em minutos).
+- Ordena a lista de forma decrescente pelo volume de conclusões para destacar os técnicos mais ativos.
+- Passa os dados serializados em JSON para o template.
+
+B. Interface e Configuração do Gráfico (dashboard.html):
+- Adicionado container HTML para o gráfico "Desempenho por Técnico" ocupando largura total (col-12) abaixo da segunda linha de gráficos.
+- Configuração no Chart.js de um gráfico combinado (Mixed Chart):
+  * Barras (cor Indigo): Representam a quantidade de serviços concluídos (Eixo Y Esquerdo).
+  * Linha (cor Amarela): Representa o MTTR individual em minutos (Eixo Y Direito).
+- Tratamento e fallback visual caso não haja alocações concluídas no período, evitando divisão por zero e exibindo placeholders limpos.
+
+
+30. ALTERAÇÃO DA BASE DE DADOS DO GRÁFICO DE PARETO (DE PAUSAS PARA SERVIÇOS) (2026-06-25)
+--------------------------------------------------------------------------------
+Pivot do primeiro gráfico de Pareto (Gráfico 1) de "Motivos de Pausa" para "Serviços Executados", alterando sua fonte de dados para as alocações concluídas agrupadas pela descrição da atividade.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/templates/maintenance/dashboard.html
+- Instrucoes.txt
+
+A. Mudança de Base de Dados e Query (views.py):
+- Substituída a query em HistoricoPausa pela query em Allocation.
+- Filtra apenas alocações com status='CONCLUIDO' iniciadas no período selecionado.
+- Agrupa os resultados pelo campo atividade_observacao (normalizado com strip()).
+- Soma o tempo líquido de manutenção (Tempo Bruto - Pausas) de cada serviço em horas.
+- Ordena as atividades de forma decrescente pela duração total e limita aos Top 15 maiores serviços.
+- Passa as novas variáveis servico_labels e servico_values serializadas em JSON para o contexto.
+
+B. Interface e Configuração do Gráfico (dashboard.html):
+- Alterado o título do gráfico e card para "Pareto de Serviços Executados".
+- Atualizado o ícone do cabeçalho para bi-card-checklist.
+- Reconfigurado o Chart.js para ler as novas variáveis servico_labels e servico_values, além de atualizar as legendas de tooltip (de "Horas em Pausa" para "Horas de Trabalho").
+
+
+31. REPOSICIONAMENTO DOS GRÁFICOS DE PARETO E MTTR EM LINHAS INDEPENDENTES (2026-06-25)
+--------------------------------------------------------------------------------
+Alteração do layout no Dashboard (/dashboard/) para que os gráficos "Pareto de Serviços Executados" e "MTTR por Equipamento" ocupem, cada um, uma linha inteira da página, alinhados ao comportamento do gráfico de desempenho individual.
+
+Arquivos modificados:
+- maintenance/templates/maintenance/dashboard.html
+- Instrucoes.txt
+
+A. Reestruturação do Layout Grid (dashboard.html):
+- O gráfico de Pareto de Serviços Executados foi isolado em uma div de linha dedicada (`row g-4 mb-4`) com classe de coluna de largura total (`col-12`).
+- O gráfico de MTTR por Equipamento também foi posicionado em sua própria div de linha dedicada (`row g-4 mb-4`) com classe de coluna de largura total (`col-12`).
+- Isso evita que fiquem dispostos lado a lado e garante que cada gráfico possua o mesmo comportamento visual de destaque do gráfico de Desempenho por Técnico.

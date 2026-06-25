@@ -101,9 +101,9 @@ def home_redirect(request):
     # Visualizador / usuário 'tv' → painel TV
     if user.groups.filter(name='Visualizador').exists() or user.username == 'tv':
         return redirect('tv_dashboard')
-    # Técnico Líder → dashboard (tem acesso a métricas)
+    # Técnico Líder → painel de controle de técnicos (/management/)
     if user.groups.filter(name='Tecnicos_Lideres').exists():
-        return redirect('dashboard')
+        return redirect('technician_management')
     # Técnico comum (se estiver no grupo Tecnicos) → painel de controle de técnicos
     if user.groups.filter(name='Tecnicos').exists():
         return redirect('technician_management')
@@ -111,7 +111,7 @@ def home_redirect(request):
     # Fallback para perfis legados / técnicos vinculados
     tecnico = _get_technician_proprio(user)
     if tecnico and tecnico.perfil == 'TECNICO_LIDER':
-        return redirect('dashboard')
+        return redirect('technician_management')
     if tecnico and tecnico.perfil == 'TECNICO':
         return redirect('technician_management')
         
@@ -596,31 +596,191 @@ def dashboard(request):
     #     allocations__data_fim__isnull=True
     # ).distinct().count()
 
-    # ── Base queryset filtrado pelo período ────────────────────────────────
+    # ── Base queryset filtrado pelo período com prefetches ─────────────────
     alloc_filtrado = Allocation.objects.filter(
         data_inicio__date__range=[data_inicio, data_final]
-    )
+    ).select_related('tecnico', 'maquina', 'maquina__setor').prefetch_related('pausas')
 
-    # 1. Pie/Doughnut Chart Data: Distribution of tech status (inclui ausências)
+    now = timezone.now()
+    
+    total_bruto_segundos = 0.0
+    total_liquido_segundos = 0.0
+    concluidas_net_durations = []
+    
+    # Agrupamentos para gráficos
+    maquina_segundos = {}
+    maquina_chamados = {}
+    criticidade_segundos = {
+        'BAIXA': 0.0,
+        'MEDIA': 0.0,
+        'ALTA': 0.0,
+    }
+    
+    # Para o gráfico de setores (Volume de atendimentos por setor) - mantendo compatibilidade
+    sectors = Sector.objects.all()
+    alloc_by_sector = {s.nome: 0 for s in sectors}
+    
+    for alloc in alloc_filtrado:
+        # Cálculo de tempo bruto
+        if alloc.data_fim:
+            gross_seconds = (alloc.data_fim - alloc.data_inicio).total_seconds()
+        else:
+            gross_seconds = (now - alloc.data_inicio).total_seconds()
+        
+        gross_seconds = max(0.0, gross_seconds)
+        
+        # Cálculo de pausas
+        pause_seconds = 0.0
+        for p in alloc.pausas.all():
+            if p.data_retorno:
+                p_end = p.data_retorno
+            else:
+                p_end = alloc.data_fim or now
+            
+            p_dur = (p_end - p.data_pausa).total_seconds()
+            p_dur = max(0.0, p_dur)
+            pause_seconds += p_dur
+            
+        net_seconds = max(0.0, gross_seconds - pause_seconds)
+        
+        # Acumuladores
+        total_bruto_segundos += gross_seconds
+        total_liquido_segundos += net_seconds
+        
+        if alloc.status == 'CONCLUIDO':
+            concluidas_net_durations.append(net_seconds)
+            
+        # Agrupamento Criticidade (horas de manutenção)
+        if alloc.maquina:
+            crit = alloc.maquina.criticidade
+            if crit in criticidade_segundos:
+                criticidade_segundos[crit] += gross_seconds
+            else:
+                criticidade_segundos[crit] = criticidade_segundos.get(crit, 0.0) + gross_seconds
+            
+            # Agrupamento Máquinas Ofensoras (Top 5 Máquinas) - ignorando projetos e fábrica
+            m_nome = alloc.maquina.nome
+            m_nome_lower = m_nome.lower()
+            if not ('projeto' in m_nome_lower or 'fabrica' in m_nome_lower or 'fábrica' in m_nome_lower):
+                maquina_segundos[m_nome] = maquina_segundos.get(m_nome, 0.0) + gross_seconds
+                maquina_chamados[m_nome] = maquina_chamados.get(m_nome, 0) + 1
+            
+            # Volume de atendimentos por setor
+            if alloc.maquina.setor:
+                s_nome = alloc.maquina.setor.nome
+                if s_nome in alloc_by_sector:
+                    alloc_by_sector[s_nome] += 1
+                else:
+                    alloc_by_sector[s_nome] = alloc_by_sector.get(s_nome, 0) + 1
+
+    # 1. MTTR por Equipamento (excluindo projetos/fábrica)
+    maquina_concluidas_net = {}
+    maquina_concluidas_count = {}
+    for alloc in alloc_filtrado:
+        if alloc.status == 'CONCLUIDO' and alloc.maquina:
+            m_nome = alloc.maquina.nome
+            m_nome_lower = m_nome.lower()
+            if not ('projeto' in m_nome_lower or 'fabrica' in m_nome_lower or 'fábrica' in m_nome_lower):
+                if alloc.data_fim:
+                    gross_seconds = (alloc.data_fim - alloc.data_inicio).total_seconds()
+                else:
+                    gross_seconds = (now - alloc.data_inicio).total_seconds()
+                gross_seconds = max(0.0, gross_seconds)
+                
+                pause_seconds = 0.0
+                for p in alloc.pausas.all():
+                    if p.data_retorno:
+                        p_end = p.data_retorno
+                    else:
+                        p_end = alloc.data_fim or now
+                    p_dur = (p_end - p.data_pausa).total_seconds()
+                    pause_seconds += max(0.0, p_dur)
+                    
+                net_seconds = max(0.0, gross_seconds - pause_seconds)
+                
+                maquina_concluidas_net[m_nome] = maquina_concluidas_net.get(m_nome, 0.0) + net_seconds
+                maquina_concluidas_count[m_nome] = maquina_concluidas_count.get(m_nome, 0) + 1
+
+    mttr_equipamentos = {}
+    for m_nome, net_sec in maquina_concluidas_net.items():
+        count = maquina_concluidas_count[m_nome]
+        if count > 0:
+            mttr_equipamentos[m_nome] = round((net_sec / count) / 60.0, 1) # em minutos
+
+    # Ordenar por MTTR decrescente
+    sorted_mttr_equip = sorted(mttr_equipamentos.items(), key=lambda x: x[1], reverse=True)
+    mttr_equip_labels = [item[0] for item in sorted_mttr_equip]
+    mttr_equip_values = [item[1] for item in sorted_mttr_equip]
+
+    # 2. Índice de Eficiência Operacional
+    if total_bruto_segundos > 0:
+        eficiencia_percent = round((total_liquido_segundos / total_bruto_segundos) * 100, 1)
+        eficiencia_display = f"{eficiencia_percent}%"
+    else:
+        eficiencia_display = "N/A"
+
+    # 3. Taxa de Utilização da Equipe (Simplificada)
+    total_horas_liquidas = total_liquido_segundos / 3600.0
+    total_dias = (data_final - data_inicio).days + 1
+    capacidade_horas = total_dias * 8.0 * total_techs
+    if capacidade_horas > 0:
+        utilizacao_percent = round((total_horas_liquidas / capacidade_horas) * 100, 1)
+        utilizacao_display = f"{utilizacao_percent}%"
+    else:
+        utilizacao_display = "N/A"
+
+    # 4. Gráfico 1: Pareto de Serviços Executados (agrupado por atividade_observacao)
+    servicos_segundos = {}
+    for alloc in alloc_filtrado:
+        if alloc.status == 'CONCLUIDO':
+            desc = (alloc.atividade_observacao or 'Sem descrição').strip()
+            if not desc:
+                desc = 'Sem descrição'
+            
+            # Cálculo de tempo bruto
+            if alloc.data_fim:
+                gross_seconds = (alloc.data_fim - alloc.data_inicio).total_seconds()
+            else:
+                gross_seconds = (now - alloc.data_inicio).total_seconds()
+            gross_seconds = max(0.0, gross_seconds)
+            
+            # Cálculo de pausas
+            pause_seconds = 0.0
+            for p in alloc.pausas.all():
+                if p.data_retorno:
+                    p_end = p.data_retorno
+                else:
+                    p_end = alloc.data_fim or now
+                p_dur = (p_end - p.data_pausa).total_seconds()
+                pause_seconds += max(0.0, p_dur)
+                
+            net_seconds = max(0.0, gross_seconds - pause_seconds)
+            servicos_segundos[desc] = servicos_segundos.get(desc, 0.0) + net_seconds
+
+    sorted_servicos = sorted(servicos_segundos.items(), key=lambda x: x[1], reverse=True)[:15]
+    servico_labels = [item[0] for item in sorted_servicos]
+    servico_values = [round(item[1] / 3600.0, 1) for item in sorted_servicos] # em horas
+
+    # 5. Gráfico 2: Top 5 Máquinas Ofensoras (tempo bruto de manutenção)
+    sorted_maquinas = sorted(maquina_segundos.items(), key=lambda x: x[1], reverse=True)[:5]
+    ofensoras_labels = [item[0] for item in sorted_maquinas]
+    ofensoras_durations = [round(item[1] / 3600.0, 1) for item in sorted_maquinas] # em horas
+    ofensoras_counts = [maquina_chamados[item[0]] for item in sorted_maquinas]
+
+    # 6. Gráfico 3: Distribuição por Criticidade (Horas gastas em manutenção)
+    crit_labels = ['Baixa', 'Média', 'Alta']
+    crit_values = [
+        round(criticidade_segundos.get('BAIXA', 0.0) / 3600.0, 1),
+        round(criticidade_segundos.get('MEDIA', 0.0) / 3600.0, 1),
+        round(criticidade_segundos.get('ALTA', 0.0) / 3600.0, 1)
+    ]
+
+    # 7. Pie/Doughnut Chart Data: Distribution of tech status
     status_distribution = {
         'Ocioso': idle_techs,
         'Em Atendimento': active_techs,
         'Em Pausa': paused_techs,
         'Ausente/Externo': absent_techs,
-    }
-
-    # 2. Bar Chart Data: Allocations by Criticidade (filtrado por período)
-    alloc_by_criticidade = {
-        'Baixa': alloc_filtrado.filter(maquina__criticidade='BAIXA').count(),
-        'Média': alloc_filtrado.filter(maquina__criticidade='MEDIA').count(),
-        'Alta':  alloc_filtrado.filter(maquina__criticidade='ALTA').count(),
-    }
-
-    # 3. Bar Chart Data: Allocations by Sector (filtrado por período)
-    sectors = Sector.objects.all()
-    alloc_by_sector = {
-        s.nome: alloc_filtrado.filter(maquina__setor=s).count()
-        for s in sectors
     }
 
     context = {
@@ -629,22 +789,81 @@ def dashboard(request):
         'paused_techs': paused_techs,
         'idle_techs':   idle_techs,
         'absent_techs': absent_techs,
-        # 'machines_in_maintenance': machines_in_maintenance,  # commented out to optimize performance
 
-        # Datas do filtro (repopulam os inputs após recarregar a página)
+        # Datas do filtro
         'data_inicio_str': data_inicio_str,
         'data_final_str':  data_final_str,
 
-        # Serialize to pass safely to javascript block
+        # Novos KPIs
+        'eficiencia_display': eficiencia_display,
+        'utilizacao_display': utilizacao_display,
+
+        # Serializações para gráficos
         'status_labels': json.dumps(list(status_distribution.keys())),
         'status_values': json.dumps(list(status_distribution.values())),
 
-        'crit_labels': json.dumps(list(alloc_by_criticidade.keys())),
-        'crit_values': json.dumps(list(alloc_by_criticidade.values())),
+        'servico_labels': json.dumps(servico_labels),
+        'servico_values': json.dumps(servico_values),
+
+        'ofensoras_labels': json.dumps(ofensoras_labels),
+        'ofensoras_durations': json.dumps(ofensoras_durations),
+        'ofensoras_counts': json.dumps(ofensoras_counts),
+
+        'crit_labels': json.dumps(crit_labels),
+        'crit_values': json.dumps(crit_values),
+
+        'mttr_equip_labels': json.dumps(mttr_equip_labels),
+        'mttr_equip_values': json.dumps(mttr_equip_values),
 
         'sector_labels': json.dumps(list(alloc_by_sector.keys())),
         'sector_values': json.dumps(list(alloc_by_sector.values())),
     }
+
+    # 8. Desempenho por Técnico (concluídas no período)
+    tech_concluidas_net = {}
+    tech_concluidas_count = {}
+    for alloc in alloc_filtrado:
+        if alloc.status == 'CONCLUIDO' and alloc.tecnico:
+            t_nome = alloc.tecnico.nome
+            
+            # Cálculo de tempo bruto
+            if alloc.data_fim:
+                gross_seconds = (alloc.data_fim - alloc.data_inicio).total_seconds()
+            else:
+                gross_seconds = (now - alloc.data_inicio).total_seconds()
+            gross_seconds = max(0.0, gross_seconds)
+            
+            # Cálculo de pausas
+            pause_seconds = 0.0
+            for p in alloc.pausas.all():
+                if p.data_retorno:
+                    p_end = p.data_retorno
+                else:
+                    p_end = alloc.data_fim or now
+                p_dur = (p_end - p.data_pausa).total_seconds()
+                pause_seconds += max(0.0, p_dur)
+                
+            net_seconds = max(0.0, gross_seconds - pause_seconds)
+            
+            tech_concluidas_net[t_nome] = tech_concluidas_net.get(t_nome, 0.0) + net_seconds
+            tech_concluidas_count[t_nome] = tech_concluidas_count.get(t_nome, 0) + 1
+
+    tech_data = []
+    for t_nome, count in tech_concluidas_count.items():
+        net_sec = tech_concluidas_net.get(t_nome, 0.0)
+        mttr_min = round((net_sec / count) / 60.0, 1) if count > 0 else 0.0
+        tech_data.append((t_nome, count, mttr_min))
+
+    # Ordenar por volume decrescente
+    tech_data_sorted = sorted(tech_data, key=lambda x: x[1], reverse=True)
+    tech_desempenho_labels = [item[0] for item in tech_data_sorted]
+    tech_desempenho_volumes = [item[1] for item in tech_data_sorted]
+    tech_desempenho_mttrs = [item[2] for item in tech_data_sorted]
+
+    context['tech_desempenho_labels'] = json.dumps(tech_desempenho_labels)
+    context['tech_desempenho_volumes'] = json.dumps(tech_desempenho_volumes)
+    context['tech_desempenho_mttrs'] = json.dumps(tech_desempenho_mttrs)
+
     return render(request, 'maintenance/dashboard.html', context)
 
 
