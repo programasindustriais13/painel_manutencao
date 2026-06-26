@@ -1358,6 +1358,7 @@ def relatorio_turno(request):
     texto_linhas = []
     texto_linhas.append("Boa noite")
     texto_linhas.append("Passagem de turno")
+    texto_linhas.append(f"Técnico: {tecnico.nome}")
     texto_linhas.append("")
 
     # Corpo (Concluídos)

@@ -1612,3 +1612,23 @@ C. Adaptação do Template (relatorio_turno.html):
 
 D. Atualização de Testes (tests.py):
 - Ajustado o teste `test_shift_report_view` para inicializar um objeto `WhatsAppGroup` no banco de dados e utilizá-lo nas validações de post.
+
+
+39. SPEC — INCLUSÃO DO NOME DO TÉCNICO NO RELATÓRIO (2026-06-26)
+--------------------------------------------------------------------------------
+Inclusão do nome do técnico logado no cabeçalho do relatório de passagem de turno gerado automaticamente, evitando confusão sobre a autoria das atividades quando enviado para grupos.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/tests.py
+- Instrucoes.txt
+
+A. Modificações no Backend (views.py):
+- Alteração na view `relatorio_turno` para obter o nome do técnico do perfil do usuário logado (`tecnico.nome`).
+- Concatenação do nome do técnico no cabeçalho da mensagem (`texto_linhas`), na terceira linha. O novo cabeçalho gerado é:
+  Boa noite
+  Passagem de turno
+  Técnico: [Nome do Técnico]
+
+B. Ajustes nos Testes (tests.py):
+- Adicionada asserção no teste `test_shift_report_view` para garantir que o cabeçalho gerado em `texto_precompilado` contém o nome do técnico correto ("Técnico: Carlos Souza").

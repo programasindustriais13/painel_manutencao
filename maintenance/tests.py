@@ -320,6 +320,7 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertContains(response, "Passagem de Turno")
         
         # 5. Verify pre-compiled report (initially no allocations, so "Sem pendências")
+        self.assertIn("Técnico: Carlos Souza", response.context['texto_precompilado'])
         self.assertIn("Sem pendências para o próximo turno", response.context['texto_precompilado'])
         
         # 6. Create concluded allocation for today
