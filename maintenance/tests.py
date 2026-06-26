@@ -345,11 +345,36 @@ class MaintenanceSystemTestCase(TestCase):
             data_pausa=now - timedelta(minutes=30),
             motivo_pausa="Aguardando peça"
         )
+
+        # 7b. Create an allocation older than 12 hours (should be excluded)
+        Allocation.objects.create(
+            tecnico=self.tech,
+            maquina=self.machine_low,
+            atividade_observacao="ServicoAntigo",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(hours=14),
+            data_fim=now - timedelta(hours=13),
+            observacao_conclusao="Servico antigo concluido"
+        )
+
+        # 7c. Create an allocation started 14 hours ago but finished 10 hours ago (should be included because data_fim >= now - 12h)
+        Allocation.objects.create(
+            tecnico=self.tech,
+            maquina=self.machine_low,
+            atividade_observacao="ServicoCruzouJanela",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(hours=14),
+            data_fim=now - timedelta(hours=10),
+            observacao_conclusao="Servico que cruzou a janela"
+        )
+
         response = client.get(reverse('relatorio_turno'))
         self.assertEqual(response.status_code, 200)
         report_text = response.context['texto_precompilado']
         self.assertIn("* Torno CNC - Troca de correia efetuada", report_text)
         self.assertIn("* Prensa Hidráulica - Em Pausa - Aguardando peça", report_text)
+        self.assertIn("Servico que cruzou a janela", report_text)
+        self.assertNotIn("Servico antigo concluido", report_text)
         
         # 8. Post form submission simulates success with mocked requests
         from unittest.mock import patch, MagicMock

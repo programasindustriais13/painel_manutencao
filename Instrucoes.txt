@@ -1632,3 +1632,20 @@ A. Modificações no Backend (views.py):
 
 B. Ajustes nos Testes (tests.py):
 - Adicionada asserção no teste `test_shift_report_view` para garantir que o cabeçalho gerado em `texto_precompilado` contém o nome do técnico correto ("Técnico: Carlos Souza").
+
+
+40. SPEC — ALTERAÇÃO DO PERÍODO DO RELATÓRIO PARA JANELA DE 12 HORAS (2026-06-26)
+--------------------------------------------------------------------------------
+Alteração do filtro de período da busca de serviços/alocações do relatório de turno para utilizar uma janela de tempo relativa de 12 horas (TimeDelta) em vez de filtrar estritamente pela data do dia atual (hoje). Isso garante que o relatório capture corretamente as atividades que cruzam a meia-noite.
+
+Arquivos modificados:
+- maintenance/views.py
+- maintenance/tests.py
+- Instrucoes.txt
+
+A. Modificações no Backend (views.py):
+- Substituição do filtro de data calendarizada `timezone.localdate()` por um limite de tempo relativo de 12 horas: `limite_tempo = timezone.now() - timedelta(hours=12)`.
+- Alteração da query do Django ORM para buscar alocações onde `data_inicio` ou `data_fim` sejam maiores ou iguais ao `limite_tempo` (`__gte=limite_tempo`).
+
+B. Modificações nos Testes (tests.py):
+- Inclusão de novas asserções e alocações de teste no método `test_shift_report_view` para verificar se as alocações geradas no intervalo da janela de 12 horas (incluindo as que cruzam a janela) são listadas e as alocações criadas a mais de 12 horas são devidamente excluídas do relatório.

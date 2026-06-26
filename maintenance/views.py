@@ -1304,11 +1304,12 @@ def relatorio_turno(request):
         messages.error(request, "Seu usuário não possui um perfil de Técnico vinculado para gerar o relatório de turno.")
         return redirect('technician_management')
 
-    hoje = timezone.localdate()
+    from datetime import timedelta
+    limite_tempo = timezone.now() - timedelta(hours=12)
     allocations = Allocation.objects.filter(
         tecnico=tecnico
     ).filter(
-        Q(data_inicio__date=hoje) | Q(data_fim__date=hoje)
+        Q(data_inicio__gte=limite_tempo) | Q(data_fim__gte=limite_tempo)
     ).select_related('maquina')
 
     if request.method == 'POST':
