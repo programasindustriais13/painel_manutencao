@@ -1,3 +1,4 @@
+http://localhost:3000/groups
 python manage.py runserver 0.0.0.0:8000
 
 python -m venv venv
@@ -1547,3 +1548,67 @@ A. Modificações no Modelo (models.py):
 B. Modificações nos Testes (tests.py):
 - Ajuste na simulação de conclusão em `test_allocation_properties` para limpar `data_pausa` a fim de simular o cálculo bruto de conclusão sem pausas.
 - Inclusão do teste unitário `test_elapsed_time_with_multiple_pauses` validando o cálculo líquido para alocações com múltiplas pausas finalizadas e com pausa atualmente ativa.
+
+
+37. FASE 3: ENVIO PARA GRUPOS E ESCUDO ANTI-BANIMENTO (WHATSAPP) (2026-06-26)
+--------------------------------------------------------------------------------
+Implementação do disparo de relatórios de passagem de turno para grupos predefinidos e escudo de proteção anti-banimento (Rate Limit, Circuit Breaker e fila de segundo plano com delay randômico).
+
+Arquivos modificados:
+- whatsapp_service/package.json
+- whatsapp_service/server.js
+- maintenance/views.py
+- maintenance/templates/maintenance/relatorio_turno.html
+- maintenance/tests.py
+- Instrucoes.txt
+
+A. Escudo de Proteção no Microsserviço Node.js (server.js):
+- Rate Limit: Limite de 5 requisições por minuto por IP usando 'express-rate-limit' (retorna HTTP 429).
+- Circuit Breaker: Abre após 3 falhas seguidas no envio de mensagens, bloqueando novos disparos por 60 segundos (retorna HTTP 503 com "Serviço temporariamente indisponível").
+- Fila com Atraso Humano: Processamento sequencial em background com atraso aleatório de 2s a 5s para evitar picos de conexões e detecção de spam.
+- Retorno Assíncrono: A rota POST /send retorna HTTP 202 imediatamente após aceitar e enfileirar a mensagem, evitando timeouts e lentidão no Django.
+- JIDs de Grupos: Checa o número de destino e, se contiver '@g.us', envia sem formatar com prefixo '55' (comportamento de grupo). Caso contrário, higieniza e formata como individual (@s.whatsapp.net).
+
+B. View do Relatório de Turno no Django (views.py):
+- Adicionado dicionário `WHATSAPP_GRUPOS` mapeando chaves ('meu_numero', 'grupo_geral', 'grupo_lideranca') para seus respectivos IDs JIDs.
+- Tratamento do campo POST 'destino' enviando o número correspondente ao microsserviço Node.js.
+- Captura e exibição amigável de erros 429 (Limite Excedido) e 503 (Serviço Indisponível / Circuit Breaker) retornados pelo microsserviço.
+
+C. Layout e Interface (relatorio_turno.html):
+- Adicionado seletor `<select>` estilizado com visual premium para seleção do destinatário do relatório (individual ou grupos configurados).
+
+D. Cobertura de Testes (tests.py):
+- Atualização do teste `test_shift_report_view` para validar o envio para grupos e o tratamento correto de erros HTTP 202, 429 e 503 no Django backend.
+
+
+38. SPEC — TRANSIÇÃO DE GRUPOS WHATSAPP PARA O BANCO DE DADOS (/ADMIN) (2026-06-26)
+--------------------------------------------------------------------------------
+Transição do armazenamento dos grupos de WhatsApp da configuração estática (dicionário hardcoded) no código para um modelo dinâmico no banco de dados, integrado e gerenciável pelo Django Admin.
+
+Arquivos modificados:
+- maintenance/models.py
+- maintenance/admin.py
+- maintenance/views.py
+- maintenance/templates/maintenance/relatorio_turno.html
+- maintenance/tests.py
+- Instrucoes.txt
+
+A. Novo Modelo WhatsAppGroup (models.py e admin.py):
+- Criado o modelo `WhatsAppGroup` com campos `nome` (CharField), `jid` (CharField, unique) e `is_active` (BooleanField, default=True).
+- Registrada a tabela no Django Admin com filtros ativos e campos de busca por nome e JID.
+- Geradas e executadas as migrações:
+    python manage.py makemigrations
+    python manage.py migrate
+
+B. Adaptação do Backend (views.py):
+- Importação do modelo `WhatsAppGroup`.
+- Remoção do dicionário estático `WHATSAPP_GRUPOS`.
+- Consulta ao banco para alimentar a lista de opções com grupos ativos (`WhatsAppGroup.objects.filter(is_active=True)`).
+- Validação reforçada do JID no POST contra registros ativos existentes no banco de dados.
+
+C. Adaptação do Template (relatorio_turno.html):
+- Alterado o loop de opções no select para usar `grupos_whatsapp`.
+- Mantida a opção fixa "Meu Número (Teste)" no topo da lista.
+
+D. Atualização de Testes (tests.py):
+- Ajustado o teste `test_shift_report_view` para inicializar um objeto `WhatsAppGroup` no banco de dados e utilizá-lo nas validações de post.

@@ -4,7 +4,7 @@ from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, WhatsAppGroup
 
 class MaintenanceSystemTestCase(TestCase):
     def setUp(self):
@@ -344,7 +344,6 @@ class MaintenanceSystemTestCase(TestCase):
             data_pausa=now - timedelta(minutes=30),
             motivo_pausa="Aguardando peça"
         )
-        
         response = client.get(reverse('relatorio_turno'))
         self.assertEqual(response.status_code, 200)
         report_text = response.context['texto_precompilado']
@@ -354,32 +353,80 @@ class MaintenanceSystemTestCase(TestCase):
         # 8. Post form submission simulates success with mocked requests
         from unittest.mock import patch, MagicMock
         
-        # Test case: WhatsApp microservice returns HTTP 200
+        # Create test whatsapp group in database
+        WhatsAppGroup.objects.create(nome="Grupo Geral", jid="123456789@g.us", is_active=True)
+        
+        # Test case: WhatsApp microservice returns HTTP 202 (standard queued success)
         mock_response_success = MagicMock()
-        mock_response_success.status_code = 200
+        mock_response_success.status_code = 202
         
         with patch('requests.post', return_value=mock_response_success) as mock_post:
-            response = client.post(reverse('relatorio_turno'), data={'texto_relatorio': report_text})
+            response = client.post(reverse('relatorio_turno'), data={
+                'texto_relatorio': report_text,
+                'destino': 'meu_numero'
+            })
             self.assertRedirects(response, reverse('relatorio_turno'))
             mock_post.assert_called_once()
-            # Verify payload contains correct structure
             args, kwargs = mock_post.call_args
             self.assertEqual(kwargs['json']['numero'], "5511999999999")
             self.assertEqual(kwargs['json']['mensagem'], report_text)
 
-        # Test case: WhatsApp microservice returns HTTP 503/error
+        # Test case: WhatsApp group JID destination
+        with patch('requests.post', return_value=mock_response_success) as mock_post:
+            response = client.post(reverse('relatorio_turno'), data={
+                'texto_relatorio': report_text,
+                'destino': '123456789@g.us'
+            })
+            self.assertRedirects(response, reverse('relatorio_turno'))
+            mock_post.assert_called_once()
+            args, kwargs = mock_post.call_args
+            self.assertEqual(kwargs['json']['numero'], "123456789@g.us")
+
+        # Test case: WhatsApp microservice returns HTTP 429 (Rate Limit)
+        mock_response_rate_limit = MagicMock()
+        mock_response_rate_limit.status_code = 429
+        
+        with patch('requests.post', return_value=mock_response_rate_limit) as mock_post:
+            response = client.post(reverse('relatorio_turno'), data={
+                'texto_relatorio': report_text,
+                'destino': 'meu_numero'
+            })
+            self.assertRedirects(response, reverse('relatorio_turno'))
+            mock_post.assert_called_once()
+
+        # Test case: WhatsApp microservice returns HTTP 503 (Circuit Breaker Tripped)
+        mock_response_cb = MagicMock()
+        mock_response_cb.status_code = 503
+        mock_response_cb.json.return_value = {'error': 'Serviço temporariamente indisponível'}
+        
+        with patch('requests.post', return_value=mock_response_cb) as mock_post:
+            response = client.post(reverse('relatorio_turno'), data={
+                'texto_relatorio': report_text,
+                'destino': 'meu_numero'
+            })
+            self.assertRedirects(response, reverse('relatorio_turno'))
+            mock_post.assert_called_once()
+
+        # Test case: WhatsApp microservice returns HTTP 503/error (General)
         mock_response_error = MagicMock()
         mock_response_error.status_code = 503
+        mock_response_error.json.side_effect = ValueError()
         
         with patch('requests.post', return_value=mock_response_error) as mock_post:
-            response = client.post(reverse('relatorio_turno'), data={'texto_relatorio': report_text})
+            response = client.post(reverse('relatorio_turno'), data={
+                'texto_relatorio': report_text,
+                'destino': 'meu_numero'
+            })
             self.assertRedirects(response, reverse('relatorio_turno'))
             mock_post.assert_called_once()
 
         # Test case: Connection timeout/error raises RequestException
         import requests
         with patch('requests.post', side_effect=requests.exceptions.ConnectionError("Connection refused")) as mock_post:
-            response = client.post(reverse('relatorio_turno'), data={'texto_relatorio': report_text})
+            response = client.post(reverse('relatorio_turno'), data={
+                'texto_relatorio': report_text,
+                'destino': 'meu_numero'
+            })
             self.assertRedirects(response, reverse('relatorio_turno'))
             mock_post.assert_called_once()
 

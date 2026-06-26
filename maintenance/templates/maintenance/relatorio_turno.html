@@ -45,6 +45,24 @@
         outline: none;
     }
 
+    /* Dropdown premium styling */
+    .select-custom {
+        border: 2px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        font-size: 0.95rem;
+        color: #1e293b;
+        background-color: #f8fafc;
+        transition: all 0.2s ease;
+    }
+
+    .select-custom:focus {
+        border-color: #4f46e5;
+        background-color: #ffffff;
+        box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+        outline: none;
+    }
+
     /* Gradient submit button with zoom micro-animation */
     .btn-gradient-submit {
         background: linear-gradient(135deg, #10b981 0%, #059669 100%);
@@ -137,6 +155,16 @@
                     <form method="post">
                         {% csrf_token %}
                         
+                        <div class="mb-3">
+                            <label for="destino" class="form-label fw-semibold text-muted small">Destinatário do Envio</label>
+                            <select id="destino" name="destino" class="form-select select-custom">
+                                <option value="meu_numero">Meu Número (Teste)</option>
+                                {% for grupo in grupos_whatsapp %}
+                                    <option value="{{ grupo.jid }}">{{ grupo.nome }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
                         <div class="mb-4">
                             <label for="texto_relatorio" class="form-label fw-semibold text-muted small">Conteúdo do Relatório</label>
                             <textarea id="texto_relatorio" name="texto_relatorio" class="form-control textarea-custom" rows="12">{{ texto_precompilado }}</textarea>

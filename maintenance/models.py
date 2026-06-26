@@ -268,3 +268,16 @@ class HistoricoEscala(models.Model):
         verbose_name = "Histórico de Escala"
         verbose_name_plural = "Histórico de Escalas"
         ordering = ['-data_alteracao']
+
+
+class WhatsAppGroup(models.Model):
+    nome = models.CharField(max_length=100, verbose_name="Nome do Grupo")
+    jid = models.CharField(max_length=100, unique=True, verbose_name="JID do Grupo")
+    is_active = models.BooleanField(default=True, verbose_name="Ativo")
+
+    def __str__(self):
+        return self.nome
+
+    class Meta:
+        verbose_name = "Grupo de WhatsApp"
+        verbose_name_plural = "Grupos de WhatsApp"

@@ -13,7 +13,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup
 from .forms import (
     SectorForm, MachineForm, TechnicianForm,
     StartServiceForm, PauseServiceForm, FinishServiceForm
@@ -1313,21 +1313,40 @@ def relatorio_turno(request):
 
     if request.method == 'POST':
         texto = request.POST.get('texto_relatorio', '').strip()
-        whatsapp = (tecnico.whatsapp or '').strip()
+        destino = request.POST.get('destino', 'meu_numero').strip()
         
-        if not whatsapp:
-            messages.warning(request, "Relatório salvo, mas o técnico não possui número de WhatsApp cadastrado.")
-            return redirect('relatorio_turno')
+        if destino == 'meu_numero':
+            numero_destino = (tecnico.whatsapp or '').strip()
+            if not numero_destino:
+                messages.warning(request, "Relatório salvo, mas o técnico não possui número de WhatsApp cadastrado.")
+                return redirect('relatorio_turno')
+        else:
+            if not WhatsAppGroup.objects.filter(jid=destino, is_active=True).exists():
+                messages.error(request, "Destino inválido selecionado.")
+                return redirect('relatorio_turno')
+            numero_destino = destino
             
         import requests
         try:
             payload = {
-                'numero': whatsapp,
+                'numero': numero_destino,
                 'mensagem': texto
             }
             response = requests.post('http://localhost:3000/send', json=payload, timeout=10)
-            if response.status_code == 200:
+            if response.status_code in [200, 202]:
                 messages.success(request, "Relatório enviado com sucesso via WhatsApp!")
+            elif response.status_code == 429:
+                messages.warning(request, "Muitas requisições enviadas em curto período. Por favor, aguarde um momento antes de tentar novamente.")
+            elif response.status_code == 503:
+                try:
+                    res_json = response.json()
+                    error_msg = res_json.get('error', '')
+                    if 'Serviço temporariamente indisponível' in error_msg:
+                        messages.warning(request, "Serviço temporariamente indisponível. Por favor, tente novamente mais tarde.")
+                    else:
+                        messages.warning(request, "Relatório salvo, mas o servidor de WhatsApp está offline.")
+                except ValueError:
+                    messages.warning(request, "Relatório salvo, mas o servidor de WhatsApp está offline.")
             else:
                 messages.warning(request, "Relatório salvo, mas o servidor de WhatsApp está offline.")
         except requests.exceptions.RequestException:
@@ -1371,9 +1390,12 @@ def relatorio_turno(request):
 
     texto_precompilado = "\n".join(texto_linhas)
 
+    grupos = WhatsAppGroup.objects.filter(is_active=True)
+
     context = {
         'tecnico': tecnico,
         'texto_precompilado': texto_precompilado,
+        'grupos_whatsapp': grupos,
     }
     return render(request, 'maintenance/relatorio_turno.html', context)
 

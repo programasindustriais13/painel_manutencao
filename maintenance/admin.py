@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.admin.models import LogEntry
 from django.utils.html import format_html
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup
 
 
 @admin.register(Sector)
@@ -111,3 +111,10 @@ class LogEntryAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(WhatsAppGroup)
+class WhatsAppGroupAdmin(admin.ModelAdmin):
+    list_display = ('nome', 'jid', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('nome', 'jid')
