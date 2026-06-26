@@ -167,38 +167,43 @@ class Allocation(models.Model):
         return f"{self.tecnico.nome} em {maquina_str} - Início: {self.data_inicio.strftime('%d/%m/%Y %H:%M')}"
 
     @property
-    def tempo_decorrido_str(self):
+    def tempo_decorrido_liquido(self):
         if not self.data_inicio:
             return "N/A"
         
-        # Calculate time spent up to completion or current time or pause start
-        fim = self.data_fim or timezone.now()
+        now_time = timezone.now()
+        fim = self.data_fim or now_time
+        duration_bruto = (fim - self.data_inicio).total_seconds()
         
-        # Use the relational pause history to see if it is currently paused
+        # Calculate sum of all pauses
+        total_pause_seconds = 0
         if hasattr(self, '_prefetched_objects_cache') and 'pausas' in self._prefetched_objects_cache:
             pausas_list = list(self.pausas.all())
-            if pausas_list:
-                pausas_list.sort(key=lambda x: x.data_pausa, reverse=True)
-                ultimo_historico = pausas_list[0]
-            else:
-                ultimo_historico = None
         else:
-            ultimo_historico = self.pausas.order_by('-data_pausa').first()
-
-        if ultimo_historico and not ultimo_historico.data_retorno and not self.data_fim:
-            fim = ultimo_historico.data_pausa
-        elif self.data_pausa and not self.data_fim:
-            # Fallback for compatibility/unit tests
-            fim = self.data_pausa
-
-        delta = fim - self.data_inicio
-        total_seconds = int(delta.total_seconds())
-        hours = total_seconds // 3600
-        minutes = (total_seconds % 3600) // 60
-        
+            pausas_list = list(self.pausas.all())
+            
+        for p in pausas_list:
+            if p.data_retorno:
+                total_pause_seconds += (p.data_retorno - p.data_pausa).total_seconds()
+            else:
+                p_fim = self.data_fim or now_time
+                total_pause_seconds += (p_fim - p.data_pausa).total_seconds()
+                
+        # Compatibility fallback if no relational pauses but data_pausa is set
+        if not pausas_list and self.data_pausa:
+            p_fim = self.data_fim or now_time
+            total_pause_seconds += (p_fim - self.data_pausa).total_seconds()
+            
+        seconds = max(0, round(duration_bruto - total_pause_seconds))
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
         if hours > 0:
             return f"{hours}h {minutes}m"
         return f"{minutes}m"
+
+    @property
+    def tempo_decorrido_str(self):
+        return self.tempo_decorrido_liquido
 
     class Meta:
         verbose_name = "Alocação"

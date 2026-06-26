@@ -60,6 +60,7 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertEqual(alloc.tempo_decorrido_str, "30m")
         
         # Test completed elapsed time calculation
+        alloc.data_pausa = None
         alloc.data_fim = now
         alloc.save()
         self.assertEqual(alloc.tempo_decorrido_str, "45m")
@@ -413,6 +414,51 @@ class MaintenanceSystemTestCase(TestCase):
         
         response = client.get(reverse('exportar_relatorio_excel'))
         self.assertEqual(response.status_code, 200)
+
+    def test_elapsed_time_with_multiple_pauses(self):
+        """Test that net elapsed time correctly subtracts relational pause durations."""
+        now = timezone.now()
+        # Create allocation started 60 minutes ago
+        alloc = Allocation.objects.create(
+            tecnico=self.tech,
+            maquina=self.machine_low,
+            atividade_observacao="Test multiple pauses",
+            data_inicio=now - timedelta(minutes=60)
+        )
+        
+        # Initially, no pauses, elapsed time should be 60m
+        self.assertEqual(alloc.tempo_decorrido_str, "1h 0m")
+        
+        # Add a completed pause: from 45m ago to 15m ago (duration = 30m)
+        HistoricoPausa.objects.create(
+            alocacao=alloc,
+            data_pausa=now - timedelta(minutes=45),
+            data_retorno=now - timedelta(minutes=15),
+            motivo_pausa="First pause completed"
+        )
+        
+        # Brute: 60m. Pauses: 30m. Net should be 30m.
+        self.assertEqual(alloc.tempo_decorrido_str, "30m")
+        
+        # Add another active pause: started 10 minutes ago
+        p_active = HistoricoPausa.objects.create(
+            alocacao=alloc,
+            data_pausa=now - timedelta(minutes=10),
+            motivo_pausa="Second pause active"
+        )
+        
+        # Since it is currently active, duration is now - p_active.data_pausa = 10m.
+        # Total pauses: 30m + 10m = 40m.
+        # Net should be 60m - 40m = 20m.
+        self.assertEqual(alloc.tempo_decorrido_str, "20m")
+        
+        # Close the second pause (resumed 5 minutes ago)
+        p_active.data_retorno = now - timedelta(minutes=5)
+        p_active.save()
+        
+        # Pause 1: 30m. Pause 2: 5m. Total pauses: 35m.
+        # Net should be 60m - 35m = 25m.
+        self.assertEqual(alloc.tempo_decorrido_str, "25m")
 
 
 

@@ -1527,3 +1527,23 @@ B. Modificações na Interface (base.html):
 
 C. Testes e Validação (tests.py):
 - Adicionado o teste unitário `test_dashboard_access_restriction` que valida o redirecionamento/bloqueio correto para usuários anônimos e Técnico Líder, bem como a permissão com sucesso (HTTP 200) para usuários Operadores em ambos os endpoints (/dashboard/ e /dashboard/exportar-excel/).
+
+
+36. SPEC — CORREÇÃO DO CÁLCULO DE TEMPO DECORRIDO EM SERVIÇOS RETOMADOS (2026-06-26)
+--------------------------------------------------------------------------------
+Correção do cálculo do "Tempo Decorrido" para serviços com status EM_ATENDIMENTO que possuem histórico de pausas, passando a exibir o Tempo Líquido (Tempo Bruto menos a soma de todas as pausas daquela alocação).
+
+Arquivos modificados:
+- maintenance/models.py
+- maintenance/tests.py
+- Instrucoes.txt
+
+A. Modificações no Modelo (models.py):
+- Criação da propriedade `tempo_decorrido_liquido` no modelo `Allocation` que soma as durações de todas as pausas relacionadas (inclusive a pausa ativa caso o técnico esteja pausado atualmente) e as subtrai da duração bruta do atendimento.
+- Inclusão de um fallback de compatibilidade com a propriedade antiga `self.data_pausa` caso não existam registros no histórico.
+- Atualização da propriedade `tempo_decorrido_str` para apontar diretamente para `tempo_decorrido_liquido`, de modo a propagar a alteração para os templates (/tv/ e /management/) de forma transparente.
+- Uso de `round()` para evitar problemas de arredondamento causados por pequenas diferenças de milissegundos nas leituras do banco.
+
+B. Modificações nos Testes (tests.py):
+- Ajuste na simulação de conclusão em `test_allocation_properties` para limpar `data_pausa` a fim de simular o cálculo bruto de conclusão sem pausas.
+- Inclusão do teste unitário `test_elapsed_time_with_multiple_pauses` validando o cálculo líquido para alocações com múltiplas pausas finalizadas e com pausa atualmente ativa.
