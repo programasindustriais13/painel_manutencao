@@ -4,16 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Gestão de Manutenção{% endblock %}</title>
+    <title>{% block title %}Painel de Produção{% endblock %}</title>
 
-    <!-- PWA: Manifesto e Meta-tags Mobile -->
-    <link rel="manifest" href="{% static 'maintenance/manifest.json' %}">
-    <meta name="theme-color" content="#1e1b4b">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="Manutenção">
-    <link rel="apple-touch-icon" href="{% static 'maintenance/pwa-icons/icon-192.png' %}">
-    <meta name="mobile-web-app-capable" content="yes">
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,11 +17,11 @@
     
     <style>
         :root {
-            --primary-color: #4f46e5;
-            --primary-hover: #4338ca;
-            --bg-dark-panel: #121214;
-            --card-dark-bg: #1e1e24;
-            --text-muted-dark: #8b8b98;
+            --primary-color: #0ea5e9;
+            --primary-hover: #0284c7;
+            --bg-dark-panel: #0f172a;
+            --card-dark-bg: #1e293b;
+            --text-muted-dark: #94a3b8;
         }
 
         body {
@@ -43,7 +35,7 @@
 
         /* Modern styled navbar */
         .navbar-custom {
-            background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
 
@@ -58,7 +50,7 @@
 
         .nav-link-custom {
             font-weight: 500;
-            color: #c7d2fe !important;
+            color: #cbd5e1 !important;
             padding: 8px 16px !important;
             border-radius: 8px;
             transition: all 0.2s ease;
@@ -113,7 +105,6 @@
             color: #64748b;
             font-size: 0.875rem;
         }
-
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -124,72 +115,30 @@
     <nav class="navbar navbar-expand-lg navbar-dark navbar-custom py-3">
         <div class="container-fluid px-4">
             <a class="navbar-brand" href="{% url 'home_redirect' %}">
-                <i class="bi bi-ui-checks-grid fs-4 text-warning"></i>
-                <span>PAINEL MANUTENÇÃO</span>
+                <i class="bi bi-cpu fs-4 text-info"></i>
+                <span>PAINEL PRODUÇÃO</span>
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                    <!-- Painel TV (Modo TV) - Visível apenas para Operadores, Visualizador e admins/staff -->
-                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Visualizador' or request.user.groups.all.1.name == 'Visualizador' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' %}
                     <li class="nav-item">
-                        <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'tv_dashboard' %}active{% endif %}" href="{% url 'tv_dashboard' %}">
-                            <i class="bi bi-tv me-1"></i> Painel TV (Modo TV)
+                        <a class="nav-link nav-link-custom active" href="{% url 'production:dashboard' %}">
+                            <i class="bi bi-speedometer2 me-1"></i> Dashboard Produção
                         </a>
                     </li>
-                    {% endif %}
-                    
-                    <!-- Controle Técnico - Visível para todos os autenticados com perfil apropriado -->
                     {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.1.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Tecnicos' or request.user.groups.all.1.name == 'Tecnicos' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' or request.user.technician_profile %}
                     <li class="nav-item">
-                        <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'technician_management' %}active{% endif %}" href="{% url 'technician_management' %}">
-                            <i class="bi bi-people me-1"></i> Controle Técnico
+                        <a class="nav-link nav-link-custom" href="{% url 'technician_management' %}">
+                            <i class="bi bi-tools me-1"></i> Painel Manutenção
                         </a>
                     </li>
                     {% endif %}
-                    
-                    <!-- Passagem de Turno - Visível para Técnicos, Líderes e Operadores -->
-                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.1.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Tecnicos' or request.user.groups.all.1.name == 'Tecnicos' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' or request.user.technician_profile %}
-                    <li class="nav-item">
-                        <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'relatorio_turno' %}active{% endif %}" href="{% url 'relatorio_turno' %}">
-                            <i class="bi bi-chat-left-text me-1"></i> Passagem de Turno
-                        </a>
-                    </li>
-                    {% endif %}
-
-                    <!-- Dashboard - Visível para Operadores e admins/staff -->
-                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' %}
-                    <li class="nav-item">
-                        <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">
-                            <i class="bi bi-graph-up-arrow me-1"></i> Dashboard
-                        </a>
-                    </li>
-                    {% endif %}
-
-                    <!-- Cadastros - Visível apenas para Operadores, admins e staff -->
-                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' %}
-                    <li class="nav-item">
-                        <a class="nav-link nav-link-custom {% if request.resolver_match.url_name == 'crud_list' %}active{% endif %}" href="{% url 'crud_list' %}">
-                            <i class="bi bi-sliders me-1"></i> Cadastros
-                        </a>
-                    </li>
-                    {% endif %}
-
-                    <!-- Painel Produção - Visível se pertencer ao grupo Liderança de Produção -->
-                    {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Liderança de Produção' or request.user.groups.all.1.name == 'Liderança de Produção' or request.user.groups.all.2.name == 'Liderança de Produção' %}
-                    <li class="nav-item">
-                        <a class="nav-link nav-link-custom" href="{% url 'production:dashboard' %}">
-                            <i class="bi bi-cpu me-1"></i> Painel Produção
-                        </a>
-                    </li>
-                    {% endif %}
-
                 </ul>
                 <div class="d-flex align-items-center gap-3">
                     <span class="text-light-50 text-white-50 fs-7">
-                        <i class="bi bi-person-circle text-warning me-1"></i> {{ user.username }}
+                        <i class="bi bi-person-circle text-info me-1"></i> {{ user.username }}
                     </span>
                     <form action="{% url 'logout' %}" method="post" class="m-0">
                         {% csrf_token %}
@@ -232,14 +181,13 @@
     <!-- Footer -->
     <footer class="py-3 mt-auto text-center">
         <div class="container text-muted">
-            <span class="small">Sistema de Monitoramento e Alocação de Técnicos &copy; 2026 - Desenvolvido para Gestão Industrial</span>
+            <span class="small">Sistema de Monitoramento e Alocação de Produção &copy; 2026 - Desenvolvido para Gestão Industrial</span>
         </div>
     </footer>
 
     <!-- Bootstrap 5 Bundle JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
     
-    <!-- Proactive Toast/Alert dismiss utility -->
     <script>
         // Auto-dismiss alerts after 5 seconds
         document.addEventListener('DOMContentLoaded', function() {
@@ -251,21 +199,6 @@
                 });
             }, 5000);
         });
-    </script>
-
-    <!-- PWA: Registro do Service Worker -->
-    <script>
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function () {
-                navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
-                    .then(function (registration) {
-                        console.log('[PWA] Service Worker registrado com sucesso. Escopo:', registration.scope);
-                    })
-                    .catch(function (error) {
-                        console.warn('[PWA] Falha ao registrar Service Worker:', error);
-                    });
-            });
-        }
     </script>
     {% block extra_js %}{% endblock %}
 </body>

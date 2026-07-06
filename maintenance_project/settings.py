@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "maintenance",
+    "production",
 ]
 
 MIDDLEWARE = [
@@ -84,8 +85,28 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+    },
+    "scada": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": "scadalts",
+        "USER": "scada_monitor_ro",
+        "PASSWORD": "SENHA_FORTE_LEITURA",
+        "HOST": "127.0.0.1",
+        "PORT": "3306",
+        "OPTIONS": {
+            "charset": "utf8mb4",
+        },
     }
 }
+
+import sys
+if "test" in sys.argv:
+    DATABASES["scada"] = {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db_test_scada.sqlite3",
+    }
+
+DATABASE_ROUTERS = ["production.routers.ScadaRouter"]
 
 
 # Password validation

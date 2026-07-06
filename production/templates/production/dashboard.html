@@ -1,0 +1,21 @@
+{% extends "production/base_production.html" %}
+
+{% block title %}Painel de Produção - Dashboard{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8 text-center my-5">
+        <div class="card card-custom p-5 bg-white border border-light shadow-sm">
+            <div class="card-body">
+                <i class="bi bi-cpu fs-1 text-info mb-4"></i>
+                <h1 class="fw-bold mb-3">Painel de Produção</h1>
+                <p class="text-muted fs-5 mb-4">Bem-vindo ao Painel de Produção</p>
+                <div class="alert alert-info border-0 shadow-sm rounded-3 py-3 px-4 d-inline-block">
+                    <i class="bi bi-info-circle-fill me-2 text-info fs-5"></i>
+                    A fundação da arquitetura e a conexão do banco de dados Scada-LTS estão configuradas e prontas para as próximas fases.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

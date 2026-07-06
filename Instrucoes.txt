@@ -1649,3 +1649,82 @@ A. Modificações no Backend (views.py):
 
 B. Modificações nos Testes (tests.py):
 - Inclusão de novas asserções e alocações de teste no método `test_shift_report_view` para verificar se as alocações geradas no intervalo da janela de 12 horas (incluindo as que cruzam a janela) são listadas e as alocações criadas a mais de 12 horas são devidamente excluídas do relatório.
+
+
+41. SPEC — FUNDAÇÃO DO MÓDULO DE PRODUÇÃO E INTEGRAÇÃO SCADA-LTS (2026-07-02)
+--------------------------------------------------------------------------------
+Criação do módulo de produção isolado para a liderança e configuração do banco MySQL secundário (scada) sem impactar o módulo de manutenção.
+
+Arquivos criados:
+- production/apps.py
+- production/routers.py
+- production/decorators.py
+- production/views.py
+- production/urls.py
+- production/templates/production/base_production.html
+- production/templates/production/dashboard.html
+- production/tests.py
+
+Arquivos modificados:
+- maintenance_project/settings.py
+- maintenance_project/urls.py
+- maintenance/views.py
+- maintenance_project/__init__.py
+- requirements.txt
+- Instrucoes.txt
+
+A. Monkeypatch do MySQL (pymysql):
+- Adicionado patch automático para PyMySQL em maintenance_project/__init__.py e incluído no requirements.txt, fornecendo portabilidade e suporte para conectar ao MySQL do Scada-LTS.
+
+B. Isolamento e Configuração de Banco de Dados:
+- Configurada a conexão 'scada' com dados MySQL no settings.py.
+- Implementado 'ScadaRouter' em production/routers.py para garantir o redirecionamento de persistência de dados do novo app e o bloqueio de migrações (allow_migrate=False) para o banco 'scada'.
+- Para os testes unitários locais, redirecionada a base 'scada' para SQLite in-memory para evitar erros de conexão na ausência de banco ativo local.
+
+C. Redirecionamento e Segurança de Acesso:
+- View home_redirect atualizada para identificar usuários do grupo 'Liderança de Produção' e redirecioná-los para '/producao/'.
+- Decoradores de permissão de manutenção (operador_required, lider_ou_operador_required, tecnico_or_operador_required) atualizados para negar acesso aos líderes de produção e redirecioná-los de volta para '/producao/'.
+- Criado decorator @lider_producao_required no app production para assegurar que apenas membros do grupo 'Liderança de Produção', staff e superusers acessem as rotas de produção.
+
+D. Layouts e Templates:
+- Criados templates base_production.html e dashboard.html sob o novo app production para exibir uma mensagem de boas-vindas e preparar os elementos visuais.
+
+E. Cobertura de Testes:
+- Criados testes unitários em production/tests.py para validar o redirecionamento de login, acesso restrito e proteção entre as rotas de manutenção e produção.
+
+Para acessar como Superuser e cadastrar os líderes de produção, siga o passo a passo abaixo:
+
+1. Criar um Superuser (se ainda não tiver criado)
+Caso você precise criar uma conta administrativa no banco de dados local, execute o seguinte comando no terminal (com o ambiente virtual ativo):
+
+bash
+python manage.py createsuperuser
+O terminal solicitará:
+
+Username (ex: admin)
+Email (opcional, pode deixar em branco)
+Senha (digite e confirme)
+2. Acessar o Django Admin
+Com o servidor rodando (python manage.py runserver 0.0.0.0:8000):
+
+Abra o navegador e acesse a URL: http://localhost:8000/admin/
+Digite o usuário e a senha do Superuser.
+3. Criar o Grupo e Cadastrar os Usuários
+Uma vez dentro do painel administrativo do Django:
+
+Passo A: Criar o Grupo
+No menu principal, procure por Autenticação e Autorização (Authentication and Authorization) e clique em Grupos (Groups).
+Clique no botão Adicionar Grupo (Add Group) no canto superior direito.
+No campo Nome, digite exatamente: Liderança de Produção "Liderança de Produção"
+Clique em Salvar (Save).
+Passo B: Associar um Usuário ao Grupo
+Volte ao menu principal e clique em Usuários (Users).
+Selecione o usuário que deseja definir como líder (ou clique em Adicionar Usuário para criar um novo).
+Role a página até a seção Grupos (Groups).
+Na lista de grupos disponíveis, selecione Liderança de Produção e clique na seta para movê-lo para a lista de grupos escolhidos.
+Clique em Salvar (Save) no rodapé da página.
+4. Testar o Login
+Saia do Django Admin ou abra uma aba anônima.
+Acesse a tela de login comum do sistema: http://localhost:8000/login/
+Faça login com o usuário que você acabou de adicionar ao grupo Liderança de Produção.
+O sistema irá redirecioná-lo automaticamente para o novo painel em http://localhost:8000/producao/.

@@ -48,6 +48,19 @@ def _get_technician_proprio(user):
         return None
 
 
+def _user_has_maintenance_access(user):
+    """Retorna True se o usuário pertence a algum grupo de manutenção, é superuser/staff ou tem perfil de técnico."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    if user.groups.filter(name__in=['Operadores', 'Tecnicos_Lideres', 'Tecnicos', 'Operador']).exists():
+        return True
+    if _get_technician_proprio(user):
+        return True
+    return False
+
+
 # Decorator para views que exigem Operador/Admin COMPLETO (cadastros, etc.).
 # Redireciona usuários sem acesso para /management/ com alerta.
 def operador_required(view_func):
@@ -56,6 +69,9 @@ def operador_required(view_func):
     def wrapper(request, *args, **kwargs):
         if _user_is_operador(request.user):
             return view_func(request, *args, **kwargs)
+        if request.user.groups.filter(name="Liderança de Produção").exists() and not _user_has_maintenance_access(request.user):
+            messages.error(request, "Acesso restrito. Esta seção não está disponível para o seu perfil.")
+            return redirect("production:dashboard")
         messages.error(
             request,
             "Acesso restrito a Operadores/Administradores. Esta seção não está disponível para o seu perfil."
@@ -72,6 +88,9 @@ def lider_ou_operador_required(view_func):
     def wrapper(request, *args, **kwargs):
         if _user_is_lider_ou_operador(request.user):
             return view_func(request, *args, **kwargs)
+        if request.user.groups.filter(name="Liderança de Produção").exists() and not _user_has_maintenance_access(request.user):
+            messages.error(request, "Acesso restrito. Esta página requer perfil de Técnico Líder ou superior.")
+            return redirect("production:dashboard")
         messages.error(
             request,
             "Acesso restrito. Esta página requer perfil de Técnico Líder ou superior."
@@ -86,10 +105,11 @@ def tecnico_or_operador_required(view_func):
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
         user = request.user
-        if (user.is_superuser or user.is_staff or 
-            user.groups.filter(name__in=['Operadores', 'Tecnicos_Lideres', 'Tecnicos', 'Operador']).exists() or 
-            _get_technician_proprio(user)):
+        if _user_has_maintenance_access(user):
             return view_func(request, *args, **kwargs)
+        if user.groups.filter(name="Liderança de Produção").exists():
+            messages.error(request, "Acesso restrito. Esta área é exclusiva para a Manutenção.")
+            return redirect("production:dashboard")
         messages.error(request, "Acesso negado. Faça login com credenciais válidas.")
         return redirect('login')
     return wrapper
@@ -98,6 +118,9 @@ def tecnico_or_operador_required(view_func):
 @login_required
 def home_redirect(request):
     user = request.user
+    # Liderança de Produção → painel de produção
+    if user.groups.filter(name="Liderança de Produção").exists():
+        return redirect("production:dashboard")
     # Visualizador / usuário 'tv' → painel TV
     if user.groups.filter(name='Visualizador').exists() or user.username == 'tv':
         return redirect('tv_dashboard')
@@ -130,8 +153,12 @@ def tv_dashboard(request):
     is_operador = user.is_superuser or user.is_staff or user.groups.filter(name__in=['Operadores', 'Operador']).exists()
     
     if not (is_tv_viewer or is_operador):
+        if user.groups.filter(name="Liderança de Produção").exists() and not _user_has_maintenance_access(user):
+            messages.error(request, "Acesso negado. A TV de exibição é restrita para o seu perfil.")
+            return redirect("production:dashboard")
         messages.error(request, "Acesso negado. A TV de exibição é restrita para o seu perfil.")
         return redirect('technician_management')
+
 
     active_allocations = Allocation.objects.filter(
         data_fim__isnull=True,
