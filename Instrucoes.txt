@@ -1728,3 +1728,27 @@ Saia do Django Admin ou abra uma aba anônima.
 Acesse a tela de login comum do sistema: http://localhost:8000/login/
 Faça login com o usuário que você acabou de adicionar ao grupo Liderança de Produção.
 O sistema irá redirecioná-lo automaticamente para o novo painel em http://localhost:8000/producao/.
+
+
+34. ADOÇÃO SEGURA DE VARIÁVEIS DE AMBIENTE (.ENV) (2026-07-22)
+--------------------------------------------------------------------------------
+Auditoria e reorganização segura das configurações do projeto para suporte a
+variáveis de ambiente externalizadas no arquivo `.env`:
+
+A. Dependências:
+- Adicionada a biblioteca `python-dotenv>=1.0.0` no `requirements.txt`.
+
+B. Configurações (`maintenance_project/settings.py`):
+- Implementada a leitura dinâmica via `dotenv.load_dotenv()` com tratamento defensivo.
+- Externalizadas as configurações de: `SECRET_KEY`, `DEBUG`, `ALLOWED_HOSTS`,
+  `CSRF_TRUSTED_ORIGINS`, banco de dados principal (`DATABASES['default']`), banco
+  secundário (`DATABASES['scada']`), `TIME_ZONE`, `LANGUAGE_CODE` e `WHATSAPP_SERVICE_URL`.
+- Mantidos fallbacks padrão locais garantindo 100% de compatibilidade com o desenvolvimento em SQLite.
+
+C. Microserviço WhatsApp (`maintenance/views.py`):
+- Atualizada a view de envio para utilizar `settings.WHATSAPP_SERVICE_URL` com fallback para `http://localhost:3000/send`.
+
+D. Gestão de Arquivos de Ambiente:
+- Criado `.env` na raiz do projeto com os valores funcionais de desenvolvimento local.
+- Criado `.env.example` documental seguro com placeholders fictícios para versionamento.
+- Confirmado que o `.env` é estritamente ignorado pelo Git através do `.gitignore`.

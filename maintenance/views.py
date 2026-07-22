@@ -1355,12 +1355,14 @@ def relatorio_turno(request):
             numero_destino = destino
             
         import requests
+        from django.conf import settings
         try:
             payload = {
                 'numero': numero_destino,
                 'mensagem': texto
             }
-            response = requests.post('http://localhost:3000/send', json=payload, timeout=10)
+            whatsapp_url = getattr(settings, 'WHATSAPP_SERVICE_URL', 'http://localhost:3000/send')
+            response = requests.post(whatsapp_url, json=payload, timeout=10)
             if response.status_code in [200, 202]:
                 messages.success(request, "Relatório enviado com sucesso via WhatsApp!")
             elif response.status_code == 429:

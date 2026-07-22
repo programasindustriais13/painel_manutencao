@@ -10,22 +10,38 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Carregar variáveis de ambiente do arquivo .env (se disponível)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / ".env")
+except ImportError:
+    pass
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-m5=fgwb0=lmm(#!_2%*v!j-1v%du!y++6nhoplf1vfttbthz14"
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    os.environ.get("DJANGO_SECRET_KEY", "django-insecure-m5=fgwb0=lmm(#!_2%*v!j-1v%du!y++6nhoplf1vfttbthz14")
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DEBUG", os.environ.get("DJANGO_DEBUG", "True")).lower() in ("true", "1", "t")
 
-ALLOWED_HOSTS = ['*']
+allowed_hosts_env = os.environ.get("ALLOWED_HOSTS", os.environ.get("DJANGO_ALLOWED_HOSTS", "*"))
+ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(",") if host.strip()]
+
+csrf_trusted_env = os.environ.get("CSRF_TRUSTED_ORIGINS", os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", ""))
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_env.split(",") if origin.strip()]
+
 
 
 # Application definition
@@ -81,18 +97,32 @@ WSGI_APPLICATION = "maintenance_project.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+DB_ENGINE = os.environ.get("DATABASE_ENGINE", "django.db.backends.sqlite3")
+
+if DB_ENGINE == "django.db.backends.sqlite3":
+    default_db_config = {
+        "ENGINE": DB_ENGINE,
+        "NAME": BASE_DIR / os.environ.get("DATABASE_NAME", "db.sqlite3"),
+    }
+else:
+    default_db_config = {
+        "ENGINE": DB_ENGINE,
+        "NAME": os.environ.get("DATABASE_NAME", "painel_manutencao"),
+        "USER": os.environ.get("DATABASE_USER", ""),
+        "PASSWORD": os.environ.get("DATABASE_PASSWORD", ""),
+        "HOST": os.environ.get("DATABASE_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("DATABASE_PORT", "3306"),
+    }
+
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-    },
+    "default": default_db_config,
     "scada": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": "scadalts",
-        "USER": "scada_monitor_ro",
-        "PASSWORD": "SENHA_FORTE_LEITURA",
-        "HOST": "127.0.0.1",
-        "PORT": "3306",
+        "ENGINE": os.environ.get("SCADA_DB_ENGINE", "django.db.backends.mysql"),
+        "NAME": os.environ.get("SCADA_DB_NAME", "scadalts"),
+        "USER": os.environ.get("SCADA_DB_USER", "scada_monitor_ro"),
+        "PASSWORD": os.environ.get("SCADA_DB_PASSWORD", "SENHA_FORTE_LEITURA"),
+        "HOST": os.environ.get("SCADA_DB_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("SCADA_DB_PORT", "3306"),
         "OPTIONS": {
             "charset": "utf8mb4",
         },
@@ -131,9 +161,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/4.2/topics/i18n/
 
-LANGUAGE_CODE = "pt-br"
+LANGUAGE_CODE = os.environ.get("LANGUAGE_CODE", "pt-br")
 
-TIME_ZONE = "America/Sao_Paulo"
+TIME_ZONE = os.environ.get("TIME_ZONE", "America/Sao_Paulo")
 
 USE_I18N = True
 
@@ -158,4 +188,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home_redirect"
 LOGOUT_REDIRECT_URL = "login"
+
+# Microserviços Auxiliares
+WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://localhost:3000/send")
 
