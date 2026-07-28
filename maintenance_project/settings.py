@@ -93,6 +93,18 @@ if not DEBUG:
 raw_csrf = _get_env("DJANGO_CSRF_TRUSTED_ORIGINS", "CSRF_TRUSTED_ORIGINS")
 CSRF_TRUSTED_ORIGINS = _parse_list(raw_csrf)
 
+# ── Reverse Proxy & Cloudflare Tunnel Settings ────────────────────────────────
+USE_X_FORWARDED_HOST = _parse_bool(_get_env("DJANGO_USE_X_FORWARDED_HOST", "USE_X_FORWARDED_HOST"), default=False)
+trust_proxy_ssl = _parse_bool(_get_env("DJANGO_TRUST_PROXY_SSL_HEADER", "TRUST_PROXY_SSL_HEADER"), default=False)
+if trust_proxy_ssl:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+SECURE_SSL_REDIRECT = _parse_bool(_get_env("DJANGO_SECURE_SSL_REDIRECT", "SECURE_SSL_REDIRECT"), default=False)
+SESSION_COOKIE_SECURE = _parse_bool(_get_env("DJANGO_SESSION_COOKIE_SECURE", "SESSION_COOKIE_SECURE"), default=False)
+CSRF_COOKIE_SECURE = _parse_bool(_get_env("DJANGO_CSRF_COOKIE_SECURE", "CSRF_COOKIE_SECURE"), default=False)
+SECURE_HSTS_SECONDS = int(_get_env("DJANGO_SECURE_HSTS_SECONDS", "SECURE_HSTS_SECONDS", default="0") or "0")
+SECURE_HSTS_INCLUDE_SUBDOMAINS = _parse_bool(_get_env("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", "SECURE_HSTS_INCLUDE_SUBDOMAINS"), default=False)
+SECURE_HSTS_PRELOAD = _parse_bool(_get_env("DJANGO_SECURE_HSTS_PRELOAD", "SECURE_HSTS_PRELOAD"), default=False)
 
 
 # Application definition
@@ -110,6 +122,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -225,6 +238,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedStaticFilesStorage"
 
 # Media files (uploaded photos, etc.)
 MEDIA_URL = "/media/"

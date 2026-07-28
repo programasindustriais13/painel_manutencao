@@ -215,8 +215,8 @@ if (process.env.NODE_ENV === 'test') {
     });
 }
 
-app.listen(PORT, () => {
-    console.log(`Serviço de WhatsApp rodando em http://localhost:${PORT}`);
+app.listen(PORT, '127.0.0.1', () => {
+    console.log(`Serviço de WhatsApp rodando em http://127.0.0.1:${PORT}`);
 });
 
 // Inicializa a conexão

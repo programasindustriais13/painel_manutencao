@@ -8,9 +8,10 @@ __pycache__/
 db.sqlite3
 db.sqlite3-journal
 
-# Media / Uploaded files
+# Media / Uploaded files / Static collect
 media/
 alocacoes/
+staticfiles/
 
 # Environments
 .env
