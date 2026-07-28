@@ -534,6 +534,171 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertEqual(alloc.tempo_decorrido_str, "25m")
 
 
+import tempfile
+import shutil
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 
+class ProtectedMediaTests(TestCase):
+    def setUp(self):
+        self.temp_media = tempfile.mkdtemp()
 
+        # Groups
+        self.operator_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.tech_group, _ = Group.objects.get_or_create(name='Tecnicos')
+        self.lider_group, _ = Group.objects.get_or_create(name='Tecnicos_Lideres')
+        self.prod_group, _ = Group.objects.get_or_create(name='Liderança de Produção')
 
+        # Users
+        self.operador_user = User.objects.create_user('op_media', 'op@test.com', 'pwd123')
+        self.operador_user.groups.add(self.operator_group)
+
+        self.tech1_user = User.objects.create_user('tech1_media', 't1@test.com', 'pwd123')
+        self.tech1_user.groups.add(self.tech_group)
+
+        self.tech2_user = User.objects.create_user('tech2_media', 't2@test.com', 'pwd123')
+        self.tech2_user.groups.add(self.tech_group)
+
+        self.prod_user = User.objects.create_user('prod_media', 'prod@test.com', 'pwd123')
+        self.prod_user.groups.add(self.prod_group)
+
+        # Domain data
+        self.sector = Sector.objects.create(nome="Linha 01")
+        self.machine = Machine.objects.create(nome="Prensa", setor=self.sector)
+
+        # Technicians
+        self.tech1 = Technician.objects.create(nome="Tecnico 1", matricula="T-01", status="OCIOSO", user=self.tech1_user, perfil="TECNICO")
+        self.tech2 = Technician.objects.create(nome="Tecnico 2", matricula="T-02", status="OCIOSO", user=self.tech2_user, perfil="TECNICO")
+
+        # Fake image file for upload testing
+        self.dummy_image = SimpleUploadedFile(
+            "test_photo.png",
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4",
+            content_type="image/png"
+        )
+
+        # Allocation with valid photo
+        self.alloc_with_photo = Allocation.objects.create(
+            tecnico=self.tech1,
+            maquina=self.machine,
+            atividade_observacao="Manutenção com foto",
+            data_inicio=timezone.now(),
+            foto_anexo=self.dummy_image
+        )
+
+        # Allocation without photo
+        self.alloc_no_photo = Allocation.objects.create(
+            tecnico=self.tech1,
+            maquina=self.machine,
+            atividade_observacao="Manutenção sem foto",
+            data_inicio=timezone.now()
+        )
+
+    def tearDown(self):
+        if hasattr(self, 'alloc_with_photo') and self.alloc_with_photo.foto_anexo:
+            try:
+                self.alloc_with_photo.foto_anexo.close()
+            except Exception:
+                pass
+            try:
+                self.alloc_with_photo.foto_anexo.delete(save=False)
+            except Exception:
+                pass
+        shutil.rmtree(self.temp_media, ignore_errors=True)
+
+    def test_anonymous_access_redirects_to_login(self):
+        """1. Usuário anônimo deve ser redirecionado para o login."""
+        client = Client()
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse('login'), response.url)
+
+    def test_authorized_tech_can_access_attachment(self):
+        """2, 9, 10, 11. Técnico dono da alocação acessa anexo com cabeçalhos corretos."""
+        client = Client()
+        client.force_login(self.tech1_user)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        self.assertEqual(response['X-Content-Type-Options'], 'nosniff')
+        self.assertIn('inline;', response['Content-Disposition'])
+        response.close()
+
+    def test_unauthorized_tech_cannot_access_attachment(self):
+        """3. Técnico tentando acessar foto de outro técnico recebe HTTP 403."""
+        client = Client()
+        client.force_login(self.tech2_user)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_operator_can_access_any_attachment(self):
+        """4. Operador pode acessar anexo de qualquer alocação."""
+        client = Client()
+        client.force_login(self.operador_user)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        response.close()
+
+    def test_production_user_blocked(self):
+        """5. Usuário da Produção é bloqueado (HTTP 403)."""
+        client = Client()
+        client.force_login(self.prod_user)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_nonexistent_allocation_404(self):
+        """6. Alocação inexistente retorna HTTP 404."""
+        client = Client()
+        client.force_login(self.operador_user)
+        url = reverse('serve_allocation_attachment', args=[999999])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_allocation_without_photo_404(self):
+        """7. Registro sem foto em foto_anexo retorna HTTP 404."""
+        client = Client()
+        client.force_login(self.operador_user)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_no_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_missing_file_on_storage_404(self):
+        """8. Foto registrada no banco mas com arquivo ausente em disco retorna HTTP 404 sem 500."""
+        client = Client()
+        client.force_login(self.operador_user)
+        if self.alloc_with_photo.foto_anexo.storage.exists(self.alloc_with_photo.foto_anexo.name):
+            self.alloc_with_photo.foto_anexo.storage.delete(self.alloc_with_photo.foto_anexo.name)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 404)
+
+    @override_settings(DEBUG=False)
+    def test_media_url_returns_404_when_debug_false(self):
+        """12. A rota pública /media/... retorna 404 quando DEBUG=False."""
+        client = Client()
+        response = client.get("/media/alocacoes/qualquer_foto.jpg")
+        self.assertEqual(response.status_code, 404)
+
+    def test_path_traversal_prevention(self):
+        """13. Impossibilidade de path traversal (rota usa apenas ID numérico do ORM)."""
+        client = Client()
+        client.force_login(self.operador_user)
+        response = client.get("/anexos/alocacoes/../1/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_scada_db_unmodified(self):
+        """14. Nenhuma consulta ou alteração ocorre na base de dados SCADA durante o acesso à mídia."""
+        client = Client()
+        client.force_login(self.operador_user)
+        url = reverse('serve_allocation_attachment', args=[self.alloc_with_photo.id])
+        response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        from django.db import connections
+        scada_queries = connections['scada'].queries
+        self.assertEqual(len(scada_queries), 0)
+        response.close()

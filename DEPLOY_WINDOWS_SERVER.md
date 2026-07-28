@@ -187,27 +187,29 @@ WHATSAPP_SERVICE_URL=http://127.0.0.1:3000/send
 
 ---
 
-## 🌐 Fase F — Configuração do Cloudflare Tunnel e Estratégia de Mídia
+## 🌐 Fase F — Configuração do Cloudflare Tunnel e Arquitetura de Mídia Protegida
 
-> [!CAUTION]
-> **BLOQUEIO DE IMPLANTAÇÃO PÚBLICA:** A implantação em produção pública permanece **BLOQUEADA** até a auditoria presencial/remota do Windows Server 2019 para fechar a arquitetura de mídia.
-> 
-> **Incompatibilidade Detectada:** Se o Cloudflare Tunnel encaminhar 100% das requisições para o Waitress em `127.0.0.1:8900`, requisições para `/media/` retornarão **HTTP 404**, pois o WhiteNoise serve apenas `STATIC_ROOT` (`staticfiles/`) e o Django desativa a rota de mídia nativa quando `DEBUG=False`.
+> [!NOTE]
+> **ARQUITETURA CONSOLIDADA SEM IIS / ARR / URL REWRITE:**
+> O projeto utiliza arquitetura simplificada diretamente com o Cloudflare Tunnel e Waitress. Não é necessário instalar ou configurar o IIS, URL Rewrite ou ARR no servidor nesta etapa. O IIS e a porta 80 do servidor permanecem intactos atendendo outros serviços (como o Scada).
 
-### Estratégias Tecnicas de Mídia no Servidor:
-- **Estratégia A — IIS como entrada local:**
-  ```text
-  Cloudflare Tunnel -> IIS (porta local dedicada)
-      ├── /media/ servido diretamente pelo IIS (pasta media/)
-      └── demais rotas encaminhadas via reverse proxy para Waitress 127.0.0.1:8900
-  ```
-- **Estratégia B — Regras separadas de roteamento no Cloudflare Tunnel:**
-  - Configurar Ingress Rule no `cloudflared`:
-    - `manutencao.freedom.dev.br/media/*` → Servidor HTTP local de mídia / IIS
-    - `manutencao.freedom.dev.br/*` → Waitress WSGI (`127.0.0.1:8900`)
+### Arquitetura de Roteamento:
+```text
+Cloudflare Tunnel
+    → http://127.0.0.1:8900
+        → Waitress WSGI
+            ├── Django
+            ├── WhiteNoise (somente para estáticos em /static/)
+            └── View autenticada (para anexos privados em /anexos/alocacoes/<id>/)
+```
 
-1. **Acessar as configurações do Cloudflare Zero Trust / Tunnels.**
-2. **Localizar o túnel existente** que já atende a aplicação SST (`sst.freedom.dev.br`).
+- **Arquivos Estáticos:** Servidos pelo WhiteNoise via `staticfiles/`.
+- **Anexos de Mídia:** Servidos exclusivamente pela view autenticada e autorizada `/anexos/alocacoes/<id>/`.
+- **Rota `/media/` pública:** Permanece desativada (retornando HTTP 404 em produção com `DEBUG=False`), garantindo que registros internos da fábrica não fiquem expostos de forma anônima.
+
+### Passo a Passo de Configuração do Cloudflare Tunnel:
+1. **Acessar o painel do Cloudflare Zero Trust / Tunnels.**
+2. **Localizar o túnel existente** que atende a rede da empresa.
 3. **Adicionar uma nova regra de Ingress (Public Hostname):**
    - **Subdomínio:** `manutencao`
    - **Domínio:** `freedom.dev.br`

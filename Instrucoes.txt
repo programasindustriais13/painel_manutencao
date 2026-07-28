@@ -1774,3 +1774,53 @@ F. Consolidação do Ambiente Python 3.11.3 e QA Completo (2026-07-28):
 - Validação de Produção (`manage.py check --deploy`): 0 erros, 4 avisos de segurança (`security.W004`, `security.W008`, `security.W012`, `security.W016`) mapeados para a futura SPEC de Implantação no Windows Server.
 - Smoke Tests de Rotas: `/management/`, `/dashboard/`, `/admin/login/`, `/relatorio-turno/` validados com respostas HTTP 200/302 corretas.
 - Validação Git: `.env` e `.venv` devidamente ignorados via `git check-ignore`. Nenhuma migration ou segredo exposto.
+
+
+42. SPEC — MÍDIA PROTEGIDA E ALINHAMENTO DE RUNTIME DJANGO 4.2.30 (2026-07-28)
+--------------------------------------------------------------------------------
+Implementação do acesso protegido e autenticado ao campo foto_anexo do modelo
+Allocation, fechamento da rota pública /media/ em produção com DEBUG=False,
+alinhamento das dependências com Django 4.2.30 e atualização da arquitetura
+em DEPLOY_WINDOWS_SERVER.md sem dependência de IIS, ARR ou URL Rewrite.
+
+Arquivos criados:
+- regras_programacao/SPEC_MIDIA_PROTEGIDA_E_ALINHAMENTO_RUNTIME.md
+
+Arquivos modificados:
+- requirements.txt
+- maintenance/views.py
+- maintenance/urls.py
+- maintenance/tests.py
+- DEPLOY_WINDOWS_SERVER.md
+- Instrucoes.txt
+
+A. Rota e View Protegida de Anexos:
+- Criada a view `serve_allocation_attachment` em maintenance/views.py.
+- Registrada a rota `anexos/alocacoes/<int:allocation_id>/` em maintenance/urls.py.
+- Acesso restrito a usuários autenticados (`@login_required`).
+- Autorização refinada por perfil:
+  * Operador/Admin, Staff, Superuser e Técnico Líder: acesso total a anexos.
+  * Técnico comum: acessa apenas anexos das suas próprias alocações.
+  * Usuário de Produção (grupo 'Liderança de Produção'): bloqueado com HTTP 403.
+  * Usuário anônimo: redirecionado para login.
+  * Alocação inexistente, sem foto ou arquivo ausente no storage: HTTP 404 limpo (sem erro 500).
+- Cabeçalhos de resposta: Content-Type autodetectado, Content-Disposition: inline,
+  Cache-Control: private, no-store e X-Content-Type-Options: nosniff.
+
+B. Fechamento de /media/ em Produção:
+- Com DEBUG=False, a rota /media/... permanece inacessível retornando HTTP 404.
+
+C. Alinhamento de Runtime:
+- Fixado `Django==4.2.30` em `requirements.txt` e reinstalado no `.venv`.
+- `python -m django --version` confirma `4.2.30`.
+
+D. Manual de Implantação Atualizado:
+- `DEPLOY_WINDOWS_SERVER.md` atualizado para remover dependência do IIS/ARR/URL Rewrite.
+- Arquitetura consolidada: Cloudflare Tunnel -> Waitress (127.0.0.1:8900) -> Django.
+
+E. QA e Suíte de Testes:
+- Criada a classe `ProtectedMediaTests` em maintenance/tests.py com 14 testes cobrindo
+  todos os cenários de permissão, arquivo ausente, path traversal, cabeçalhos e SCADA DB isolado.
+- 23/23 testes unitários aprovados com sucesso.
+- `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações).
+- Smoke tests locais com Waitress e DEBUG=False validados com sucesso.

@@ -3,11 +3,13 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
 from django.utils import timezone
-from django.http import HttpResponse
+from django.http import HttpResponse, FileResponse, Http404, HttpResponseForbidden
 from functools import wraps
 import json
 import io
 import datetime
+import os
+import mimetypes
 from django.db.models import Prefetch, Q
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -1431,3 +1433,52 @@ def relatorio_turno(request):
     return render(request, 'maintenance/relatorio_turno.html', context)
 
 
+# ----------------------------------------------------
+# 4. DOWNLOAD E EXIBIÇÃO PROTEGIDA DE ANEXOS DE ALOCAÇÃO
+# ----------------------------------------------------
+@login_required
+def serve_allocation_attachment(request, allocation_id):
+    """Serve o anexo de foto de uma alocação de forma autenticada e autorizada."""
+    allocation = get_object_or_404(Allocation, id=allocation_id)
+    user = request.user
+
+    # 1. Regra para perfil de Produção (sem acesso à manutenção)
+    if user.groups.filter(name="Liderança de Produção").exists() and not _user_has_maintenance_access(user):
+        return HttpResponseForbidden("Acesso negado. Perfil não autorizado para visualizar anexos de manutenção.")
+
+    # 2. Regra de autorização baseada no perfil e relação com a alocação
+    if _user_is_lider_ou_operador(user):
+        pass  # Operadores, Staff, Superusers e Técnicos Líderes têm acesso total
+    else:
+        # Técnico comum: restrito às suas próprias alocações
+        tecnico_proprio = _get_technician_proprio(user)
+        if not tecnico_proprio or tecnico_proprio.id != allocation.tecnico_id:
+            return HttpResponseForbidden("Acesso negado. Você não possui permissão para acessar este anexo.")
+
+    # 3. Confirmar a existência do campo foto_anexo
+    if not allocation.foto_anexo:
+        raise Http404("Nenhum anexo associado a esta alocação.")
+
+    # 4. Confirmar a existência física do arquivo no armazenamento sem gerar 500
+    try:
+        if not allocation.foto_anexo.storage.exists(allocation.foto_anexo.name):
+            raise Http404("Arquivo de anexo não encontrado no armazenamento.")
+        file_handle = allocation.foto_anexo.open('rb')
+    except (FileNotFoundError, OSError, ValueError):
+        raise Http404("Arquivo de anexo não encontrado no armazenamento.")
+
+    # 5. Determinar Content-Type e nome seguro do arquivo
+    content_type, _ = mimetypes.guess_type(allocation.foto_anexo.name)
+    if not content_type:
+        content_type = 'application/octet-stream'
+
+    filename = os.path.basename(allocation.foto_anexo.name)
+    safe_filename = f"anexo_alocacao_{allocation.id}_{filename}"
+
+    # 6. Retornar FileResponse com cabeçalhos de segurança
+    response = FileResponse(file_handle, content_type=content_type)
+    response['Content-Disposition'] = f'inline; filename="{safe_filename}"'
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
+
+    return response
