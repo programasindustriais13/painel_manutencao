@@ -12,35 +12,86 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 import os
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Carregar variáveis de ambiente do arquivo .env (se disponível)
-try:
-    from dotenv import load_dotenv
-    load_dotenv(BASE_DIR / ".env")
-except ImportError:
-    pass
+# Carregar variáveis de ambiente do arquivo .env
+load_dotenv(BASE_DIR / ".env")
+
+
+def _get_env(primary_name, fallback_name=None, default=None):
+    val = os.environ.get(primary_name)
+    if val is not None and val.strip() != "":
+        return val.strip()
+    if fallback_name:
+        val = os.environ.get(fallback_name)
+        if val is not None and val.strip() != "":
+            return val.strip()
+    return default
+
+
+def _parse_bool(val, default=False):
+    if val is None:
+        return default
+    val_str = str(val).strip().lower()
+    if val_str in ("true", "1", "yes", "on", "t"):
+        return True
+    if val_str in ("false", "0", "no", "off", "f"):
+        return False
+    return default
+
+
+def _parse_list(val, default=None):
+    if default is None:
+        default = []
+    if not val:
+        return default
+    return [item.strip() for item in str(val).split(",") if item.strip()]
+
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY",
-    os.environ.get("DJANGO_SECRET_KEY", "django-insecure-m5=fgwb0=lmm(#!_2%*v!j-1v%du!y++6nhoplf1vfttbthz14")
-)
+# Modo de depuração (DEBUG)
+raw_debug = _get_env("DJANGO_DEBUG", "DEBUG", default="True")
+DEBUG = _parse_bool(raw_debug, default=True)
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DEBUG", os.environ.get("DJANGO_DEBUG", "True")).lower() in ("true", "1", "t")
+# SECRET_KEY
+raw_secret = _get_env("DJANGO_SECRET_KEY", "SECRET_KEY")
+if not raw_secret:
+    if DEBUG:
+        SECRET_KEY = "django-insecure-m5=fgwb0=lmm(#!_2%*v!j-1v%du!y++6nhoplf1vfttbthz14"
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY deve ser configurada explicitamente em ambiente de produção (DEBUG=False)."
+        )
+else:
+    if not DEBUG and raw_secret.startswith("django-insecure-"):
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY em ambiente de produção não pode utilizar a chave insegura de desenvolvimento."
+        )
+    SECRET_KEY = raw_secret
 
-allowed_hosts_env = os.environ.get("ALLOWED_HOSTS", os.environ.get("DJANGO_ALLOWED_HOSTS", "*"))
-ALLOWED_HOSTS = [host.strip() for host in allowed_hosts_env.split(",") if host.strip()]
+# ALLOWED_HOSTS
+raw_allowed_hosts = _get_env("DJANGO_ALLOWED_HOSTS", "ALLOWED_HOSTS")
+if raw_allowed_hosts is not None:
+    ALLOWED_HOSTS = _parse_list(raw_allowed_hosts)
+else:
+    ALLOWED_HOSTS = ["*"] if DEBUG else []
 
-csrf_trusted_env = os.environ.get("CSRF_TRUSTED_ORIGINS", os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS", ""))
-CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_env.split(",") if origin.strip()]
+if not DEBUG:
+    if not ALLOWED_HOSTS or ALLOWED_HOSTS == ["*"]:
+        raise ImproperlyConfigured(
+            "DJANGO_ALLOWED_HOSTS deve conter hosts válidos e explícitos em produção (DEBUG=False) e não pode ser '*'."
+        )
+
+# CSRF_TRUSTED_ORIGINS
+raw_csrf = _get_env("DJANGO_CSRF_TRUSTED_ORIGINS", "CSRF_TRUSTED_ORIGINS")
+CSRF_TRUSTED_ORIGINS = _parse_list(raw_csrf)
 
 
 

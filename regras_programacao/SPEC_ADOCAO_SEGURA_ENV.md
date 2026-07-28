@@ -132,7 +132,71 @@ As seguintes variáveis serão padronizadas para leitura em `settings.py`:
 
 ## 📂 12. EVIDÊNCIAS OBRIGATÓRIAS DO AGENTE
 
-Serão apresentados no relatório final:
-- Status de validação e verificação do Git.
-- Lista de arquivos lidos, criados e modificados.
-- Lista de nomes de variáveis configuradas.
+### Evidências da Validação de QA e Endurecimento (2026-07-22):
+- **Suíte de Testes:** `py manage.py test` executou 12 testes com 100% de aprovação (0 erros, 0 falhas).
+- **Validação de Migrações:** `py manage.py makemigrations --check --dry-run` não detectou nenhuma alteração pendente de modelo/migração.
+- **Checagem de Implantação:** `py manage.py check --deploy` executou com sucesso (0 erros, 4 avisos esperados de SSL/HSTS a serem ativados na SPEC de implantação).
+- **Proteção em Produção (`DEBUG=False`):**
+  - Tentativa sem `DJANGO_SECRET_KEY` válida dispara `ImproperlyConfigured` imediatamente.
+  - Tentativa com `DJANGO_ALLOWED_HOSTS` vazio ou `*` dispara `ImproperlyConfigured` imediatamente.
+- **Rotas de Smoke Test:** `/management/`, `/dashboard/`, `/admin/login/` e `/relatorio-turno/` validadas com respostas HTTP 200/302 corretas.
+- **Git Security:** `.env` validado como ignorado pelo Git via `git check-ignore -v .env`.
+
+---
+
+## 🛑 13. ALINHAMENTO DE AMBIENTE E REMOÇÃO DE MONKEY PATCH (2026-07-22)
+
+- **Remoção de Monkey Patch:** O monkey patch de compatibilidade para `BaseContext`, `Context`, `Context.__copy__` e o módulo `copy` foi 100% removido de `maintenance_project/settings.py`.
+- **Causa Raiz do Patch:** O patch havia sido inserido temporariamente devido à execução local sob Python 3.14.
+- **Padronização do Ambiente:**
+  - O servidor de produção utiliza **Python 3.11.3**.
+  - O ambiente oficial deste projeto foi padronizado em **Python 3.11** para paridade total entre desenvolvimento local e servidor Windows.
+  - Desenvolvimento e produção devem permanecer na mesma versão major/minor (`Python 3.11.x`).
+  - Nenhuma modificação interna no Django é permitida para contornar incompatibilidades de versões experimentais/não suportadas do Python.
+  - Futuras atualizações do Python ou do Django devem ser tratadas em uma SPEC independente.
+- **Status do Ambiente Local (Concluído em 2026-07-28):**
+  - Python 3.11.3 instalado localmente, alcançando paridade exata 1:1 com o Windows Server de produção.
+  - A pasta legada quebrada `venv` foi removida/sanada, restando unicamente o ambiente oficial `.venv` na raiz.
+  - O `.venv` foi criado com Python 3.11.3 (`.\.venv\Scripts\python.exe --version` = `Python 3.11.3`).
+  - Dependências reinstaladas e fixadas no `.venv`, incluindo Django 4.2.27 (`.\.venv\Scripts\python.exe -m django --version` = `4.2.27`).
+  - Nenhuma alteração funcional ou monkey patch restou no código do projeto (`settings.py` limpo).
+
+---
+
+## 🚀 14. RELATÓRIO DE QA E CONSOLIDAÇÃO DO AMBIENTE (2026-07-28)
+
+- **Paridade de Ambiente:**
+  - Python local oficial: `3.11.3`
+  - Python do servidor: `3.11.3`
+  - Django no `.venv`: `4.2.27`
+- **Gestão de Ambientes Virtuais:**
+  - Ambiente legado `venv`: Removido / Inexistente.
+  - Ambiente oficial `.venv`: Criado e mantido como único ambiente virtual na raiz do projeto.
+- **Auditoria de Monkey Patch:**
+  - Auditado 100% do codebase para `BaseContext`, `Context`, `_base_context_copy`, `_context_copy` e compatibilidades com Python 3.14. Nenhuma ocorrência funcional encontrada.
+- **Suíte de Testes Automatizados:**
+  - `manage.py check`: 0 erros (System check identified no issues).
+  - `manage.py makemigrations --check --dry-run`: No changes detected (Nenhuma migração gerada/necessária).
+  - `manage.py test`: 12 testes executados, 12 aprovados (100% de sucesso, 0 falhas, 0 erros, ~13.7s de duração).
+- **Validação de Produção (`manage.py check --deploy`):**
+  - Executado temporariamente com `DEBUG=False`, `DJANGO_ALLOWED_HOSTS=manutencao.freedom.dev.br`, `DJANGO_CSRF_TRUSTED_ORIGINS=https://manutencao.freedom.dev.br` e chave forte temporária.
+  - Erros: 0.
+  - Avisos: 4 (`security.W004`, `security.W008`, `security.W012`, `security.W016`), todos a serem tratados na futura SPEC de Implantação no Windows Server (HTTPS/HSTS/SSL/Cookies seguros).
+- **Smoke Tests de Rotas:**
+  - `/management/` (sem autenticação): HTTP 302 (Redirecionamento para `/login/`).
+  - `/management/` (autenticado): HTTP 200 (OK).
+  - `/dashboard/` (sem autenticação): HTTP 302 (Redirecionamento para `/login/`).
+  - `/dashboard/` (autenticado): HTTP 200 (OK).
+  - `/admin/login/`: HTTP 200 (OK).
+  - `/relatorio-turno/` (sem autenticação): HTTP 302 (Redirecionamento para `/login/`).
+  - `/relatorio-turno/` (autenticado como admin sem turno): HTTP 302 (Redirecionamento para `/management/`).
+- **Validação Git & Segurança:**
+  - `git check-ignore -v .env`: Confirmado ignorado (.gitignore:16).
+  - `git check-ignore -v .venv`: Confirmado ignorado (.gitignore:17).
+  - Nenhuma migration criada ou aplicada.
+  - Nenhum segredo ou dependência de ambiente expostos no Git.
+- **Diretriz Futura:**
+  - Qualquer eventual atualização futura do Python ou do Django no servidor/ambiente local deve ser planejada e executada através de SPEC independente.
+
+
+

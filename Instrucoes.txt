@@ -1749,6 +1749,28 @@ C. Microserviço WhatsApp (`maintenance/views.py`):
 - Atualizada a view de envio para utilizar `settings.WHATSAPP_SERVICE_URL` com fallback para `http://localhost:3000/send`.
 
 D. Gestão de Arquivos de Ambiente:
-- Criado `.env` na raiz do projeto com os valores funcionais de desenvolvimento local.
-- Criado `.env.example` documental seguro com placeholders fictícios para versionamento.
+- Criado `.env` na raiz do projeto com nomes de variáveis canônicos (`DJANGO_*`) e valores de desenvolvimento local.
+- Criado `.env.example` documental seguro com placeholders fictícios e descrições claras para produção.
 - Confirmado que o `.env` é estritamente ignorado pelo Git através do `.gitignore`.
+
+E. Endurecimento de Segurança e Remoção do Monkey Patch:
+- Implementados parsers robustos `_parse_bool` e `_parse_list` no `settings.py`.
+- Quando `DEBUG=False`, o sistema bloqueia inicialização insegura e exige `DJANGO_SECRET_KEY` forte e `DJANGO_ALLOWED_HOSTS` explícito via `ImproperlyConfigured`.
+- O monkey patch de compatibilidade do sistema de templates do Django (`BaseContext`, `Context`, `Context.__copy__`, `copy`) foi totalmente REMOVIDO de `maintenance_project/settings.py`.
+- Esse patch havia sido adicionado temporariamente devido ao uso local do Python 3.14.
+- O ambiente oficial deste projeto foi padronizado em Python 3.11 (mesma versão major/minor do servidor de produção que utiliza Python 3.11.3).
+- Foi definido que desenvolvimento e produção devem permanecer na mesma versão de Python (Python 3.11.x), e qualquer atualização futura de Python ou Django deverá ser tratada em SPEC independente.
+
+F. Consolidação do Ambiente Python 3.11.3 e QA Completo (2026-07-28):
+- Instalado Python 3.11.3 no ambiente local Windows (`py -3.11 --version` = `Python 3.11.3`), garantindo paridade exata 1:1 com o servidor de produção (Windows Server).
+- Sanado/removido o ambiente virtual legado quebrado (`venv`), restando unicamente o ambiente oficial `.venv` na raiz.
+- Criado o ambiente virtual oficial `.venv` com Python 3.11.3 (`.\.venv\Scripts\python.exe --version` = `Python 3.11.3`).
+- Reinstaladas e fixadas as dependências no `.venv`, incluindo Django 4.2.27 (`.\.venv\Scripts\python.exe -m django --version` = `4.2.27`).
+- Confirmada a ausência total de monkey patches em todo o workspace (`settings.py` limpo).
+- Executada a suíte de QA completa via `.venv`:
+  * `manage.py check`: 0 erros.
+  * `manage.py makemigrations --check --dry-run`: 0 alterações pendentes / 0 migrações criadas.
+  * `manage.py test`: 12/12 testes aprovados (0 erros, 0 falhas, ~13.7s).
+- Validação de Produção (`manage.py check --deploy`): 0 erros, 4 avisos de segurança (`security.W004`, `security.W008`, `security.W012`, `security.W016`) mapeados para a futura SPEC de Implantação no Windows Server.
+- Smoke Tests de Rotas: `/management/`, `/dashboard/`, `/admin/login/`, `/relatorio-turno/` validados com respostas HTTP 200/302 corretas.
+- Validação Git: `.env` e `.venv` devidamente ignorados via `git check-ignore`. Nenhuma migration ou segredo exposto.
