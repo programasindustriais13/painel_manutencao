@@ -1906,3 +1906,66 @@ Regras e Pendências Registradas:
    - A proteção definitiva em produção dependerá de um usuário MySQL configurado exclusivamente com permissão de `SELECT`.
    - Chamadas explícitas usando `.using("scada")` jamais devem ser utilizadas para escrita.
    - O comando `migrate --database=scada` não deve ser executado sob nenhuma hipótese.
+
+
+47. AUTORIZAÇÃO HUMANA E REORGANIZAÇÃO DOCUMENTAL — CONSOLIDAÇÃO DAS SPECS RESTANTES (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: DOCUMENTAÇÃO E PLANEJAMENTO CONSOLIDADOS
+
+Aprovação Humana e Fechamento:
+1. O fechamento documental e técnico das SPECs 03 e 03A foi formalmente aprovado pelo usuário.
+2. Foi autorizada exclusivamente a reorganização documental e o planejamento consolidado das etapas restantes.
+3. As antigas 5 SPECs restantes (04 a 08) foram consolidadas em 3 SPECs organizadas, autossuficientes e com fases internas:
+   - SPEC 04 — INTEGRAÇÃO SCADA-LTS E VISÃO ATUAL DO PAINEL DE PRODUÇÃO (Consolida as antigas SPECs 04 e 05)
+   - SPEC 05 — COLETOR, HISTÓRICO E DETALHE DAS MÁQUINAS (Consolida as antigas SPECs 06 e 07)
+   - SPEC 06 — HARDENING, SERVIÇO WINDOWS, DEPLOY E ROLLBACK (Substitui a antiga SPEC 08)
+
+Arquivos Atualizados:
+- implementation_plan.md: Reestruturado com o novo índice, detalhamento completo das 3 SPECs consolidadas, escopos, fases internas, dependências, riscos e regras de governança.
+- PROMPT/PLANO_RECOMENDADO_PRODUCAO_SCADA.md: Atualizado refletindo a sequência de 3 SPECs consolidadas.
+- Instrucoes.txt: Este registro de encerramento do planejamento.
+- SPECs 03 e 03A mantidas 100% inalteradas.
+
+Declaração de Execução Restrita:
+- NENHUM código Python/Django foi implementado nesta execução.
+- A SPEC 04 NÃO foi iniciada e aguarda autorização humana prévia.
+- O banco Scada-LTS NÃO foi acessado nesta execução.
+- NENHUMA migration foi gerada ou aplicada.
+- NENHUM commit ou push foi realizado no Git antes desta apresentação.
+
+
+48. SPEC 04 — INTEGRAÇÃO SCADA-LTS E VISÃO ATUAL DO PAINEL DE PRODUÇÃO (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTADA E APROVADA NO QA
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_04_INTEGRACAO_SCADA_E_PAINEL.md
+- production/services.py
+- production/migrations/0003_scadadatapoint_scadapointvalue_and_more.py
+
+Arquivos modificados:
+- production/models.py (ScadaDataPoint, ScadaPointValue, ScadaPointValueAnnotation com managed=False)
+- production/views.py (integração da view production_dashboard com ProductionStateService)
+- production/templates/production/dashboard.html (cards responsivos, busca, tabs de filtro, parâmetros e alarmes globais)
+- production/tests.py (34 testes em production / 57 suíte global)
+- implementation_plan.md
+- Instrucoes.txt
+
+Resultados da Implementação e QA:
+1. Models Não Gerenciados do Scada-LTS (`production/models.py`):
+   - `ScadaDataPoint` (`db_table='datapoints'`, `managed=False`)
+   - `ScadaPointValue` (`db_table='pointvalues'`, `managed=False`)
+   - `ScadaPointValueAnnotation` (`db_table='pointvalueannotations'`, `managed=False`)
+   - Roteamento exclusivo via alias `scada`. Tentativas de escrita ORM disparam `PermissionError`.
+2. Camada de Serviço de Leitura (`production/services.py`):
+   - `ScadaReaderService`: Resolução XID -> dataPointId com cache (15min), quarentena para XIDs inexistentes (10s), e busca em lote dos últimos valores usando subquery MAX(ts).
+   - Normalização dos 4 tipos nativos (Binary, Multistate, Numeric, String).
+   - `ProductionStateService`: Agregação do estado atual de máquinas, cavidades, metas, parâmetros e alarmes globais. Tratamento de falhas de comunicação e identificação de dados desatualizados (stale_limit_seconds).
+3. Interface Web (`/producao/`):
+   - Totais de KPI (Produzindo, Paradas, Sem Comunicação).
+   - Busca em tempo real por nome ou setor.
+   - Filtros rápidos por estado no frontend sem recarregar página.
+   - Design industrial responsivo em Português (pt-br).
+4. Suíte de Testes Automatizados:
+   - 34/34 testes do app `production` e 57/57 da suíte global aprovados sem falhas (100% OK).
+   - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes / exit code 0).

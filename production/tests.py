@@ -292,3 +292,308 @@ class ScadaRouterDetailedTestCase(TestCase):
     def test_allow_relation_unmanaged_scada_model_blocked(self):
         """allow_relation blocks relations involving unmanaged Scada models."""
         self.assertFalse(self.router.allow_relation(ProductionMachineConfig, self.UnmanagedModel))
+
+
+# ==============================================================================
+# TESTES DA SPEC 04 — LEITURA SCADA, NORMALIZAÇÃO, ESTADO E DASHBOARD
+# ==============================================================================
+
+from django.db import connections
+import time
+from production.models import ScadaDataPoint, ScadaPointValue, ScadaPointValueAnnotation
+from production.services import scada_reader, ScadaReaderService, ProductionStateService
+
+
+def init_scada_test_tables():
+    """Cria fisicamente as tabelas do Scada no banco de testes 'scada' (SQLite)."""
+    with connections["scada"].cursor() as cursor:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS datapoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                xid VARCHAR(50) UNIQUE NOT NULL,
+                dataSourceId INTEGER NOT NULL,
+                pointName VARCHAR(250),
+                plcAlarmLevel INTEGER
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pointvalues (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                dataPointId INTEGER NOT NULL,
+                dataType INTEGER NOT NULL,
+                pointValue DOUBLE,
+                ts BIGINT NOT NULL
+            );
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pointvalueannotations (
+                pointValueId INTEGER PRIMARY KEY,
+                textPointValueShort VARCHAR(128),
+                textPointValueLong TEXT
+            );
+        """)
+
+
+class ScadaUnmanagedModelsTestCase(TestCase):
+    def setUp(self):
+        self.router = ScadaRouter()
+
+    def test_unmanaged_scada_models_routed_to_scada_for_read(self):
+        """Modelos não gerenciados do Scada são lidos exclusivamente no banco 'scada'."""
+        self.assertEqual(self.router.db_for_read(ScadaDataPoint), "scada")
+        self.assertEqual(self.router.db_for_read(ScadaPointValue), "scada")
+        self.assertEqual(self.router.db_for_read(ScadaPointValueAnnotation), "scada")
+
+    def test_unmanaged_scada_models_blocked_for_write(self):
+        """Escrita via ORM em modelos não gerenciados dispara PermissionError."""
+        with self.assertRaises(PermissionError):
+            self.router.db_for_write(ScadaDataPoint)
+        with self.assertRaises(PermissionError):
+            self.router.db_for_write(ScadaPointValue)
+        with self.assertRaises(PermissionError):
+            self.router.db_for_write(ScadaPointValueAnnotation)
+
+    def test_unmanaged_scada_models_blocked_for_migrate(self):
+        """Migrações para modelos não gerenciados do Scada são categoricamente bloqueadas."""
+        self.assertFalse(self.router.allow_migrate("default", "production", "scadadatapoint"))
+        self.assertFalse(self.router.allow_migrate("scada", "production", "scadadatapoint"))
+
+
+class ScadaReaderServiceTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        scada_reader.clear_caches()
+        
+        # Inserir dados de teste na base scada via SQL bruto
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalueannotations;")
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId, pointName) VALUES (1, 'DP_STATUS_P1', 10, 'Status P1');")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId, pointName) VALUES (2, 'DP_PROD_CAV1', 10, 'Prod Cav 1');")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId, pointName) VALUES (3, 'DP_MOTIVO_P1', 10, 'Motivo P1');")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId, pointName) VALUES (4, 'DP_VACUO', 10, 'Vácuo');")
+
+            now_ms = int(time.time() * 1000)
+            old_ms = now_ms - (300 * 1000)  # 5 minutos atrás
+
+            # Status P1 (Binary dataType=1)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (101, 1, 1, 1.0, ?);", [now_ms])
+            # Prod Cav 1 (Numeric dataType=3)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (102, 2, 3, 150.0, ?);", [now_ms])
+            # Motivo P1 (String dataType=4)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (103, 3, 4, NULL, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalueannotations (pointValueId, textPointValueShort) VALUES (103, 'Troca de Molde');")
+            # Vácuo (Numeric desatualizado)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (104, 4, 3, 750.5, ?);", [old_ms])
+
+    def test_get_data_point_ids_batch_and_cache(self):
+        """Testa resolução em lote de XIDs e cache em memória."""
+        ids = scada_reader.get_data_point_ids(["DP_STATUS_P1", "DP_PROD_CAV1", "XID_INEXISTENTE"])
+        self.assertEqual(ids.get("DP_STATUS_P1"), 1)
+        self.assertEqual(ids.get("DP_PROD_CAV1"), 2)
+        self.assertNotIn("XID_INEXISTENTE", ids)
+
+        # Segunda busca deve vir do cache
+        ids_cached = scada_reader.get_data_point_ids(["DP_STATUS_P1"])
+        self.assertEqual(ids_cached.get("DP_STATUS_P1"), 1)
+
+    def test_normalize_value_types(self):
+        """Testa normalização dos 4 tipos nativos do Scada-LTS."""
+        # 1: Binary
+        val, s_val = scada_reader.normalize_value(1, 1.0)
+        self.assertTrue(val)
+        self.assertEqual(s_val, "1")
+
+        val, s_val = scada_reader.normalize_value(1, 0.0)
+        self.assertFalse(val)
+        self.assertEqual(s_val, "0")
+
+        # 2: Multistate
+        val, s_val = scada_reader.normalize_value(2, 3.0)
+        self.assertEqual(val, 3)
+        self.assertEqual(s_val, "3")
+
+        # 3: Numeric
+        val, s_val = scada_reader.normalize_value(3, 45.5)
+        self.assertEqual(val, 45.5)
+        self.assertEqual(s_val, "45.50")
+
+        # 4: String
+        class AnnDummy:
+            text_point_value_short = "Alarme Ativo"
+            text_point_value_long = None
+
+        val, s_val = scada_reader.normalize_value(4, None, AnnDummy())
+        self.assertEqual(val, "Alarme Ativo")
+        self.assertEqual(s_val, "Alarme Ativo")
+
+    def test_get_last_values_batch_max_ts(self):
+        """Testa consulta dos últimos valores em lote via subquery MAX(ts)."""
+        res = scada_reader.get_last_values_batch(["DP_STATUS_P1", "DP_PROD_CAV1", "DP_MOTIVO_P1"])
+        self.assertIn("DP_STATUS_P1", res)
+        self.assertEqual(res["DP_STATUS_P1"]["value"], True)
+
+        self.assertIn("DP_PROD_CAV1", res)
+        self.assertEqual(res["DP_PROD_CAV1"]["value"], 150)
+
+        self.assertIn("DP_MOTIVO_P1", res)
+        self.assertEqual(res["DP_MOTIVO_P1"]["value"], "Troca de Molde")
+
+
+class ProductionStateServiceTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        scada_reader.clear_caches()
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine1 = Machine.objects.create(nome="Prensa 01", setor=self.sector)
+        self.machine2 = Machine.objects.create(nome="Prensa 02", setor=self.sector)
+
+        self.config1 = ProductionMachineConfig.objects.create(
+            machine=self.machine1,
+            ordem_exibicao=1,
+            stale_limit_seconds=120,
+            produzindo_value="1",
+            xid_status_prensa="DP_STATUS_P1",
+            xid_motivo_parada_geral="DP_MOTIVO_P1"
+        )
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_producao="DP_PROD_CAV1",
+            xid_meta="DP_META_CAV1"
+        )
+
+        self.config2 = ProductionMachineConfig.objects.create(
+            machine=self.machine2,
+            ordem_exibicao=2,
+            stale_limit_seconds=60,
+            produzindo_value="1",
+            xid_status_prensa="DP_STATUS_P2"
+        )
+
+        self.param_vacuo = ProductionGlobalParameter.objects.create(
+            nome="Vácuo Geral",
+            chave="vacuo_geral",
+            xid="DP_VACUO",
+            unidade="mmHg",
+            ordem=1
+        )
+        self.alarm_ar = ProductionGlobalAlarm.objects.create(
+            nome="Alarme Ar",
+            chave="alarme_ar",
+            xid="DP_ALARME_AR",
+            ordem=1
+        )
+
+        now_ms = int(time.time() * 1000)
+        old_ms = now_ms - (300 * 1000)  # 5 min atrás (desatualizado para P2)
+
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalueannotations;")
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P1', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_PROD_CAV1', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_META_CAV1', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (4, 'DP_STATUS_P2', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (5, 'DP_VACUO', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (6, 'DP_ALARME_AR', 1);")
+
+            # P1 Produzindo
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 1.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 3, 80.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 3, 100.0, ?);", [now_ms])
+
+            # P2 Parada e Dado desatualizado
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (4, 4, 1, 0.0, ?);", [old_ms])
+
+            # Vácuo
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (5, 5, 3, 760.0, ?);", [now_ms])
+
+            # Alarme Ar (Desativado)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (6, 6, 1, 0.0, ?);", [now_ms])
+
+    def test_dashboard_state_aggregation(self):
+        """Testa agregação completa do estado atual de máquinas, cavidades e parâmetros."""
+        state = ProductionStateService.get_dashboard_state()
+        self.assertEqual(state["total_count"], 2)
+        self.assertEqual(state["produzindo_count"], 1)
+        self.assertEqual(state["paradas_count"], 1)
+        self.assertEqual(state["sem_comunicacao_count"], 0)
+
+        # Checar P1 (Produzindo)
+        m1 = next(m for m in state["machines"] if m["nome"] == "Prensa 01")
+        self.assertEqual(m1["state"], "PRODUZINDO")
+        self.assertFalse(m1["is_stale"])
+        self.assertEqual(m1["producao_total"], 80)
+        self.assertEqual(m1["meta_total"], 100)
+        self.assertEqual(m1["percentual_total"], 80)
+
+        # Checar P2 (Parada e Desatualizada)
+        m2 = next(m for m in state["machines"] if m["nome"] == "Prensa 02")
+        self.assertEqual(m2["state"], "PARADA")
+        self.assertTrue(m2["is_stale"])
+
+        # Checar Parâmetro Global
+        p_vacuo = next(p for p in state["global_parameters"] if p["chave"] == "vacuo_geral")
+        self.assertEqual(p_vacuo["valor"], "760")
+
+        # Checar Alarme Global
+        a_ar = next(a for a in state["global_alarms"] if a["chave"] == "alarme_ar")
+        self.assertFalse(a_ar["is_active"])
+
+    def test_dashboard_loads_when_scada_offline(self):
+        """Testa se a montagem do estado funciona amigavelmente quando o Scada estiver sem dados."""
+        scada_reader.clear_caches()
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalues;")
+
+        state = ProductionStateService.get_dashboard_state()
+        self.assertEqual(state["total_count"], 2)
+        self.assertEqual(state["produzindo_count"], 0)
+        self.assertEqual(state["paradas_count"], 0)
+        self.assertEqual(state["sem_comunicacao_count"], 2)
+        self.assertTrue(state["scada_offline"])
+
+
+class ProductionDashboardViewTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        scada_reader.clear_caches()
+
+        self.prod_leader_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.operator_group, _ = Group.objects.get_or_create(name="Operadores")
+
+        self.prod_user = User.objects.create_user("lider_prod", "lider@test.com", "pwd123")
+        self.prod_user.groups.add(self.prod_leader_group)
+
+        self.maint_user = User.objects.create_user("maint_user", "maint@test.com", "pwd123")
+        self.maint_user.groups.add(self.operator_group)
+
+    def test_dashboard_accessible_by_production_leader(self):
+        """Usuário da Liderança de Produção acessa /producao/ com sucesso (200)."""
+        client = Client()
+        client.force_login(self.prod_user)
+        response = client.get(reverse("production:dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Painel de Estado Atual de Produção")
+
+    def test_dashboard_blocked_for_maintenance_users(self):
+        """Usuário da Manutenção é redirecionado e bloqueado de acessar /producao/."""
+        client = Client()
+        client.force_login(self.maint_user)
+        response = client.get(reverse("production:dashboard"))
+        self.assertRedirects(response, reverse("home_redirect"), target_status_code=302)
+
+

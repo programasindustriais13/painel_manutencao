@@ -179,3 +179,82 @@ class ProductionGlobalAlarm(models.Model):
 
     def __str__(self):
         return f"{self.nome} ({self.chave})"
+
+
+# ==============================================================================
+# MODELS NÃO GERENCIADOS DO SCADA-LTS (managed=False)
+# Roteados exclusivamente para o alias 'scada' (somente leitura).
+# Nenhuma migration é gerada para estes modelos.
+# ==============================================================================
+
+class ScadaDataPoint(models.Model):
+    id = models.AutoField(primary_key=True)
+    xid = models.CharField(max_length=50, unique=True)
+    data_source_id = models.IntegerField(db_column="dataSourceId")
+    point_name = models.CharField(max_length=250, db_column="pointName", null=True, blank=True)
+    plc_alarm_level = models.IntegerField(db_column="plcAlarmLevel", null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = "datapoints"
+        verbose_name = "Scada Data Point"
+        verbose_name_plural = "Scada Data Points"
+
+    def __str__(self):
+        return f"{self.xid} (ID: {self.id})"
+
+
+class ScadaPointValue(models.Model):
+    id = models.BigAutoField(primary_key=True)
+    data_point = models.ForeignKey(
+        ScadaDataPoint,
+        db_column="dataPointId",
+        on_delete=models.DO_NOTHING,
+        related_name="values"
+    )
+    data_type = models.IntegerField(db_column="dataType")
+    point_value = models.FloatField(db_column="pointValue", null=True, blank=True)
+    ts = models.BigIntegerField()
+
+    class Meta:
+        managed = False
+        db_table = "pointvalues"
+        verbose_name = "Scada Point Value"
+        verbose_name_plural = "Scada Point Values"
+        indexes = [
+            models.Index(fields=["data_point", "ts"], name="pointValuesIdx2"),
+        ]
+
+    def __str__(self):
+        return f"DP {self.data_point_id} @ {self.ts}: {self.point_value}"
+
+
+class ScadaPointValueAnnotation(models.Model):
+    point_value = models.OneToOneField(
+        ScadaPointValue,
+        db_column="pointValueId",
+        primary_key=True,
+        on_delete=models.DO_NOTHING,
+        related_name="annotation"
+    )
+    text_point_value_short = models.CharField(
+        max_length=128,
+        db_column="textPointValueShort",
+        null=True,
+        blank=True
+    )
+    text_point_value_long = models.TextField(
+        db_column="textPointValueLong",
+        null=True,
+        blank=True
+    )
+
+    class Meta:
+        managed = False
+        db_table = "pointvalueannotations"
+        verbose_name = "Scada Point Value Annotation"
+        verbose_name_plural = "Scada Point Value Annotations"
+
+    def __str__(self):
+        return self.text_point_value_short or self.text_point_value_long or f"Annotation #{self.point_value_id}"
+
