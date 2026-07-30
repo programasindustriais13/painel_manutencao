@@ -24,9 +24,9 @@ Registrar o planejamento consolidado e a reorganização documental das etapas r
 - **SPEC 03:** Cadastro Local de XIDs, Cavidades, Parâmetros e Alarmes no Admin *(Reprovada na auditoria / Substituída)*.
 - **SPEC 03A:** Correção do Router, Testes e Integridade de Configuração *(Concluída, auditada e aprovada em 2026-07-30)*.
 - **SPEC 04:** Integração Scada-LTS e Visão Atual do Painel de Produção *(Concluída, auditada e aprovada em 2026-07-30)*.
+- **SPEC 05:** Coletor, Histórico e Detalhe das Máquinas *(Concluída, auditada e aprovada em 2026-07-30)*.
 
 ### 2. Novas SPECs Consolidadas Restantes
-- **SPEC 05:** Coletor, Histórico e Detalhe das Máquinas.
 - **SPEC 06:** Hardening, Serviço Windows, Deploy e Rollback.
 
 

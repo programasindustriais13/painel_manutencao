@@ -181,6 +181,136 @@ class ProductionGlobalAlarm(models.Model):
         return f"{self.nome} ({self.chave})"
 
 
+class ProductionMachineState(models.Model):
+    machine_config = models.OneToOneField(
+        ProductionMachineConfig,
+        on_delete=models.CASCADE,
+        related_name="state",
+        verbose_name="Configuração da Máquina"
+    )
+    estado_atual = models.CharField(
+        max_length=30,
+        default="SEM_COMUNICACAO",
+        verbose_name="Estado Atual"
+    )
+    inicio_estado_atual = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Início do Estado Atual"
+    )
+    ultima_leitura_scada = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Última Leitura Scada"
+    )
+    ultimo_timestamp_scada = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Último Timestamp Scada (ms)"
+    )
+    ultimo_valor_status = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        verbose_name="Último Valor Bruto de Status"
+    )
+    motivo_atual = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Motivo Atual"
+    )
+    sem_comunicacao = models.BooleanField(
+        default=False,
+        verbose_name="Sem Comunicação"
+    )
+    dado_desatualizado = models.BooleanField(
+        default=False,
+        verbose_name="Dado Desatualizado"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Estado Atual da Máquina"
+        verbose_name_plural = "Estados Atuais das Máquinas"
+
+    def __str__(self):
+        return f"Estado {self.machine_config.machine.nome}: {self.estado_atual}"
+
+
+class ProductionDowntimeEvent(models.Model):
+    machine_config = models.ForeignKey(
+        ProductionMachineConfig,
+        on_delete=models.CASCADE,
+        related_name="downtime_events",
+        verbose_name="Configuração da Máquina"
+    )
+    inicio = models.DateTimeField(
+        verbose_name="Início da Parada"
+    )
+    fim = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Fim da Parada"
+    )
+    duracao_segundos = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Duração (segundos)"
+    )
+    motivo_geral = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Motivo Geral de Parada"
+    )
+    snapshot_valor_status = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        verbose_name="Snapshot Valor Status"
+    )
+    timestamp_inicial_scada = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Timestamp Inicial Scada (ms)"
+    )
+    timestamp_final_scada = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Timestamp Final Scada (ms)"
+    )
+    origem = models.CharField(
+        max_length=50,
+        default="SCADA",
+        verbose_name="Origem do Registro"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Evento de Parada de Produção"
+        verbose_name_plural = "Eventos de Parada de Produção"
+        ordering = ["-inicio"]
+
+    def __str__(self):
+        status_str = f"até {self.fim.strftime('%d/%m %H:%M')}" if self.fim else "(Em andamento)"
+        return f"Parada {self.machine_config.machine.nome} em {self.inicio.strftime('%d/%m %H:%M')} {status_str}"
+
+
 # ==============================================================================
 # MODELS NÃO GERENCIADOS DO SCADA-LTS (managed=False)
 # Roteados exclusivamente para o alias 'scada' (somente leitura).

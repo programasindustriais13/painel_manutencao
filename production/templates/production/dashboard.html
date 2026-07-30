@@ -348,10 +348,12 @@
                     {% endif %}
                 </div>
 
-                <!-- Footer Timestamp -->
+                <!-- Footer Timestamp e Botão de Detalhes -->
                 <div class="pt-2 border-top text-muted small d-flex justify-content-between align-items-center">
                     <span>Ordem: #{{ m.ordem }}</span>
-                    <span><i class="bi bi-arrow-repeat me-1"></i>Scada Atualizado</span>
+                    <a href="{% url 'production:machine_detail' m.id %}" class="btn btn-sm btn-outline-info rounded-pill px-3 py-1 fw-medium">
+                        <i class="bi bi-clock-history me-1"></i> Detalhes & Histórico
+                    </a>
                 </div>
             </div>
         </div>

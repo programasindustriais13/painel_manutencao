@@ -1969,3 +1969,47 @@ Resultados da Implementação e QA:
 4. Suíte de Testes Automatizados:
    - 34/34 testes do app `production` e 57/57 da suíte global aprovados sem falhas (100% OK).
    - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes / exit code 0).
+
+
+49. SPEC 05 — COLETOR, HISTÓRICO E DETALHE DAS MÁQUINAS (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTADA E APROVADA NO QA
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05_COLETOR_HISTORICO_DETALHE.md
+- production/management/commands/collect_production_scada.py
+- production/migrations/0004_productionmachinestate_productiondowntimeevent.py
+- production/templates/production/machine_detail.html
+
+Arquivos modificados:
+- production/models.py (ProductionMachineState e ProductionDowntimeEvent)
+- production/routers.py (LOCAL_MANAGED_MODELS atualizado)
+- production/services.py (máquina de estados idempotente e estatísticas de detalhe)
+- production/views.py (view machine_detail)
+- production/urls.py (rota maquinas/<int:pk>/)
+- production/templates/production/dashboard.html (botão de navegação para detalhes no card)
+- production/tests.py (27 testes em production / 50 suíte global)
+- implementation_plan.md
+- Instrucoes.txt
+
+Resultados da Implementação e QA:
+1. Modelos Locais no Banco Default (`production/models.py`):
+   - `ProductionMachineState`: Estado ativo (Produzindo, Parada, Sem comunicação, Dado desatualizado), timestamp inicial e motivo.
+   - `ProductionDowntimeEvent`: Histórico de paradas com início, fim, duração em segundos, motivo geral e snapshot do status.
+   - Roteamento exclusivo no banco `default` confirmado no `ScadaRouter`. Migration `0004` aditiva aplicada no `default`.
+2. Máquina de Estados Idempotente (`ProductionStateService`):
+   - Transição `Produzindo -> Parada`: Abre 1 evento de parada.
+   - Estado `Continua Parada`: Mantém o evento aberto sem duplicar.
+   - Transição `Parada -> Produzindo`: Fecha evento aberto, calcula a duração em segundos.
+   - Falha de Comunicação / Stale: Preserva o último estado industrial válido sem abrir ou fechar eventos.
+   - Retomada pós-crash: Recupera eventos abertos e continua cronômetro.
+3. Coletor de Background (`collect_production_scada`):
+   - Comando CLI com opções `--once` e `--interval`.
+   - Lock de arquivo cross-process (`scada_collector.lock`) impede instâncias simultâneas e libera lock se o processo for encerrado.
+   - Encerramento limpo de conexões de banco (`connections.close_all()`) a cada ciclo.
+4. Tela de Detalhe da Máquina (`/producao/maquinas/<id>/`):
+   - Exibe nome, setor, estado atual, cavidades, metas, última leitura e comunicação.
+   - Filtros por data (`hoje`, `7d`, `30d`, intervalo customizado) com KPIs do período (tempo total parado, quantidade, maior parada, duração média) considerando eventos parcialmente sobrepostos.
+5. Suíte de Testes Automatizados:
+   - 27/27 testes do app `production` e 50/50 da suíte global aprovados com 100% de sucesso.
+   - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes).

@@ -24,6 +24,8 @@ class ScadaRouter:
         "productioncavityconfig",
         "productionglobalparameter",
         "productionglobalalarm",
+        "productionmachinestate",
+        "productiondowntimeevent",
     }
 
     def db_for_read(self, model, **hints):
