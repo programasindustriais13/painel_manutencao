@@ -1824,3 +1824,85 @@ E. QA e Suíte de Testes:
 - 23/23 testes unitários aprovados com sucesso.
 - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações).
 - Smoke tests locais com Waitress e DEBUG=False validados com sucesso.
+
+
+43. ETAPA 0 — AUDITORIA DO MÓDULO DE PRODUÇÃO E SCADA-LTS (2026-07-29)
+--------------------------------------------------------------------------------
+Auditoria de estado atual do app `production` e mapeamento de dependências com o Scada-LTS.
+
+Resultado: APROVADO COM BLOQUEIOS
+- Base do app `production`, rotas `/producao/`, login condicional e permissões validadas.
+- Bloqueio Arquitetural Identificado: `ScadaRouter` (`production/routers.py`) atualmente roteia
+  todos os models do app `production` para `scada` e proíbe migrações para todo o app.
+- Ação Obrigatória para SPEC 03: Ajustar `ScadaRouter` para que modelos gerenciados (`managed=True`)
+  do app `production` rotem para o banco `default` e permitam migrações aditivas.
+- Mapeado o índice sequencial das SPECs (03 a 08) e elaborada a proposta de arquitetura.
+- Nenhuma alteração de código ou migration foi realizada nesta etapa.
+- 23/23 testes unitários aprovados via `.venv\Scripts\python.exe manage.py test`.
+
+
+44. SPEC 03 — CADASTRO LOCAL DE XIDs, CAVIDADES, PARÂMETROS E ALARMES NO ADMIN (2026-07-29)
+--------------------------------------------------------------------------------
+STATUS: REPROVADA NA AUDITORIA / SUBSTITUÍDA PELA SPEC 03A
+
+Resultados da Implementação Inicial:
+A primeira execução da SPEC 03 foi reprovada na auditoria e QA por conter não-determinismo no router, chamada incorreta nos testes de migração, falta de constraints de unicidade nas cavidades e limite stale, e ausência do arquivo de inicialização de pacote (`__init__.py`) que impedia a descoberta global dos testes de produção via `manage.py test`.
+
+
+45. SPEC 03A — CORREÇÃO DO ROUTER, TESTES E INTEGRIDADE DE CONFIGURAÇÃO (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTADA
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_03A_CORRECAO_ROUTER_TESTES_INTEGRIDADE.md
+- production/__init__.py
+- production/migrations/0002_alter_productionmachineconfig_stale_limit_seconds_and_more.py
+
+Arquivos modificados:
+- production/routers.py
+- production/models.py
+- production/admin.py
+- production/tests.py
+- Instrucoes.txt
+
+Resultados das Correções e QA:
+1. `ScadaRouter`:
+   - Mapeada lista estrita de modelos gerenciados locais por model_name em minúsculo:
+     `productionmachineconfig`, `productioncavityconfig`, `productionglobalparameter`, `productionglobalalarm`.
+   - `db_for_read`: Retorna 'default' para modelos gerenciados locais e 'scada' para não gerenciados de produção.
+   - `db_for_write`: Retorna 'default' para modelos gerenciados locais. Modelos não gerenciados do Scada são categoricamente BLOQUEADOS com `PermissionError`.
+   - `allow_migrate`: Retorna False para qualquer app em `db == 'scada'`. Retorna True apenas no banco 'default' para os 4 modelos gerenciados locais. Trata corretamente chamadas com e sem hints['model'] e dicionários de hints posicionais.
+   - `allow_relation`: Permite relação entre `maintenance.Machine` e `ProductionMachineConfig` no banco default e bloqueia qualquer relação envolvendo modelo não gerenciado do Scada.
+2. Integridade e Constraints nos Models (`production/models.py`):
+   - Adicionadas `UniqueConstraint`s independentes em `ProductionCavityConfig`:
+     * `uniq_prod_cavity_machine_nome` (machine_config + nome)
+     * `uniq_prod_cavity_machine_ordem` (machine_config + ordem)
+   - Adicionado `MinValueValidator(1)` e `CheckConstraint` `chk_prod_machine_stale_limit_gte_1` em `ProductionMachineConfig` para `stale_limit_seconds >= 1`.
+3. Migration Aditiva `0002`:
+   - Auditoria de duplicidades no banco local executada antes da aplicação: 0 duplicidades encontradas.
+   - Backup do banco SQLite local realizado (`db.sqlite3.bak_spec03a`).
+   - Migration `0002` gerada e aplicada com sucesso exclusivamente no banco `default`.
+   - O banco `scada` permaneceu 100% isolado (sem escritas ou migrações).
+4. Descoberta e Execução da Suíte de Testes:
+   - Adicionado `production/__init__.py` corrigindo a descoberta de testes global.
+   - Suíte completa executada com sucesso em todas as 4 modalidades de comando (`production.tests`, `production`, `maintenance production`, `manage.py test`), com total de 47 testes aprovados (23 maintenance + 24 production). 0 falhas, 0 erros, 0 skipped.
+
+
+46. CHECKPOINT E PENDÊNCIA ARQUITETURAL DAS SPECS 03 E 03A (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: APROVADO E FECHADO
+
+Regras e Pendências Registradas:
+1. Pendência Arquitetural — `LOCAL_MANAGED_MODELS`:
+   - O `ScadaRouter` (`production/routers.py`) utiliza a constante `LOCAL_MANAGED_MODELS` para identificar quais modelos do app `production` gravam e migram no banco `default`.
+   - Toda SPEC futura que criar um novo model local `managed=True` no app `production` DEVERÁ incluir seu nome em minúsculo em `LOCAL_MANAGED_MODELS`.
+   - Isso será OBRIGATÓRIO principalmente na futura SPEC 06 (modelos locais para estado atual e histórico de paradas). Sem essa inclusão, o router tratará o novo model como pertencente ao Scada e bloqueará sua escrita.
+   - Nenhum modelo da SPEC 04 ou SPEC 06 foi criado nesta execução.
+
+2. Declaração Técnica sobre o Banco Scada:
+   - A tentativa de conexão ao alias `scada` no ambiente local falhou por falha de autenticação (MySQL 1045). Essa falha não deve ser interpretada como prova arquitetural de isolamento.
+   - O isolamento foi validado rigorosamente através de testes unitários do `ScadaRouter`, garantindo bloqueio de escrita e migração em modelos Scada.
+   - Nenhuma operação foi realizada na base Scada.
+   - A proteção definitiva em produção dependerá de um usuário MySQL configurado exclusivamente com permissão de `SELECT`.
+   - Chamadas explícitas usando `.using("scada")` jamais devem ser utilizadas para escrita.
+   - O comando `migrate --database=scada` não deve ser executado sob nenhuma hipótese.
