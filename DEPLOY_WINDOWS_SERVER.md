@@ -1,264 +1,228 @@
-# 📘 Manual de Implantação no Windows Server 2019 — Subdomínio Manutenção
+# 📘 Manual de Implantação no Windows Server 2019 — Subdomínio Manutenção e Módulo Produção / Scada
 
-Este manual descreve o procedimento passo a passo e seguro para realizar a implantação e a manutenção contínua do **Painel de Manutenção Industrial** no Windows Server 2019 sob o subdomínio `manutencao.freedom.dev.br`.
+Este manual descreve o procedimento passo a passo e seguro para realizar a implantação, hardening, serviços Windows e rollback do **Painel de Manutenção Industrial** e do **Módulo de Produção / Scada** no Windows Server 2019 sob o subdomínio `manutencao.freedom.dev.br`.
 
 > [!IMPORTANT]
-> **ISOLAMENTO TOTAL DO SISTEMA SST:**
-> O sistema SST (`sst.freedom.dev.br`) já se encontra em produção no mesmo servidor. Este procedimento **NÃO PODE** alterar, pausar, sobrescrever ou reutilizar:
-> - O processo ou a porta do SST;
-> - A rota `sst.freedom.dev.br` ou as regras do Cloudflare Tunnel do SST;
-> - A pasta, o `.env` ou o banco de dados do SST.
+> **ISOLAMENTO TOTAL DO SISTEMA SST E SCADA-LTS:**
+> - O sistema SST (`sst.freedom.dev.br`) já se encontra em produção no mesmo servidor. Este procedimento **NÃO PODE** alterar ou impactar o SST.
+> - O banco MySQL do Scada-LTS é uma fonte externa de telemetria **SOMENTE LEITURA**. Nenhuma operação de escrita, criação ou alteração de tabela deve ser executada no MySQL do Scada.
 
 ---
 
 ## 📋 Pré-requisitos do Servidor
-- **Sistema Operacional:** Windows Server 2019
-- **Python Oficial:** 3.11.3 (instalado e disponível no sistema)
-- **Node.js:** v20.x ou superior (para o microserviço de WhatsApp)
-- **Cloudflare Tunnel (`cloudflared`):** Instalado e operacional para o SST
+
+- **Sistema Operacional:** Windows Server 2019.
+- **Python Oficial:** 3.11.3 (instalado e atrelado à `.venv` na raiz do projeto).
+- **Node.js:** v20.x ou superior (para o microserviço de WhatsApp).
+- **Cloudflare Tunnel (`cloudflared`):** Operacional no servidor.
 - **Portas Isoladas:**
-  - `SST`: Porta dedicada do SST (ex: 8800 ou similar)
-  - `Manutenção Django (Waitress)`: `127.0.0.1:8900`
+  - `Waitress WSGI (Manutenção/Produção)`: `127.0.0.1:8900`
   - `WhatsApp Microservice`: `127.0.0.1:3000`
+  - `Scada-LTS MySQL`: `127.0.0.1:3306`
 
 ---
 
-## 🛠️ Fase A — Auditoria do Servidor (Pré-Implantação)
+## 🔐 1. Hardening do Usuário MySQL Scada-LTS (Somente Leitura)
 
-1. **Verificar a versão do Python:**
-   ```powershell
-   py -3.11 --version
-   # Deve retornar: Python 3.11.3
-   ```
+O administrador do banco de dados (DBA) do Scada-LTS deve executar no MySQL os seguintes comandos para criar um usuário exclusivo de leitura:
 
-2. **Navegar até a pasta do projeto de Manutenção:**
-   ```powershell
-   cd "C:\Caminho\Do\Projeto\Painel_Manutencao"
-   ```
+```sql
+-- 1. Criar usuário exclusivo (substitua 'SENHA_FORTE_LEITURA_AQUI' por uma senha segura)
+CREATE USER 'scada_monitor_ro'@'127.0.0.1' IDENTIFIED BY 'SENHA_FORTE_LEITURA_AQUI';
 
-3. **Verificar o status do Git:**
-   ```powershell
-   git status
-   ```
-   > [!WARNING]
-   > Se o workspace contiver alterações não salvas ou arquivos modificados manualmente no servidor, **PARAR A IMPLANTAÇÃO** até que o ambiente esteja limpo.
+-- 2. Conceder permissão EXCLUSIVA de SELECT no banco scadalts
+GRANT SELECT ON scadalts.* TO 'scada_monitor_ro'@'127.0.0.1';
 
-4. **Verificar a disponibilidade das portas:**
-   ```powershell
-   Get-NetTCPConnection -LocalPort 8900 -ErrorAction SilentlyContinue
-   Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue
-   ```
-   Garantir que a porta `8900` está livre e que a porta `3000` pertence exclusivamente ao microserviço WhatsApp da Manutenção.
+-- 3. Atualizar privilégios
+FLUSH PRIVILEGES;
 
-5. **Identificar o processo ativo do SST e do Cloudflare:**
-   Confirmar que o processo do SST continua rodando normalmente em sua porta própria sem sofrer interferência.
+-- 4. Verificar se a permissão foi concedida corretamente (DEVE conter APENAS 'GRANT SELECT')
+SHOW GRANTS FOR 'scada_monitor_ro'@'127.0.0.1';
+```
 
-6. **Realizar Backup Preventivo:**
-   Antes de atualizar o código, faça cópia de segurança dos seguintes itens para uma pasta de backup fora do projeto:
-   - `db.sqlite3` (ou banco MySQL)
-   - Pasta de mídia `media/`
-   - Arquivo de configuração `.env`
-   - Credenciais do WhatsApp em `whatsapp_service/auth_info_baileys/`
+> [!WARNING]
+> **REGRAS DE SEGURANÇA:**
+> - NÃO conceder permissões `INSERT`, `UPDATE`, `DELETE`, `CREATE`, `ALTER`, `DROP`, `EXECUTE` ou `GRANT OPTION`.
+> - NÃO conectar como `root` no alias `scada`.
+> - NENHUMA senha real deve ser commitada no repositório Git ou exposta em documentos versionados.
 
 ---
 
-## 🔄 Fase B — Atualização do Código via Git
+## 🛠️ 2. Auditoria e Script de Preflight (Fase A/B)
 
-1. **Buscar as últimas alterações do repositório:**
+Antes de qualquer alteração no servidor, execute o script PowerShell de auditoria **somente leitura**:
+
+```powershell
+.\scripts\preflight_production_scada.ps1
+```
+
+O preflight verifica sem alterar nada no servidor:
+- Versão do Python 3.11 no `.venv`.
+- Status do Git (branch `feature/producao-scada` / commit atual).
+- Presença das variáveis obrigatórias no `.env`.
+- Conectividade com o banco default e Scada.
+- Status da porta 8900 (Waitress) e Cloudflare Tunnel.
+- Existência de backup preventivo.
+- Existência ou ausência do serviço do coletor.
+
+---
+
+## 💾 3. Procedimento de Backup Preventivo
+
+Antes de executar migrações ou atualizar o código em produção:
+
+1. **Parar temporariamente o serviço Waitress (se ativo):**
+   ```powershell
+   nssm stop PainelManutencaoWSGI
+   ```
+
+2. **Criar pasta de backup com timestamp:**
+   ```powershell
+   $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+   $BackupDir = "C:\Backups_Painel_Manutencao\backup_$Timestamp"
+   New-Item -ItemType Directory -Path $BackupDir -Force
+   ```
+
+3. **Copiar arquivos críticos (banco default, .env, mídia, sessões WhatsApp):**
+   ```powershell
+   Copy-Item -Path "db.sqlite3" -Destination "$BackupDir\db.sqlite3"
+   Copy-Item -Path ".env" -Destination "$BackupDir\.env"
+   Copy-Item -Path "media" -Destination "$BackupDir\media" -Recurse
+   Copy-Item -Path "whatsapp_service\auth_info_baileys" -Destination "$BackupDir\auth_info_baileys" -Recurse -ErrorAction SilentlyContinue
+   ```
+
+4. **Validar a integridade da cópia:**
+   Confirmar que os tamanhos dos arquivos conferem antes de prosseguir.
+
+---
+
+## 🔄 4. Atualização de Código e Migrações (Somente no Banco Default)
+
+1. **Obter atualização do Git:**
    ```powershell
    git fetch origin
+   git checkout feature/producao-scada
+   git pull origin feature/producao-scada
    ```
 
-2. **Verificar o commit a ser implantado:**
+2. **Instalar dependências no `.venv` existente:**
    ```powershell
-   git log -n 5 --oneline
-   ```
-
-3. **Realizar a atualização controlada:**
-   ```powershell
-   git checkout main
-   git pull origin main
-   ```
-
-> [!CAUTION]
-> O Git jamais deve sobrescrever:
-> - O arquivo `.env` de produção
-> - O banco de dados (`db.sqlite3`)
-> - A pasta de mídia (`media/`)
-> - A pasta do ambiente virtual (`.venv`)
-> - As sessões autenticadas do WhatsApp (`auth_info_baileys/`)
-
----
-
-## 🐍 Fase C — Preparação do Ambiente Python no Servidor
-
-1. **Garantir a utilização do ambiente virtual `.venv`:**
-   Caso ainda não exista no servidor:
-   ```powershell
-   py -3.11 -m venv .venv
-   ```
-
-2. **Instalar/Atualizar as dependências no `.venv`:**
-   ```powershell
-   .\.venv\Scripts\python.exe -m pip install --upgrade pip
    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
 
-3. **Executar a verificação do Django:**
+3. **Verificar integridade do Django:**
    ```powershell
    .\.venv\Scripts\python.exe manage.py check
    ```
 
-4. **Analisar Migrações (Sem executar `migrate` sem autorização):**
+4. **Simular plano de migração no banco `default`:**
    ```powershell
-   .\.venv\Scripts\python.exe manage.py showmigrations
-   .\.venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+   .\.venv\Scripts\python.exe manage.py migrate --plan --database=default
    ```
-   > [!IMPORTANT]
-   > A execução de `migrate` no banco de produção exige autorização expressa, backup atualizado e confirmação prévia do banco utilizado.
 
-5. **Coletar arquivos estáticos para o WhiteNoise:**
+5. **Aplicar migrações EXCLUSIVAMENTE no banco `default`:**
+   ```powershell
+   .\.venv\Scripts\python.exe manage.py migrate --database=default
+   ```
+   > [!CAUTION]
+   > NUNCA executar `python manage.py migrate --database=scada`.
+
+6. **Coletar arquivos estáticos:**
    ```powershell
    .\.venv\Scripts\python.exe manage.py collectstatic --noinput
    ```
 
 ---
 
-## ⚙️ Fase D — Configuração do Arquivo `.env` de Produção
+## ⚙️ 5. Configuração dos Serviços do Windows (Waitress e Coletor Scada)
 
-Garantir que o arquivo `.env` na raiz do projeto contenha as chaves abaixo com os valores reais do servidor (sem expor segredos no Git):
+Utilizar o **NSSM (Non-Sucking Service Manager)** para registrar os dois serviços independentes:
 
-```env
-# Configurações Django
-DJANGO_SECRET_KEY=SUA_CHAVE_SECRETA_REAL_E_FORTE_AQUI
-DJANGO_DEBUG=False
-DJANGO_ALLOWED_HOSTS=manutencao.freedom.dev.br,127.0.0.1,localhost
-DJANGO_CSRF_TRUSTED_ORIGINS=https://manutencao.freedom.dev.br
-
-# Suporte a Proxy HTTPS (Cloudflare)
-DJANGO_USE_X_FORWARDED_HOST=True
-DJANGO_TRUST_PROXY_SSL_HEADER=True
-DJANGO_SECURE_SSL_REDIRECT=False
-DJANGO_SESSION_COOKIE_SECURE=True
-DJANGO_CSRF_COOKIE_SECURE=True
-DJANGO_SECURE_HSTS_SECONDS=0
-DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS=False
-DJANGO_SECURE_HSTS_PRELOAD=False
-
-# Configurações do Waitress WSGI
-WAITRESS_HOST=127.0.0.1
-WAITRESS_PORT=8900
-WAITRESS_THREADS=4
-
-# Configurações do Banco de Dados Principal
-DATABASE_ENGINE=django.db.backends.sqlite3
-DATABASE_NAME=db.sqlite3
-
-# Configurações do Banco SCADA
-SCADA_DB_ENGINE=django.db.backends.mysql
-SCADA_DB_NAME=scadalts
-SCADA_DB_USER=seu_usuario_scada
-SCADA_DB_PASSWORD=sua_senha_scada
-SCADA_DB_HOST=127.0.0.1
-SCADA_DB_PORT=3306
-
-# Microserviço WhatsApp
-WHATSAPP_SERVICE_URL=http://127.0.0.1:3000/send
-```
-
----
-
-## 🚀 Fase E — Inicialização Manual e Validação
-
-1. **Executar o script de inicialização:**
-   ```powershell
-   .\scripts\start_production.ps1
-   ```
-
-2. **Validação das Rotas Locais (Smoke Tests):**
-   Em um navegador no próprio servidor ou via `curl` / `Invoke-WebRequest`:
-   - `http://127.0.0.1:8900/login/` → Deve retornar HTTP 200 e carregar o CSS/JS.
-   - `http://127.0.0.1:8900/management/` → Deve redirecionar para login (HTTP 302).
-   - `http://127.0.0.1:8900/dashboard/` → Deve redirecionar para login (HTTP 302).
-   - `http://127.0.0.1:8900/admin/login/` → Deve retornar HTTP 200.
-
-3. **Verificar os arquivos estáticos:**
-   Confirmar no navegador local que estilos, ícones e fontes carregam perfeitamente sem erros 404.
-
----
-
-## 🌐 Fase F — Configuração do Cloudflare Tunnel e Arquitetura de Mídia Protegida
-
-> [!NOTE]
-> **ARQUITETURA CONSOLIDADA SEM IIS / ARR / URL REWRITE:**
-> O projeto utiliza arquitetura simplificada diretamente com o Cloudflare Tunnel e Waitress. Não é necessário instalar ou configurar o IIS, URL Rewrite ou ARR no servidor nesta etapa. O IIS e a porta 80 do servidor permanecem intactos atendendo outros serviços (como o Scada).
-
-### Arquitetura de Roteamento:
-```text
-Cloudflare Tunnel
-    → http://127.0.0.1:8900
-        → Waitress WSGI
-            ├── Django
-            ├── WhiteNoise (somente para estáticos em /static/)
-            └── View autenticada (para anexos privados em /anexos/alocacoes/<id>/)
-```
-
-- **Arquivos Estáticos:** Servidos pelo WhiteNoise via `staticfiles/`.
-- **Anexos de Mídia:** Servidos exclusivamente pela view autenticada e autorizada `/anexos/alocacoes/<id>/`.
-- **Rota `/media/` pública:** Permanece desativada (retornando HTTP 404 em produção com `DEBUG=False`), garantindo que registros internos da fábrica não fiquem expostos de forma anônima.
-
-### Passo a Passo de Configuração do Cloudflare Tunnel:
-1. **Acessar o painel do Cloudflare Zero Trust / Tunnels.**
-2. **Localizar o túnel existente** que atende a rede da empresa.
-3. **Adicionar uma nova regra de Ingress (Public Hostname):**
-   - **Subdomínio:** `manutencao`
-   - **Domínio:** `freedom.dev.br`
-   - **Hostname completo:** `manutencao.freedom.dev.br`
-   - **Tipo de Serviço:** `HTTP`
-   - **URL de Origem:** `127.0.0.1:8900`
-4. **Salvar a configuração do Ingress.**
-5. **Testar o acesso público:**
-   Acessar `https://manutencao.freedom.dev.br` no navegador externo.
-6. **Confirmar a integridade do SST:**
-   Acessar `https://sst.freedom.dev.br` para garantir que o serviço parceiro não foi afetado.
-
----
-
-## 🛠️ Fase G — Configuração de Serviço em Segundo Plano (Windows Service)
-
-Após os testes manuais serem 100% aprovados, configure a execução contínua via Gerenciador de Serviços do Windows utilizando a opção aprovada pela equipe de infraestrutura (ex: **NSSM - Non-Sucking Service Manager** ou **WinSW**):
-
-### Exemplo com NSSM:
+### 5.1 Serviço Web WSGI (Waitress)
 ```powershell
-nssm install PainelManutencaoDjango "C:\Caminho\Do\Projeto\.venv\Scripts\python.exe" "-m waitress --host=127.0.0.1 --port=8900 --threads=4 maintenance_project.wsgi:application"
-nssm set PainelManutencaoDjango AppDirectory "C:\Caminho\Do\Projeto\Painel_Manutencao"
-nssm set PainelManutencaoDjango Start SERVICE_AUTO_START
-nssm start PainelManutencaoDjango
+nssm install PainelManutencaoWSGI "C:\Caminho\Do\Projeto\.venv\Scripts\python.exe" "-m waitress --host=127.0.0.1 --port=8900 --threads=4 maintenance_project.wsgi:application"
+nssm set PainelManutencaoWSGI AppDirectory "C:\Caminho\Do\Projeto"
+nssm set PainelManutencaoWSGI Start SERVICE_AUTO_START
+nssm start PainelManutencaoWSGI
 ```
+
+### 5.2 Serviço do Coletor Scada Background
+```powershell
+nssm install ScadaCollectorService "powershell.exe" "-ExecutionPolicy Bypass -File C:\Caminho\Do\Projeto\scripts\start_scada_collector.ps1"
+nssm set ScadaCollectorService AppDirectory "C:\Caminho\Do\Projeto"
+nssm set ScadaCollectorService Start SERVICE_AUTO_START
+nssm set ScadaCollectorService AppExit Default Restart
+nssm start ScadaCollectorService
+```
+
+### Comandos de Gestão dos Serviços:
+- **Verificar status:** `nssm status ScadaCollectorService`
+- **Parar serviço:** `nssm stop ScadaCollectorService`
+- **Iniciar serviço:** `nssm start ScadaCollectorService`
+- **Remover serviço:** `nssm remove ScadaCollectorService confirm`
 
 ---
 
-## ↺ Fase H — Plano de Rollback de Emergência
+## 📑 6. Logging e Rotação de Logs
 
-Caso ocorra alguma falha crítica durante a publicação:
+O coletor Scada registra seus logs de forma dedicada em UTF-8 fora do Git:
+- **Caminho padrão:** `logs/scada_collector.log` (ou configurado em `SCADA_COLLECTOR_LOG_FILE`).
+- **Política de Rotação:** `RotatingFileHandler` com 5 MB por arquivo e máximo de 5 arquivos de backup.
+- **Nível:** `INFO` em produção.
+- **Informações registradas:** Início do serviço, contagem de máquinas processadas por ciclo, falhas de conexão sem credenciais, retorno de comunicação e encerramento limpo.
 
-1. **Parar o serviço da Manutenção:**
+---
+
+## 🧪 7. Smoke Tests Pós-Deploy
+
+Após a inicialização dos serviços, executar as seguintes verificações em produção:
+
+1. **Acesso à Manutenção:**
+   - `http://127.0.0.1:8900/login/` → HTTP 200.
+   - `http://127.0.0.1:8900/management/` → HTTP 302/200.
+2. **Acesso ao Módulo de Produção:**
+   - Login com usuário `Liderança de Produção`.
+   - `/producao/` → Carrega cards de máquinas, cavidades, parâmetros e alarmes globais.
+   - `/producao/maquinas/<id>/` → Carrega cronômetro persistido e histórico de paradas.
+3. **Leitura e Coleta do Scada:**
+   - Verificar se as máquinas atualizam seus valores do Scada.
+   - Verificar logs em `logs/scada_collector.log`.
+   - Garantir que NENHUMA operação de escrita foi tentada no banco `scada`.
+4. **Verificação de Concorrência:**
+   - Executar `python manage.py collect_production_scada --once` em um terminal paralelo e confirmar a mensagem de bloqueio por segunda instância.
+
+---
+
+## ↺ 8. Plano de Rollback de Emergência
+
+Caso ocorra falha crítica em produção:
+
+1. **Parar o serviço do coletor Scada:**
    ```powershell
-   nssm stop PainelManutencaoDjango
-   # Ou encerrar o processo no terminal do Waitress
+   nssm stop ScadaCollectorService
    ```
 
-2. **Remover/Desativar a rota do Cloudflare Tunnel:**
-   No painel do Cloudflare, desative ou remova temporariamente o hostname `manutencao.freedom.dev.br`.  
-   *NUNCA altere ou remova a rota do SST.*
-
-3. **Reverter o repositório Git para o commit anterior estável:**
+2. **Parar o serviço do Waitress:**
    ```powershell
-   git checkout <COMMIT_ANTERIOR_HASH>
+   nssm stop PainelManutencaoWSGI
    ```
 
-4. **Restaurar o Banco de Dados e a Mídia (se necessário):**
-   Restaurar a cópia de backup do `db.sqlite3` ou do banco MySQL salva na Fase A.
+3. **Reverter o código ao commit anterior estável:**
+   ```powershell
+   git checkout <HASH_DO_COMMIT_ANTERIOR>
+   ```
 
-5. **Confirmar estabilidade dos demais serviços:**
-   Verificar que `sst.freedom.dev.br`, o SCADA e o microserviço de WhatsApp continuam operando normalmente.
+4. **Restaurar o Banco Default (se necessário):**
+   ```powershell
+   Copy-Item -Path "$BackupDir\db.sqlite3" -Destination "db.sqlite3" -Force
+   ```
+
+5. **Reiniciar o serviço do Waitress:**
+   ```powershell
+   nssm start PainelManutencaoWSGI
+   ```
+
+6. **Validar acesso ao sistema de Manutenção:**
+   Confirmar que o painel de manutenção `/management/` funciona normalmente.
+
+7. **Documentar a ocorrência em `Instrucoes.txt`.**

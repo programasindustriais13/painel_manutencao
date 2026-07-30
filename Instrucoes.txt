@@ -2013,3 +2013,39 @@ Resultados da Implementação e QA:
 5. Suíte de Testes Automatizados (Restaurada e Expandida):
    - 44/44 testes do app `production` e 67/67 da suíte global aprovados com 100% de sucesso.
    - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes).
+
+==============================================================================
+SPEC 06 — HARDENING, SERVIÇO WINDOWS, DEPLOY E ROLLBACK (FASE A — PREPARAÇÃO LOCAL)
+Data: 2026-07-30 | Status: Fase A Concluída (Aguardando Gate Humano para Fase B)
+==============================================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_06_HARDENING_DEPLOY_ROLLBACK.md
+- scripts/start_scada_collector.ps1
+- scripts/preflight_production_scada.ps1
+
+Arquivos modificados:
+- maintenance_project/settings.py (connect_timeout no scada, loggers de produção e coletor)
+- .env.example (variáveis do scada e coletor com valores fictícios)
+- .gitignore (logs/, *.log, scada_collector.lock)
+- production/management/commands/collect_production_scada.py (logger dedicado 'production.collector', mensagens estruturadas, contagem de máquinas por ciclo e liberação de lock)
+- DEPLOY_WINDOWS_SERVER.md (comandos SQL para usuário MySQL somente leitura, serviço NSSM, backup, preflight e runbook de rollback)
+- production/tests.py (71 testes globais aprovados com 100% de sucesso)
+- Instrucoes.txt
+
+Resultados da Implementação da Fase A:
+1. Hardening de Credenciais e Configuração:
+   - Sensível removido de settings.py e padronizado em variáveis de ambiente.
+   - Timeout de conexão do Scada (`SCADA_DB_CONNECT_TIMEOUT`) configurado.
+   - `.env.example` atualizado com valores totalmente ilustrativos.
+2. Documentação de Usuário MySQL Read-Only:
+   - Instruções SQL com `CREATE USER`, `GRANT SELECT ON scadalts.*` e `SHOW GRANTS` adicionadas em `DEPLOY_WINDOWS_SERVER.md`.
+3. Coletor Hardened (`collect_production_scada`):
+   - Registrador `production.collector` gravando em `logs/scada_collector.log` via `RotatingFileHandler` (UTF-8, 5MB).
+   - Bloqueio de 2ª instância, liberação limpa de lock e registro de contagem de máquinas por ciclo sem expor senhas.
+4. Scripts de Automação Windows:
+   - `scripts/start_scada_collector.ps1`: Executa o coletor via `.venv` com Python 3.11 de forma isolada do Waitress.
+   - `scripts/preflight_production_scada.ps1`: Auditoria 100% somente leitura para validação pré-deploy.
+5. Suíte de Testes (71/71 Aprovados):
+   - Criado `ProductionHardeningAndInfrastructureTestCase` testando ausência de segredos, logging, scripts de automação, concorrência e isolamento web.
+   - Suíte global passou 100% (71/71 testes).

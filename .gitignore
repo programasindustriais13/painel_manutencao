@@ -9,10 +9,13 @@ db.sqlite3
 db.sqlite3-journal
 db.sqlite3.bak*
 
-# Media / Uploaded files / Static collect
+# Media / Uploaded files / Static collect / Logs & Locks
 media/
 alocacoes/
 staticfiles/
+logs/
+*.log
+scada_collector.lock
 
 # Environments
 .env

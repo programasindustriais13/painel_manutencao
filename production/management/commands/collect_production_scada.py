@@ -8,7 +8,7 @@ from django.db import connections
 from django.conf import settings
 from production.services import ProductionStateService
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("production.collector")
 
 
 class CrossProcessLock:
@@ -62,7 +62,7 @@ class CrossProcessLock:
 
 
 class Command(BaseCommand):
-    help = "Coletor continuo de dados do Scada-LTS e gerenciador da maquina de estados de producao."
+    help = "Coletor contínuo de dados do Scada-LTS e gerenciador da máquina de estados de produção."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -74,7 +74,7 @@ class Command(BaseCommand):
             "--interval",
             type=int,
             default=5,
-            help="Intervalo em segundos entre cada ciclo de coleta (padrao: 5s)."
+            help="Intervalo em segundos entre cada ciclo de coleta (padrão: 5s)."
         )
 
     def handle(self, *args, **options):
@@ -83,19 +83,20 @@ class Command(BaseCommand):
 
         lock = CrossProcessLock()
         if not lock.acquire():
-            self.stdout.write(
-                self.style.WARNING("Outro coletor de produção já está em execução. Encerrando.")
-            )
+            msg = "Outro coletor de produção já está em execução. Tentativa de segunda instância bloqueada."
+            logger.warning(msg)
+            self.stdout.write(self.style.WARNING(msg))
             return
 
-        self.stdout.write(
-            self.style.SUCCESS(f"Iniciando Coletor Scada Produção (intervalo: {interval}s, once: {once})")
-        )
+        start_msg = f"Iniciando Coletor Scada Produção (PID {os.getpid()}, intervalo: {interval}s, once: {once})"
+        logger.info(start_msg)
+        self.stdout.write(self.style.SUCCESS(start_msg))
 
         running = True
 
         def signal_handler(signum, frame):
             nonlocal running
+            logger.info("Sinal de interrupção recebido. Encerrando coletor...")
             self.stdout.write(self.style.WARNING("\nSinal de interrupção recebido. Encerrando coletor..."))
             running = False
 
@@ -106,11 +107,14 @@ class Command(BaseCommand):
             while running:
                 start_time = time.time()
                 try:
-                    ProductionStateService.process_scada_cycle()
+                    from production.models import ProductionMachineConfig
+                    scada_vals = ProductionStateService.process_scada_cycle()
+                    machines_count = ProductionMachineConfig.objects.count()
+                    logger.info(f"Ciclo concluído: {machines_count} máquina(s) processada(s).")
                     self.stdout.write(".", ending="")
                     self.stdout.flush()
                 except Exception as e:
-                    logger.warning(f"Erro transitório no ciclo do coletor Scada: {type(e).__name__}")
+                    logger.warning(f"Falha de conexão / erro transitório no ciclo do coletor Scada: {type(e).__name__}")
 
                 connections.close_all()
 
@@ -119,8 +123,7 @@ class Command(BaseCommand):
 
                 elapsed = time.time() - start_time
                 sleep_time = max(0.1, interval - elapsed)
-                
-                # Sleep fragmentado para responder rapidamente a sinais de parada
+
                 for _ in range(int(sleep_time * 10)):
                     if not running:
                         break
@@ -128,4 +131,6 @@ class Command(BaseCommand):
 
         finally:
             lock.release()
-            self.stdout.write(self.style.SUCCESS("\nColetor Scada encerrado com sucesso."))
+            exit_msg = "Coletor Scada encerrado com sucesso."
+            logger.info(exit_msg)
+            self.stdout.write(self.style.SUCCESS(f"\n{exit_msg}"))

@@ -184,11 +184,12 @@ DATABASES = {
         "ENGINE": os.environ.get("SCADA_DB_ENGINE", "django.db.backends.mysql"),
         "NAME": os.environ.get("SCADA_DB_NAME", "scadalts"),
         "USER": os.environ.get("SCADA_DB_USER", "scada_monitor_ro"),
-        "PASSWORD": os.environ.get("SCADA_DB_PASSWORD", "SENHA_FORTE_LEITURA"),
+        "PASSWORD": os.environ.get("SCADA_DB_PASSWORD", ""),
         "HOST": os.environ.get("SCADA_DB_HOST", "127.0.0.1"),
         "PORT": os.environ.get("SCADA_DB_PORT", "3306"),
         "OPTIONS": {
             "charset": "utf8mb4",
+            "connect_timeout": int(os.environ.get("SCADA_DB_CONNECT_TIMEOUT", "5")),
         },
     }
 }
@@ -201,6 +202,57 @@ if "test" in sys.argv:
     }
 
 DATABASE_ROUTERS = ["production.routers.ScadaRouter"]
+
+# ── Logging Configuration (Produção e Coletor Scada) ──────────────────────────
+LOGS_DIR = BASE_DIR / "logs"
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+SCADA_COLLECTOR_LOG_FILE = os.environ.get(
+    "SCADA_COLLECTOR_LOG_FILE",
+    str(LOGS_DIR / "scada_collector.log")
+)
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "[%(asctime)s] %(levelname)s [%(name)s:%(lineno)s] %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+        "simple": {
+            "format": "%(levelname)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "level": "INFO",
+            "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+        "collector_file": {
+            "level": "INFO",
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": SCADA_COLLECTOR_LOG_FILE,
+            "maxBytes": 5 * 1024 * 1024,  # 5 MB
+            "backupCount": 5,
+            "encoding": "utf-8",
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "django": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": True,
+        },
+        "production.collector": {
+            "handlers": ["console", "collector_file"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
 
 
 # Password validation

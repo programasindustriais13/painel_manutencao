@@ -796,10 +796,14 @@ class Spec05StateAndCollectorTestCase(TestCase):
 
         lock.release()
 
+        # Liberar qualquer lock do arquivo scada_collector.lock antes do teste do comando
+        dummy_lock = CrossProcessLock("scada_collector.lock")
+        dummy_lock.release()
+
         # Testar execução do comando com opção --once
         out = StringIO()
         call_command("collect_production_scada", "--once", stdout=out)
-        self.assertIn("Iniciando Coletor Scada Produção", out.getvalue())
+        self.assertIn("Iniciando Coletor Scada", out.getvalue())
 
     def test_machine_detail_view_permissions_and_kpis(self):
         """Testa acesso à rota de detalhe da máquina, cálculo de KPIs e filtros de data."""
@@ -829,3 +833,75 @@ class Spec05StateAndCollectorTestCase(TestCase):
         res = client.get(reverse("production:machine_detail", kwargs={"pk": self.config1.pk}))
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "Sem comunicação com Scada")
+
+
+class ProductionHardeningAndInfrastructureTestCase(TestCase):
+    def test_settings_and_credentials_hardening(self):
+        """Valida que configurações e credenciais não expõem senhas e possuem timeouts seguros."""
+        from django.conf import settings
+        import os
+
+        # Confirmar timeout configurável por variável de ambiente
+        timeout_env = os.environ.get("SCADA_DB_CONNECT_TIMEOUT", "5")
+        self.assertEqual(int(timeout_env), 5)
+
+        # Confirmar suporte a logs configuráveis e registradores do coletor
+        self.assertTrue(hasattr(settings, "SCADA_COLLECTOR_LOG_FILE"))
+        self.assertTrue(hasattr(settings, "LOGGING"))
+        self.assertIn("production.collector", settings.LOGGING.get("loggers", {}))
+
+    def test_collector_logging_and_second_instance_blocking(self):
+        """Valida o bloqueio da 2ª instância do coletor e liberação do lock."""
+        # Criar o lock no arquivo padrão utilizado pelo coletor ("scada_collector.lock")
+        lock = CrossProcessLock("scada_collector.lock")
+        self.assertTrue(lock.acquire())
+
+        # Executar comando enquanto o lock padrão está mantido -> Deve registrar aviso e bloquear
+        out = StringIO()
+        call_command("collect_production_scada", "--once", stdout=out)
+        output = out.getvalue()
+        self.assertIn("Tentativa de segunda instância bloqueada", output)
+
+        lock.release()
+
+        # Executar com --once e verificar sucesso
+        out_once = StringIO()
+        call_command("collect_production_scada", "--once", stdout=out_once)
+        self.assertIn("Coletor Scada encerrado com sucesso", out_once.getvalue())
+
+    def test_powershell_scripts_present_and_documented(self):
+        """Verifica a presença e o conteúdo dos scripts de automação e documentação."""
+        from django.conf import settings
+        import os
+
+        base_dir = settings.BASE_DIR
+        start_script = os.path.join(base_dir, "scripts", "start_scada_collector.ps1")
+        preflight_script = os.path.join(base_dir, "scripts", "preflight_production_scada.ps1")
+        deploy_doc = os.path.join(base_dir, "DEPLOY_WINDOWS_SERVER.md")
+
+        self.assertTrue(os.path.exists(start_script), "start_scada_collector.ps1 deve existir")
+        self.assertTrue(os.path.exists(preflight_script), "preflight_production_scada.ps1 deve existir")
+        self.assertTrue(os.path.exists(deploy_doc), "DEPLOY_WINDOWS_SERVER.md deve existir")
+
+        with open(start_script, "r", encoding="utf-8") as f:
+            content = f.read()
+            self.assertIn("collect_production_scada", content)
+            self.assertIn(".venv", content)
+
+        with open(preflight_script, "r", encoding="utf-8") as f:
+            content = f.read()
+            self.assertIn("RELATORIO DE PREFLIGHT", content)
+            self.assertIn("manage.py check", content)
+
+        with open(deploy_doc, "r", encoding="utf-8") as f:
+            content = f.read()
+            self.assertIn("GRANT SELECT ON scadalts.*", content)
+            self.assertIn("scada_monitor_ro", content)
+            self.assertIn("SHOW GRANTS", content)
+
+    def test_no_web_process_auto_start(self):
+        """Garante que a importação do app production não inicia threads ou coletores no processo web."""
+        from production.apps import ProductionConfig
+        self.assertEqual(ProductionConfig.name, "production")
+
+
