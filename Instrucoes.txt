@@ -2049,3 +2049,38 @@ Resultados da Implementação da Fase A:
 5. Suíte de Testes (71/71 Aprovados):
    - Criado `ProductionHardeningAndInfrastructureTestCase` testando ausência de segredos, logging, scripts de automação, concorrência e isolamento web.
    - Suíte global passou 100% (71/71 testes).
+
+==============================================================================
+SPEC 05B — ENRIQUECIMENTO DOS CARDS DE PRODUÇÃO E ALERTA DE PARADA PROLONGADA
+Data: 2026-07-30 | Status: Concluída com Sucesso (Suíte 80/80 Testes Aprovados)
+==============================================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05B_DADOS_OPERACIONAIS_ALERTA_PARADA.md
+- production/migrations/0005_dados_operacionais_cavidades.py
+
+Arquivos modificados:
+- production/models.py (6 novos campos aditivos em ProductionCavityConfig)
+- production/admin.py (ProductionCavityConfigInline atualizado com novos campos)
+- production/services.py (coleta em lote, build_cavities_data, meta manual, produto-lote, alerta 5min e cronômetros)
+- production/templates/production/dashboard.html (banner alerta 5min, badge cavidades, matriz, produto-lote, meta manual)
+- production/templates/production/machine_detail.html (banner alerta 5min e dados operacionais das cavidades)
+- production/tests.py (Spec05BEnrichmentAndAlertTestCase cobrindo 34 regras da SPEC 05B, 80/80 testes aprovados)
+- Instrucoes.txt
+- implementation_plan.md
+
+Resultados da Implementação:
+1. Modelo e Migração Aditiva:
+   - Adicionados campos `xid_status_cavidade`, `valor_cavidade_produzindo`, `xid_matriz`, `xid_produto`, `xid_lote_bladder`, `meta_producao_manual`.
+   - Migração `0005_dados_operacionais_cavidades` aplicada com sucesso no banco `default`.
+2. Lógica e Serviços (`ProductionStateService`):
+   - Leitura em lote de todos os novos XIDs sem N+1 queries.
+   - Concatenação visual de Produto e Lote do Bladder com 4 regras de fallback.
+   - Meta manual como fonte atual para cálculo de percentual de produção.
+   - Status da cavidade 100% isolado do estado geral da prensa.
+   - Alerta visual de prensa parada >= 5 minutos (300 segundos) ativado para estados PARADA com telemetria ativa.
+3. Interfaces de Usuário (Dashboard & Detalhe):
+   - Cards enriquecidos com banner de alerta em destaque e detalhamento completo de cada cavidade.
+4. Validação e Qualidade:
+   - `manage.py check` (0 erros).
+   - Suíte de testes global expandida para 80/80 testes, 100% aprovados.

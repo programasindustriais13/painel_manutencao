@@ -480,7 +480,8 @@ class ProductionStateServiceTestCase(TestCase):
             nome="Cavidade 1",
             ordem=1,
             xid_producao="DP_PROD_CAV1",
-            xid_meta="DP_META_CAV1"
+            xid_meta="DP_META_CAV1",
+            meta_producao_manual=100,
         )
 
         self.config2 = ProductionMachineConfig.objects.create(
@@ -905,3 +906,352 @@ class ProductionHardeningAndInfrastructureTestCase(TestCase):
         self.assertEqual(ProductionConfig.name, "production")
 
 
+class Spec05BEnrichmentAndAlertTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        scada_reader.clear_caches()
+
+        self.sector = Sector.objects.create(nome="Vulcanização 05B")
+        self.machine1 = Machine.objects.create(nome="Prensa 05B", setor=self.sector)
+
+        self.config1 = ProductionMachineConfig.objects.create(
+            machine=self.machine1,
+            ordem_exibicao=1,
+            stale_limit_seconds=600,
+            produzindo_value="1",
+            xid_status_prensa="DP_STATUS_P5B",
+            xid_motivo_parada_geral="DP_MOTIVO_P5B",
+            xid_abertura=""
+        )
+
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_status_cavidade="DP_CAV1_STATUS",
+            valor_cavidade_produzindo="1",
+            xid_matriz="DP_CAV1_MATRIZ",
+            xid_produto="DP_CAV1_PROD_NOME",
+            xid_lote_bladder="DP_CAV1_LOTE",
+            xid_producao="DP_CAV1_PROD",
+            meta_producao_manual=100,
+            xid_motivo_parada="DP_CAV1_MOTIVO",
+        )
+
+        self.cav2 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 2",
+            ordem=2,
+            xid_status_cavidade="DP_CAV2_STATUS",
+            valor_cavidade_produzindo="1",
+            xid_matriz="DP_CAV2_MATRIZ",
+            xid_produto="DP_CAV2_PROD_NOME",
+            xid_lote_bladder="DP_CAV2_LOTE",
+            xid_producao="DP_CAV2_PROD",
+            meta_producao_manual=50,
+            xid_motivo_parada="DP_CAV2_MOTIVO",
+        )
+
+        self.prod_leader_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.prod_user = User.objects.create_user("prod_lider_05b", "prod05b@test.com", "pwd123")
+        self.prod_user.groups.add(self.prod_leader_group)
+
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalueannotations;")
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5B', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_STATUS', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV2_STATUS', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (4, 'DP_MOTIVO_P5B', 1);")
+
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 0.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 1, 1.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 1, 0.0, ?);", [now_ms])
+
+    def test_cavity_new_fields_creation_and_defaults(self):
+        """Testa criação e valores padrão dos novos campos de ProductionCavityConfig."""
+        cav = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 3",
+            ordem=3
+        )
+        self.assertEqual(cav.valor_cavidade_produzindo, "1")
+        self.assertEqual(cav.meta_producao_manual, 0)
+        self.assertIsNone(cav.xid_status_cavidade)
+        self.assertIsNone(cav.xid_matriz)
+        self.assertIsNone(cav.xid_produto)
+        self.assertIsNone(cav.xid_lote_bladder)
+
+    def test_product_and_lote_fallback_rules(self):
+        """Testa todas as 4 regras de fallback para concatenação visual de Produto e Lote do Bladder."""
+        scada_values = {
+            "DP_CAV1_PROD_NOME": {"str_value": "Pneu 175/70", "value": "Pneu 175/70", "ts": 1000},
+            "DP_CAV1_LOTE": {"str_value": "LOTE-998", "value": "LOTE-998", "ts": 1000},
+        }
+        cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values)
+        c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
+        c2 = next(c for c in cavs if c["nome"] == "Cavidade 2")
+
+        # 1. Ambos presentes: "Produto - Lote"
+        self.assertEqual(c1["produto_lote_str"], "Pneu 175/70 - LOTE-998")
+
+        # 2. Somente produto
+        scada_values_prod_only = {
+            "DP_CAV1_PROD_NOME": {"str_value": "Pneu 175/70", "value": "Pneu 175/70", "ts": 1000},
+        }
+        cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values_prod_only)
+        c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
+        self.assertEqual(c1["produto_lote_str"], "Pneu 175/70")
+
+        # 3. Somente lote
+        scada_values_lote_only = {
+            "DP_CAV1_LOTE": {"str_value": "LOTE-998", "value": "LOTE-998", "ts": 1000},
+        }
+        cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values_lote_only)
+        c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
+        self.assertEqual(c1["produto_lote_str"], "Lote: LOTE-998")
+
+        # 4. Nenhum presente
+        self.assertEqual(c2["produto_lote_str"], "Não informado")
+
+    def test_cavity_independent_status_and_press_isolation(self):
+        """Testa se o estado de uma cavidade é independente e não altera o estado geral da prensa."""
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 1;", [now_ms])
+            cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 2;", [now_ms])
+            cursor.execute("UPDATE pointvalues SET pointValue = 0.0, ts = ? WHERE id = 3;", [now_ms])
+        scada_reader.clear_caches()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+
+        # Prensa deve continuar PRODUZINDO mesmo com Cavidade 2 Parada
+        self.assertEqual(m1["state"], "PRODUZINDO")
+
+        c1 = next(c for c in m1["cavidades"] if c["nome"] == "Cavidade 1")
+        c2 = next(c for c in m1["cavidades"] if c["nome"] == "Cavidade 2")
+
+        self.assertEqual(c1["status_code"], "PRODUZINDO")
+        self.assertEqual(c1["status_label"], "Produzindo")
+
+        self.assertEqual(c2["status_code"], "PARADA")
+        self.assertEqual(c2["status_label"], "Parada")
+
+    def test_cavity_stopped_without_reason_shows_default_text(self):
+        """Testa se cavidade parada sem motivo cadastrado exibe 'Motivo não informado'."""
+        now_ms = int(time.time() * 1000)
+        scada_values = {
+            "DP_STATUS_P5B": {"value": True, "str_value": "1", "ts": now_ms},
+            "DP_CAV1_STATUS": {"value": False, "str_value": "0", "ts": now_ms},
+        }
+        cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values)
+        c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
+        self.assertEqual(c1["status_code"], "PARADA")
+        self.assertEqual(c1["motivo_parada"], "Motivo não informado")
+
+    def test_manual_target_zero_null_and_over_target(self):
+        """Testa meta manual zero, nula e produção superior à meta."""
+        self.cav1.meta_producao_manual = 0
+        self.cav1.save()
+
+        scada_values = {
+            "DP_CAV1_PROD": {"value": 150, "str_value": "150", "ts": 1000},
+            "DP_CAV2_PROD": {"value": 75, "str_value": "75", "ts": 1000},
+        }
+        cavs, total_p, total_m, total_pct, total_pct_bar = ProductionStateService.build_cavities_data(self.config1, scada_values)
+        c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
+        c2 = next(c for c in cavs if c["nome"] == "Cavidade 2")
+
+        # Cav1 com meta 0 -> percentual 0% sem divisão por zero
+        self.assertEqual(c1["percentual"], 0)
+        self.assertEqual(c1["percentual_bar"], 0)
+
+        # Cav2 com meta 50 e prod 75 -> percentual 150%, mas largura limitada a 100%
+        self.assertEqual(c2["percentual"], 150)
+        self.assertEqual(c2["percentual_bar"], 100)
+
+    def test_5min_downtime_alert_triggers_at_exact_300s_and_above(self):
+        """Testa se o alerta de 5 minutos (300s) ativa exatamente em >= 300s e desativa ao voltar a produzir."""
+        now = timezone.now()
+        now_ms = int(time.time() * 1000)
+
+        # Atualizar scada db com leitura recente de prensa parada (0.0)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("UPDATE pointvalues SET pointValue = 0.0, ts = ? WHERE id = 1;", [now_ms])
+        scada_reader.clear_caches()
+
+        state_obj, _ = ProductionMachineState.objects.get_or_create(machine_config=self.config1)
+
+        # 1. Prensa parada há 299 segundos -> sem alerta
+        start_299 = now - timezone.timedelta(seconds=299)
+        open_event = ProductionDowntimeEvent.objects.create(
+            machine_config=self.config1,
+            inicio=start_299,
+            origem="SCADA"
+        )
+        state_obj.estado_atual = "PARADA"
+        state_obj.inicio_estado_atual = start_299
+        state_obj.sem_comunicacao = False
+        state_obj.dado_desatualizado = False
+        state_obj.motivo_atual = ""
+        state_obj.save()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertFalse(m1["alerta_parada_5min"])
+
+        # 2. Prensa parada há exatamente 300 segundos -> alerta ativado com aviso de motivo pendente
+        start_300 = now - timezone.timedelta(seconds=300)
+        open_event.inicio = start_300
+        open_event.save()
+        state_obj.inicio_estado_atual = start_300
+        state_obj.save()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertTrue(m1["alerta_parada_5min"])
+        self.assertTrue(m1["motivo_prensa_pendente"])
+
+        # 3. Prensa parada há 600 segundos com motivo informado
+        start_600 = now - timezone.timedelta(seconds=600)
+        open_event.inicio = start_600
+        open_event.motivo_geral = "Troca de Prensa"
+        open_event.save()
+        state_obj.inicio_estado_atual = start_600
+        state_obj.motivo_atual = "Troca de Prensa"
+        state_obj.save()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertTrue(m1["alerta_parada_5min"])
+        self.assertFalse(m1["motivo_prensa_pendente"])
+
+        # 4. Transição para PRODUZINDO -> alerta desativa imediatamente
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 1;", [now_ms])
+        scada_reader.clear_caches()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertFalse(m1["alerta_parada_5min"])
+
+    def test_no_5min_alert_on_scada_offline_or_stale(self):
+        """Testa que Scada offline ou dado desatualizado não tratam a máquina como parada prolongada."""
+        now = timezone.now()
+        state_obj, _ = ProductionMachineState.objects.get_or_create(machine_config=self.config1)
+        state_obj.estado_atual = "PARADA"
+        state_obj.inicio_estado_atual = now - timezone.timedelta(seconds=400)
+        state_obj.sem_comunicacao = True
+        state_obj.save()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertFalse(m1["alerta_parada_5min"])
+
+    def test_running_timer_for_producing_and_stopped_states(self):
+        """Testa formatação do cronômetro para estados Produzindo e Parada."""
+        now = timezone.now()
+        now_ms = int(time.time() * 1000)
+        state_obj, _ = ProductionMachineState.objects.get_or_create(machine_config=self.config1)
+
+        # Produzindo há 1 hora e 25 minutos
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 1;", [now_ms])
+        scada_reader.clear_caches()
+
+        state_obj.estado_atual = "PRODUZINDO"
+        state_obj.inicio_estado_atual = now - timezone.timedelta(minutes=85)
+        state_obj.sem_comunicacao = False
+        state_obj.dado_desatualizado = False
+        state_obj.save()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertIn("Produzindo há 01h 25min", m1["tempo_decorrido_str"])
+
+        # Parada há 12 minutos
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("UPDATE pointvalues SET pointValue = 0.0, ts = ? WHERE id = 1;", [now_ms])
+        scada_reader.clear_caches()
+
+        start_12m = now - timezone.timedelta(minutes=12)
+        ProductionDowntimeEvent.objects.create(
+            machine_config=self.config1,
+            inicio=start_12m,
+            origem="SCADA"
+        )
+        state_obj.estado_atual = "PARADA"
+        state_obj.inicio_estado_atual = start_12m
+        state_obj.save()
+
+        dash_state = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in dash_state["machines"] if m["nome"] == "Prensa 05B")
+        self.assertIn("Parada há 12min", m1["tempo_decorrido_str"])
+
+    def test_dashboard_and_machine_detail_views_render_spec05b_elements(self):
+        """Testa se as views do dashboard e detalhe renderizam todos os novos campos e alertas da SPEC 05B."""
+        client = Client()
+        client.force_login(self.prod_user)
+
+        now_ms = int(time.time() * 1000)
+
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalueannotations;")
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5B', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_STATUS', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV1_MATRIZ', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (4, 'DP_CAV1_PROD_NOME', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (5, 'DP_CAV1_LOTE', 1);")
+
+            # Prensa Parada com telemetria atualizada
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 0.0, ?);", [now_ms])
+            # Cavidade 1 Produzindo
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 1, 1.0, ?);", [now_ms])
+            # Matriz M-101
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 4, NULL, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalueannotations (pointValueId, textPointValueShort) VALUES (3, 'M-101');")
+            # Produto e Lote
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (4, 4, 4, NULL, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalueannotations (pointValueId, textPointValueShort) VALUES (4, 'PROD-ALPHA');")
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (5, 5, 4, NULL, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalueannotations (pointValueId, textPointValueShort) VALUES (5, 'LOTE-77');")
+
+        scada_reader.clear_caches()
+
+        # Simular prensa parada há 400s no BD local com evento de parada correspondente
+        now = timezone.now()
+        start_400 = now - timezone.timedelta(seconds=400)
+        ProductionDowntimeEvent.objects.create(
+            machine_config=self.config1,
+            inicio=start_400,
+            origem="SCADA"
+        )
+        state_obj, _ = ProductionMachineState.objects.get_or_create(machine_config=self.config1)
+        state_obj.estado_atual = "PARADA"
+        state_obj.inicio_estado_atual = start_400
+        state_obj.sem_comunicacao = False
+        state_obj.dado_desatualizado = False
+        state_obj.save()
+
+        # Renderizar Dashboard
+        res_dash = client.get(reverse("production:dashboard"))
+        self.assertEqual(res_dash.status_code, 200)
+        self.assertContains(res_dash, "Alerta: Prensa parada há mais de 5 minutos!")
+        self.assertContains(res_dash, "PROD-ALPHA - LOTE-77")
+        self.assertContains(res_dash, "M-101")
+
+        # Renderizar Detalhe da Máquina
+        res_detail = client.get(reverse("production:machine_detail", kwargs={"pk": self.config1.pk}))
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertContains(res_detail, "Alerta: Prensa parada há mais de 5 minutos!")
+        self.assertContains(res_detail, "PROD-ALPHA - LOTE-77")
+        self.assertContains(res_detail, "M-101")

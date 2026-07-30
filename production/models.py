@@ -75,17 +75,53 @@ class ProductionCavityConfig(models.Model):
         default=1,
         verbose_name="Ordem de Exibição"
     )
+    xid_status_cavidade = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="XID Status da Cavidade"
+    )
+    valor_cavidade_produzindo = models.CharField(
+        max_length=50,
+        default="1",
+        verbose_name="Valor Bruto Cavidade Produzindo",
+        help_text="Valor do XID que indica que a cavidade está produzindo (ex: '1')."
+    )
+    xid_matriz = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="XID Matriz"
+    )
+    xid_produto = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="XID Produto"
+    )
+    xid_lote_bladder = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="XID Lote do Bladder"
+    )
     xid_producao = models.CharField(
         max_length=100,
         blank=True,
         null=True,
         verbose_name="XID Produção Atual"
     )
+    meta_producao_manual = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Meta Manual de Produção",
+        help_text="Meta de produção manual para a cavidade (usada como fonte no dashboard)."
+    )
     xid_meta = models.CharField(
         max_length=100,
         blank=True,
         null=True,
-        verbose_name="XID Meta de Produção"
+        verbose_name="XID Meta de Produção (Reservado Futuro)",
+        help_text="Reservado para integração futura. O dashboard utiliza meta_producao_manual."
     )
     xid_motivo_parada = models.CharField(
         max_length=100,

@@ -124,27 +124,52 @@
                         <span class="small fw-bold text-dark">{{ producao_total }} / {{ meta_total }} ({{ percentual_total }}%)</span>
                     </div>
                     <div class="cavity-bar">
-                        <div class="cavity-fill bg-success" style="width: {{ percentual_total }}%;"></div>
+                        <div class="cavity-fill bg-success" style="width: {{ percentual_total_bar }}%;"></div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- Banner de Alerta: Prensa Parada há mais de 5 minutos -->
+        {% if alerta_parada_5min %}
+        <div class="alert alert-danger border-danger shadow-sm p-3 mt-3 mb-0 rounded-3 d-flex align-items-start">
+            <i class="bi bi-exclamation-octagon-fill fs-4 me-2 text-danger flex-shrink-0 mt-1"></i>
+            <div>
+                <strong class="d-block text-danger small fw-bold mb-1">Alerta: Prensa parada há mais de 5 minutos!</strong>
+                <span class="small text-dark d-block">
+                    {% if motivo_prensa_pendente %}
+                    <span class="badge bg-danger text-white me-1">Motivo da prensa não informado</span>
+                    {% endif %}
+                    Verifique o motivo da parada e solicite ao operador que registre o motivo da máquina.
+                </span>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- Cavidades Details -->
         {% if cavidades %}
         <div class="row g-2 mt-2">
             {% for cav in cavidades %}
             <div class="col-12 col-sm-6 col-md-3">
-                <div class="p-2 border rounded bg-white small">
+                <div class="p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}">
                     <div class="d-flex justify-content-between align-items-center mb-1">
-                        <span class="fw-medium text-dark">{{ cav.nome }}</span>
+                        <div class="d-flex align-items-center gap-1">
+                            <span class="fw-bold text-dark">{{ cav.nome }}</span>
+                            <span class="badge badge-{{ cav.badge_class|lower }} px-2 py-0 fs-8">
+                                {{ cav.status_label }}
+                            </span>
+                        </div>
                         <span class="fw-bold text-primary">{{ cav.producao }} / {{ cav.meta }} ({{ cav.percentual }}%)</span>
                     </div>
-                    <div class="cavity-bar">
-                        <div class="cavity-fill bg-info" style="width: {{ cav.percentual }}%;"></div>
+                    <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
+                        <span><i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz }}</strong></span>
+                        <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
                     </div>
-                    {% if cav.motivo_parada %}
-                    <div class="text-danger small mt-1">
+                    <div class="cavity-bar">
+                        <div class="cavity-fill bg-info" style="width: {{ cav.percentual_bar }}%;"></div>
+                    </div>
+                    {% if cav.status_code == 'PARADA' and cav.motivo_parada %}
+                    <div class="text-danger fw-semibold small mt-1">
                         <i class="bi bi-exclamation-triangle me-1"></i>Motivo: {{ cav.motivo_parada }}
                     </div>
                     {% endif %}

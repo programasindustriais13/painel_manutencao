@@ -244,6 +244,30 @@ class ProductionStateService:
         else:
             return f"{seconds}s"
 
+    @staticmethod
+    def format_elapsed_seconds_human(seconds: int, state: str) -> str:
+        if seconds <= 0:
+            mins_str = "0min"
+        else:
+            mins = seconds // 60
+            hours = mins // 60
+            rem_mins = mins % 60
+            if hours > 0:
+                mins_str = f"{hours:02d}h {rem_mins:02d}min"
+            elif mins > 0:
+                mins_str = f"{mins}min"
+            else:
+                mins_str = f"{seconds}s"
+
+        if state == "PRODUZINDO":
+            return f"Produzindo há {mins_str}"
+        elif state == "PARADA":
+            return f"Parada há {mins_str}"
+        elif state == "SEM_COMUNICACAO":
+            return "Sem comunicação"
+        else:
+            return mins_str
+
     @classmethod
     def format_elapsed_time(cls, timestamp_ms: Optional[int]) -> str:
         if not timestamp_ms:
@@ -251,6 +275,103 @@ class ProductionStateService:
         now_ms = int(time.time() * 1000)
         diff_secs = max(0, int((now_ms - timestamp_ms) / 1000))
         return cls.format_elapsed_seconds(diff_secs)
+
+    @classmethod
+    def build_cavities_data(
+        cls, config: ProductionMachineConfig, scada_values: Dict[str, Any]
+    ) -> tuple[List[Dict[str, Any]], int, int, int, int]:
+        cavities_list = []
+        total_prod = 0
+        total_meta = 0
+
+        for cav in config.cavities.all():
+            # Produção atual
+            c_prod_entry = scada_values.get(cav.xid_producao) if cav.xid_producao else None
+            c_prod = int(c_prod_entry["value"]) if c_prod_entry and isinstance(c_prod_entry.get("value"), (int, float)) else 0
+
+            # Meta manual de produção (fonte do dashboard)
+            c_meta = cav.meta_producao_manual or 0
+
+            total_prod += c_prod
+            total_meta += c_meta
+
+            percent = round((c_prod / c_meta) * 100) if c_meta > 0 else 0
+            percent_bar = min(100, percent) if c_meta > 0 else 0
+
+            # Matriz
+            matriz_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
+            matriz_val = str(matriz_entry.get("str_value", "")).strip() if matriz_entry else ""
+
+            # Produto e Lote do Bladder
+            prod_entry = scada_values.get(cav.xid_produto) if cav.xid_produto else None
+            prod_val = str(prod_entry.get("str_value", "")).strip() if prod_entry else ""
+
+            lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
+            lote_val = str(lote_entry.get("str_value", "")).strip() if lote_entry else ""
+
+            # Regras de fallback para produto e lote:
+            if prod_val and lote_val:
+                produto_lote_str = f"{prod_val} - {lote_val}"
+            elif prod_val:
+                produto_lote_str = prod_val
+            elif lote_val:
+                produto_lote_str = f"Lote: {lote_val}"
+            else:
+                produto_lote_str = "Não informado"
+
+            # Status independente da cavidade
+            if cav.xid_status_cavidade and str(cav.xid_status_cavidade).strip():
+                status_entry = scada_values.get(cav.xid_status_cavidade)
+                if status_entry and status_entry.get("ts") is not None:
+                    c_raw_val = str(status_entry.get("str_value", status_entry.get("value", ""))).strip().lower()
+                    c_target_val = str(cav.valor_cavidade_produzindo).strip().lower()
+                    if c_raw_val == c_target_val:
+                        c_status_code = "PRODUZINDO"
+                        c_status_label = "Produzindo"
+                        c_badge_class = "success"
+                    else:
+                        c_status_code = "PARADA"
+                        c_status_label = "Parada"
+                        c_badge_class = "danger"
+                else:
+                    c_status_code = "STATUS_NAO_CONFIGURADO"
+                    c_status_label = "Status não configurado"
+                    c_badge_class = "secondary"
+            else:
+                c_status_code = "STATUS_NAO_CONFIGURADO"
+                c_status_label = "Status não configurado"
+                c_badge_class = "secondary"
+
+            # Motivo de parada da cavidade quando parada
+            if c_status_code == "PARADA":
+                motivo_entry = scada_values.get(cav.xid_motivo_parada) if cav.xid_motivo_parada else None
+                c_motivo_str = str(motivo_entry.get("str_value", "")).strip() if motivo_entry else ""
+                c_motivo_exibido = c_motivo_str if c_motivo_str else "Motivo não informado"
+            else:
+                c_motivo_exibido = ""
+
+            cavities_list.append({
+                "id": cav.id,
+                "nome": cav.nome,
+                "ordem": cav.ordem,
+                "status_code": c_status_code,
+                "status_label": c_status_label,
+                "badge_class": c_badge_class,
+                "matriz": matriz_val if matriz_val else "Não informada",
+                "produto_val": prod_val,
+                "lote_val": lote_val,
+                "produto_lote_str": produto_lote_str,
+                "producao": c_prod,
+                "meta": c_meta,
+                "percentual": percent,
+                "percentual_bar": percent_bar,
+                "motivo_parada": c_motivo_exibido,
+            })
+
+        total_percent = round((total_prod / total_meta) * 100) if total_meta > 0 else 0
+        total_percent_bar = min(100, total_percent) if total_meta > 0 else 0
+
+        return cavities_list, total_prod, total_meta, total_percent, total_percent_bar
 
     @classmethod
     @transaction.atomic
@@ -275,6 +396,14 @@ class ProductionStateService:
                 if cfg.xid_motivo_parada_geral:
                     all_xids.add(cfg.xid_motivo_parada_geral)
                 for cav in cfg.cavities.all():
+                    if cav.xid_status_cavidade:
+                        all_xids.add(cav.xid_status_cavidade)
+                    if cav.xid_matriz:
+                        all_xids.add(cav.xid_matriz)
+                    if cav.xid_produto:
+                        all_xids.add(cav.xid_produto)
+                    if cav.xid_lote_bladder:
+                        all_xids.add(cav.xid_lote_bladder)
                     if cav.xid_producao:
                         all_xids.add(cav.xid_producao)
                     if cav.xid_meta:
@@ -372,6 +501,7 @@ class ProductionStateService:
                     if state_obj.estado_atual != "PRODUZINDO" or not state_obj.inicio_estado_atual:
                         state_obj.estado_atual = "PRODUZINDO"
                         state_obj.inicio_estado_atual = scada_dt
+                        state_obj.motivo_atual = ""
 
             state_obj.save()
 
@@ -396,6 +526,14 @@ class ProductionStateService:
             if cfg.xid_motivo_parada_geral:
                 all_xids.add(cfg.xid_motivo_parada_geral)
             for cav in cfg.cavities.all():
+                if cav.xid_status_cavidade:
+                    all_xids.add(cav.xid_status_cavidade)
+                if cav.xid_matriz:
+                    all_xids.add(cav.xid_matriz)
+                if cav.xid_produto:
+                    all_xids.add(cav.xid_produto)
+                if cav.xid_lote_bladder:
+                    all_xids.add(cav.xid_lote_bladder)
                 if cav.xid_producao:
                     all_xids.add(cav.xid_producao)
                 if cav.xid_meta:
@@ -455,50 +593,35 @@ class ProductionStateService:
                 badge_class = "danger"
                 paradas_count += 1
 
-            # Recuperar evento aberto para cálculo do cronômetro persistido
+            # Recuperar evento aberto ou início do estado para cálculo do cronômetro
             open_event = ProductionDowntimeEvent.objects.filter(
                 machine_config=cfg, fim__isnull=True
             ).order_by("-inicio").first()
 
+            motivo_entry = scada_values.get(cfg.xid_motivo_parada_geral) if cfg.xid_motivo_parada_geral else None
+            motivo_geral_val = (
+                (open_event.motivo_geral if open_event and open_event.motivo_geral else None)
+                or (motivo_entry.get("str_value", "") if motivo_entry else "")
+                or (state_obj.motivo_atual if state_obj else "")
+            )
+
             if open_event:
                 timer_secs = max(0, int((now - open_event.inicio).total_seconds()))
-                tempo_decorrido_str = cls.format_elapsed_seconds(timer_secs)
             elif state_obj and state_obj.inicio_estado_atual:
                 timer_secs = max(0, int((now - state_obj.inicio_estado_atual).total_seconds()))
-                tempo_decorrido_str = cls.format_elapsed_seconds(timer_secs)
             else:
-                tempo_decorrido_str = cls.format_elapsed_time(timestamp_ms)
+                timer_secs = 0
+
+            tempo_decorrido_str = cls.format_elapsed_seconds_human(timer_secs, state)
+
+            # Alerta de prensa parada há mais de 5 minutos (300 segundos):
+            alerta_parada_5min = (state == "PARADA" and not sem_comunicacao and not is_stale and timer_secs >= 300)
+            motivo_prensa_pendente = not (motivo_geral_val and str(motivo_geral_val).strip())
 
             abertura_entry = scada_values.get(cfg.xid_abertura) if cfg.xid_abertura else None
             abertura_val = abertura_entry.get("str_value", "") if abertura_entry else None
 
-            cavities_list = []
-            total_prod = 0
-            total_meta = 0
-
-            for cav in cfg.cavities.all():
-                c_prod_entry = scada_values.get(cav.xid_producao) if cav.xid_producao else None
-                c_meta_entry = scada_values.get(cav.xid_meta) if cav.xid_meta else None
-                c_motivo_entry = scada_values.get(cav.xid_motivo_parada) if cav.xid_motivo_parada else None
-
-                c_prod = int(c_prod_entry["value"]) if c_prod_entry and isinstance(c_prod_entry.get("value"), (int, float)) else 0
-                c_meta = int(c_meta_entry["value"]) if c_meta_entry and isinstance(c_meta_entry.get("value"), (int, float)) else 0
-                c_motivo = c_motivo_entry.get("str_value", "") if c_motivo_entry else ""
-
-                total_prod += c_prod
-                total_meta += c_meta
-                percent = round((c_prod / c_meta) * 100) if c_meta > 0 else 0
-
-                cavities_list.append({
-                    "nome": cav.nome,
-                    "ordem": cav.ordem,
-                    "producao": c_prod,
-                    "meta": c_meta,
-                    "percentual": percent,
-                    "motivo_parada": c_motivo,
-                })
-
-            total_percent = round((total_prod / total_meta) * 100) if total_meta > 0 else 0
+            cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(cfg, scada_values)
 
             machines_data.append({
                 "id": cfg.id,
@@ -512,13 +635,17 @@ class ProductionStateService:
                 "is_stale": is_stale,
                 "stale_limit_seconds": cfg.stale_limit_seconds,
                 "timestamp_ms": timestamp_ms,
+                "timer_secs": timer_secs,
                 "tempo_decorrido_str": tempo_decorrido_str,
                 "abertura": abertura_val,
                 "motivo_geral": motivo_geral_val,
+                "motivo_prensa_pendente": motivo_prensa_pendente,
+                "alerta_parada_5min": alerta_parada_5min,
                 "cavidades": cavities_list,
                 "producao_total": total_prod,
                 "meta_total": total_meta,
                 "percentual_total": total_percent,
+                "percentual_total_bar": total_percent_bar,
             })
 
         params_data = []
@@ -623,6 +750,14 @@ class ProductionStateService:
         if cfg.xid_motivo_parada_geral:
             all_xids.add(cfg.xid_motivo_parada_geral)
         for cav in cfg.cavities.all():
+            if cav.xid_status_cavidade:
+                all_xids.add(cav.xid_status_cavidade)
+            if cav.xid_matriz:
+                all_xids.add(cav.xid_matriz)
+            if cav.xid_produto:
+                all_xids.add(cav.xid_produto)
+            if cav.xid_lote_bladder:
+                all_xids.add(cav.xid_lote_bladder)
             if cav.xid_producao:
                 all_xids.add(cav.xid_producao)
             if cav.xid_meta:
@@ -666,41 +801,22 @@ class ProductionStateService:
             machine_config=cfg, fim__isnull=True
         ).order_by("-inicio").first()
 
+        if open_event and open_event.motivo_geral:
+            motivo_geral_val = open_event.motivo_geral
+
         if open_event:
             timer_secs = max(0, int((now - open_event.inicio).total_seconds()))
-            tempo_decorrido_str = cls.format_elapsed_seconds(timer_secs)
         elif state_obj and state_obj.inicio_estado_atual:
             timer_secs = max(0, int((now - state_obj.inicio_estado_atual).total_seconds()))
-            tempo_decorrido_str = cls.format_elapsed_seconds(timer_secs)
         else:
-            tempo_decorrido_str = cls.format_elapsed_time(timestamp_ms)
+            timer_secs = 0
 
-        cavities_list = []
-        total_prod = 0
-        total_meta = 0
-        for cav in cfg.cavities.all():
-            c_prod_entry = scada_values.get(cav.xid_producao) if cav.xid_producao else None
-            c_meta_entry = scada_values.get(cav.xid_meta) if cav.xid_meta else None
-            c_motivo_entry = scada_values.get(cav.xid_motivo_parada) if cav.xid_motivo_parada else None
+        tempo_decorrido_str = cls.format_elapsed_seconds_human(timer_secs, state)
 
-            c_prod = int(c_prod_entry["value"]) if c_prod_entry and isinstance(c_prod_entry.get("value"), (int, float)) else 0
-            c_meta = int(c_meta_entry["value"]) if c_meta_entry and isinstance(c_meta_entry.get("value"), (int, float)) else 0
-            c_motivo = c_motivo_entry.get("str_value", "") if c_motivo_entry else ""
+        alerta_parada_5min = (state == "PARADA" and not sem_comunicacao and not is_stale and timer_secs >= 300)
+        motivo_prensa_pendente = not (motivo_geral_val and str(motivo_geral_val).strip())
 
-            total_prod += c_prod
-            total_meta += c_meta
-            percent = round((c_prod / c_meta) * 100) if c_meta > 0 else 0
-
-            cavities_list.append({
-                "nome": cav.nome,
-                "ordem": cav.ordem,
-                "producao": c_prod,
-                "meta": c_meta,
-                "percentual": percent,
-                "motivo_parada": c_motivo,
-            })
-
-        total_percent = round((total_prod / total_meta) * 100) if total_meta > 0 else 0
+        cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(cfg, scada_values)
 
         # Filtro de eventos de parada parcialmente ou totalmente sobrepostos ao período
         events_qs = ProductionDowntimeEvent.objects.filter(
@@ -748,12 +864,16 @@ class ProductionStateService:
             "is_stale": is_stale,
             "sem_comunicacao": sem_comunicacao,
             "tempo_decorrido_str": tempo_decorrido_str,
+            "timer_secs": timer_secs,
+            "alerta_parada_5min": alerta_parada_5min,
+            "motivo_prensa_pendente": motivo_prensa_pendente,
             "motivo_geral": motivo_geral_val or "Sem motivo registrado",
             "ultima_leitura_str": state_obj.ultima_leitura_scada.strftime("%d/%m/%Y %H:%M:%S") if (state_obj and state_obj.ultima_leitura_scada) else "N/A",
             "cavidades": cavities_list,
             "producao_total": total_prod,
             "meta_total": total_meta,
             "percentual_total": total_percent,
+            "percentual_total_bar": total_percent_bar,
             "events": events_data,
             "kpi": {
                 "tempo_total_parado_str": cls.format_elapsed_seconds(total_downtime_seconds),

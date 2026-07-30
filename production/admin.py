@@ -10,7 +10,19 @@ from .models import (
 class ProductionCavityConfigInline(admin.TabularInline):
     model = ProductionCavityConfig
     extra = 2
-    fields = ("ordem", "nome", "xid_producao", "xid_meta", "xid_motivo_parada")
+    fields = (
+        "ordem",
+        "nome",
+        "xid_status_cavidade",
+        "valor_cavidade_produzindo",
+        "xid_matriz",
+        "xid_produto",
+        "xid_lote_bladder",
+        "xid_producao",
+        "meta_producao_manual",
+        "xid_meta",
+        "xid_motivo_parada",
+    )
 
 
 @admin.register(ProductionMachineConfig)
