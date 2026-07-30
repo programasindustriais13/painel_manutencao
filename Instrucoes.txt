@@ -1988,7 +1988,7 @@ Arquivos modificados:
 - production/views.py (view machine_detail)
 - production/urls.py (rota maquinas/<int:pk>/)
 - production/templates/production/dashboard.html (botão de navegação para detalhes no card)
-- production/tests.py (27 testes em production / 50 suíte global)
+- production/tests.py (44 testes em production / 67 suíte global)
 - implementation_plan.md
 - Instrucoes.txt
 
@@ -2010,6 +2010,6 @@ Resultados da Implementação e QA:
 4. Tela de Detalhe da Máquina (`/producao/maquinas/<id>/`):
    - Exibe nome, setor, estado atual, cavidades, metas, última leitura e comunicação.
    - Filtros por data (`hoje`, `7d`, `30d`, intervalo customizado) com KPIs do período (tempo total parado, quantidade, maior parada, duração média) considerando eventos parcialmente sobrepostos.
-5. Suíte de Testes Automatizados:
-   - 27/27 testes do app `production` e 50/50 da suíte global aprovados com 100% de sucesso.
+5. Suíte de Testes Automatizados (Restaurada e Expandida):
+   - 44/44 testes do app `production` e 67/67 da suíte global aprovados com 100% de sucesso.
    - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes).

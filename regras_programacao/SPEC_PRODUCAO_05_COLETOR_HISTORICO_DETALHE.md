@@ -153,5 +153,5 @@
 - View `machine_detail` e template `machine_detail.html` com filtros por período e KPIs responsivos implementados.
 
 ### 3. QA
-- Testes automatizados em `production/tests.py` expandidos para cobrir roteamento, transições, concorrência, coletor, falhas de comunicação e filtros por data.
-- Bateria completa de testes executada com 100% de sucesso.
+- Testes automatizados em `production/tests.py` restaurados (SPEC 04) e expandidos (SPEC 05) para cobrir roteamento, transições, concorrência, coletor, falhas de comunicação, visualizações de detalhe e filtros por data.
+- Bateria completa de testes executada com 100% de sucesso (44/44 testes do app `production` e 67/67 testes da suíte global).
