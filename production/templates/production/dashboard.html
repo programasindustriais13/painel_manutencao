@@ -1,21 +1,570 @@
 {% extends "production/base_production.html" %}
 
-{% block title %}Painel de Produção - Dashboard{% endblock %}
+{% block title %}Painel de Produção - Dashboard de Máquinas{% endblock %}
+
+{% block extra_css %}
+<style>
+    .kpi-card {
+        border-radius: 12px;
+        border: none;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .kpi-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+    }
+    .kpi-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+    }
+    
+    .machine-card {
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        background: #ffffff;
+        transition: all 0.2s ease;
+    }
+    .machine-card:hover {
+        border-color: #cbd5e1;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+
+    .badge-produzindo, .badge-normal, .badge-success {
+        background-color: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+    }
+    .badge-parada, .badge-danger {
+        background-color: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+    }
+    .badge-sem-comunicacao, .badge-indeterminado, .badge-secondary {
+        background-color: #f1f5f9;
+        color: #475569;
+        border: 1px solid #e2e8f0;
+    }
+    .badge-stale {
+        background-color: #fef3c7;
+        color: #b45309;
+        border: 1px solid #fde68a;
+    }
+
+    .cavity-bar {
+        height: 8px;
+        border-radius: 4px;
+        background-color: #e2e8f0;
+        overflow: hidden;
+    }
+    .cavity-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }
+
+    .global-widget {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+    }
+
+    .filter-btn {
+        font-weight: 500;
+        border-radius: 20px;
+        padding: 6px 18px;
+        border: 1px solid #cbd5e1;
+        background: #ffffff;
+        color: #475569;
+        transition: all 0.2s ease;
+    }
+    .filter-btn:hover {
+        background: #f1f5f9;
+        color: #0f172a;
+    }
+    .filter-btn.active {
+        background: #0ea5e9;
+        color: #ffffff;
+        border-color: #0ea5e9;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8 text-center my-5">
-        <div class="card card-custom p-5 bg-white border border-light shadow-sm">
-            <div class="card-body">
-                <i class="bi bi-cpu fs-1 text-info mb-4"></i>
-                <h1 class="fw-bold mb-3">Painel de Produção</h1>
-                <p class="text-muted fs-5 mb-4">Bem-vindo ao Painel de Produção</p>
-                <div class="alert alert-info border-0 shadow-sm rounded-3 py-3 px-4 d-inline-block">
-                    <i class="bi bi-info-circle-fill me-2 text-info fs-5"></i>
-                    A fundação da arquitetura e a conexão do banco de dados Scada-LTS estão configuradas e prontas para as próximas fases.
+<div class="container-fluid px-3 px-md-4">
+    <!-- Header Title and Status -->
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-2">
+        <div>
+            <h2 class="fw-bold text-dark mb-1">
+                <i class="bi bi-speedometer2 text-info me-2"></i>Painel de Estado Atual de Produção
+            </h2>
+            <p class="text-muted mb-0 small">
+                Monitoramento de telemetria em tempo real conectado ao Scada-LTS
+            </p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            {% if scada_offline %}
+            <span class="badge bg-danger px-3 py-2 fs-7 rounded-pill">
+                <i class="bi bi-wifi-off me-1"></i> Scada Offline
+            </span>
+            {% else %}
+            <span class="badge bg-success px-3 py-2 fs-7 rounded-pill">
+                <i class="bi bi-wifi me-1"></i> Scada Online
+            </span>
+            {% endif %}
+            <span class="text-muted small">
+                <i class="bi bi-clock me-1"></i> {{ last_updated_str }}
+            </span>
+        </div>
+    </div>
+
+    <!-- Alert Banner when Scada Offline -->
+    {% if scada_offline %}
+    <div class="alert alert-warning border-0 shadow-sm rounded-3 py-3 mb-4 d-flex align-items-center">
+        <i class="bi bi-exclamation-triangle-fill fs-4 me-3 text-warning"></i>
+        <div>
+            <strong class="d-block">Sem Comunicação com o Scada-LTS</strong>
+            <span class="small text-dark">
+                Não foi possível consultar os valores em tempo real. As máquinas permanecem listadas em estado "Sem comunicação" sem afetar o módulo de Manutenção.
+            </span>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- KPI Summary Row -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card kpi-card shadow-sm p-3 bg-white">
+                <div class="d-flex align-items-center">
+                    <div class="kpi-icon bg-info-subtle text-info me-3">
+                        <i class="bi bi-cpu"></i>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-medium">Total de Máquinas</div>
+                        <div class="fs-3 fw-bold text-dark" id="kpi-total">{{ total_count }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card kpi-card shadow-sm p-3 bg-white">
+                <div class="d-flex align-items-center">
+                    <div class="kpi-icon bg-success-subtle text-success me-3">
+                        <i class="bi bi-play-circle-fill"></i>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-medium">Produzindo</div>
+                        <div class="fs-3 fw-bold text-success" id="kpi-produzindo">{{ produzindo_count }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card kpi-card shadow-sm p-3 bg-white">
+                <div class="d-flex align-items-center">
+                    <div class="kpi-icon bg-danger-subtle text-danger me-3">
+                        <i class="bi bi-pause-circle-fill"></i>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-medium">Paradas</div>
+                        <div class="fs-3 fw-bold text-danger" id="kpi-paradas">{{ paradas_count }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-12 col-sm-6 col-lg-3">
+            <div class="card kpi-card shadow-sm p-3 bg-white">
+                <div class="d-flex align-items-center">
+                    <div class="kpi-icon bg-secondary-subtle text-secondary me-3">
+                        <i class="bi bi-dash-circle"></i>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-medium">Sem Comunicação</div>
+                        <div class="fs-3 fw-bold text-secondary" id="kpi-sem-comunicacao">{{ sem_comunicacao_count }}</div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
+
+    <!-- Global Parameters & Alarms Row -->
+    <div class="row g-3 mb-4">
+        <!-- Parâmetros Globais -->
+        <div class="col-12 col-lg-8">
+            <div class="card border-0 shadow-sm rounded-3 p-3 bg-white h-100">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="bi bi-sliders text-info fs-5 me-2"></i>
+                    <h6 class="fw-bold mb-0">Parâmetros Globais da Planta</h6>
+                </div>
+                <div class="row g-2">
+                    {% for param in global_parameters %}
+                    <div class="col-6 col-md-3">
+                        <div class="global-widget p-2 text-center">
+                            <span class="d-block text-muted small text-truncate" title="{{ param.nome }}">{{ param.nome }}</span>
+                            <span class="fs-5 fw-bold text-dark">{{ param.valor }}</span>
+                            <span class="small text-muted">{{ param.unidade }}</span>
+                            {% if param.is_stale %}
+                            <span class="badge bg-warning text-dark d-block mt-1 small">Desatualizado</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="col-12 text-muted small py-2">Nenhum parâmetro global cadastrado.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Alarmes Globais -->
+        <div class="col-12 col-lg-4">
+            <div class="card border-0 shadow-sm rounded-3 p-3 bg-white h-100">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="bi bi-bell-fill text-warning fs-5 me-2"></i>
+                    <h6 class="fw-bold mb-0">Alarmes Globais</h6>
+                </div>
+                <div class="d-flex flex-column gap-2">
+                    {% for alarm in global_alarms %}
+                    <div class="d-flex align-items-center justify-content-between p-2 rounded border bg-light">
+                        <span class="fw-medium small text-dark">{{ alarm.nome }}</span>
+                        <span class="badge bg-{{ alarm.badge_class }} px-2 py-1 small">
+                            {{ alarm.status_label }}
+                        </span>
+                    </div>
+                    {% empty %}
+                    <div class="text-muted small py-2">Nenhum alarme global cadastrado.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Card Geral das Matrizes em Uso -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <div class="d-flex align-items-center mb-3">
+            <i class="bi bi-bounding-box-circles text-primary fs-4 me-2"></i>
+            <h5 class="fw-bold mb-0 text-dark">Matrizes em Uso</h5>
+        </div>
+
+        <!-- A) RESUMO ATUAL DAS MATRIZES -->
+        <div class="mb-4">
+            <h6 class="fw-bold text-secondary mb-2 small text-uppercase tracking-wider">
+                <i class="bi bi-pie-chart me-1"></i>Resumo Atual por Matriz
+            </h6>
+            <div class="row g-2">
+                {% for item in matrix_summary %}
+                <div class="col-12 col-sm-6 col-md-4 col-xl-3">
+                    <div class="p-3 border rounded-3 {% if not item.is_informada %}bg-light border-warning{% else %}bg-white{% endif %} shadow-sm">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold fs-6 text-dark">
+                                <i class="bi bi-bounding-box text-primary me-1"></i>{{ item.label }}
+                            </span>
+                            <span class="badge bg-primary rounded-pill px-2 py-1">Total: {{ item.total }}</span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-1 fs-8">
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">Normais: {{ item.normais }}</span>
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Paradas: {{ item.paradas }}</span>
+                            {% if item.indeterminadas > 0 %}
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Indeterminadas: {{ item.indeterminadas }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="col-12 text-muted small py-2">Nenhuma matriz em uso registrada.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- B) HISTÓRICO DE MATRIZES -->
+        <div class="pt-3 border-top">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
+                <h6 class="fw-bold text-secondary mb-0 small text-uppercase tracking-wider">
+                    <i class="bi bi-clock-history me-1"></i>Histórico de Matrizes
+                </h6>
+                <form method="get" action="." class="d-flex flex-wrap align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a href="?periodo=hoje" class="btn btn-outline-secondary {% if matrix_filters.periodo_ativo == 'hoje' %}active{% endif %}">Hoje</a>
+                        <a href="?periodo=7d" class="btn btn-outline-secondary {% if matrix_filters.periodo_ativo == '7d' %}active{% endif %}">Últimos 7 dias</a>
+                        <a href="?periodo=30d" class="btn btn-outline-secondary {% if matrix_filters.periodo_ativo == '30d' %}active{% endif %}">Últimos 30 dias</a>
+                    </div>
+                    <input type="date" name="data_inicio" class="form-control form-control-sm" value="{{ matrix_filters.data_inicio_str }}" style="width: auto;">
+                    <input type="date" name="data_final" class="form-control form-control-sm" value="{{ matrix_filters.data_final_str }}" style="width: auto;">
+                    <button type="submit" class="btn btn-primary btn-sm fw-semibold">Aplicar</button>
+                    <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+                </form>
+            </div>
+
+            {% if matrix_history_error %}
+            <div class="alert alert-warning border-0 shadow-sm py-2 px-3 mb-3 small d-flex align-items-center">
+                <i class="bi bi-exclamation-triangle-fill me-2 text-warning fs-6"></i>
+                <span>{{ matrix_history_error }}</span>
+            </div>
+            {% endif %}
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 fs-7">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Máquina</th>
+                            <th>Cavidade</th>
+                            <th>Matriz</th>
+                            <th>Data/Hora Inicial</th>
+                            <th>Data/Hora Final</th>
+                            <th>Duração</th>
+                            <th>Situação</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for h in matrix_history %}
+                        <tr class="{% if h.is_open %}table-success-subtle fw-medium{% endif %}">
+                            <td class="fw-bold text-dark">{{ h.maquina_nome }}</td>
+                            <td>{{ h.cavidade_nome }}</td>
+                            <td class="fw-bold text-primary">{{ h.matriz_value }}</td>
+                            <td>{{ h.started_at|date:"d/m/Y H:i:s" }}</td>
+                            <td>
+                                {% if h.ended_at %}
+                                {{ h.ended_at|date:"d/m/Y H:i:s" }}
+                                {% else %}
+                                <span class="text-success fw-bold">(Em uso)</span>
+                                {% endif %}
+                            </td>
+                            <td class="fw-semibold text-dark">{{ h.duracao_str }}</td>
+                            <td>
+                                <span class="badge bg-{{ h.situacao_badge }} px-2 py-1">
+                                    {{ h.situacao_label }}
+                                </span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                <i class="bi bi-inbox fs-4 d-block mb-1"></i>
+                                Nenhum histórico encontrado para o período selecionado.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- Search and Quick Filter Controls -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-5">
+                <div class="input-group">
+                    <span class="input-group-text bg-light border-end-0">
+                        <i class="bi bi-search text-muted"></i>
+                    </span>
+                    <input type="text" id="machine-search-input" class="form-control border-start-0 bg-light" placeholder="Buscar por nome da máquina ou setor...">
+                </div>
+            </div>
+            <div class="col-12 col-md-7">
+                <div class="d-flex flex-wrap gap-2 justify-content-md-end" id="filter-tabs">
+                    <button type="button" class="filter-btn active" data-filter="all">Todas ({{ total_count }})</button>
+                    <button type="button" class="filter-btn" data-filter="PRODUZINDO">Produzindo ({{ produzindo_count }})</button>
+                    <button type="button" class="filter-btn" data-filter="PARADA">Paradas ({{ paradas_count }})</button>
+                    <button type="button" class="filter-btn" data-filter="SEM_COMUNICACAO">Sem Comunicação ({{ sem_comunicacao_count }})</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Machine Cards Grid -->
+    <div class="row g-3" id="machine-cards-container">
+        {% for m in machines %}
+        <div class="col-12 col-md-6 col-xl-4 machine-card-wrapper" 
+             data-name="{{ m.nome|lower }}" 
+             data-setor="{{ m.setor|lower }}" 
+             data-state="{{ m.state }}">
+            <div class="machine-card p-3 h-100 d-flex flex-column justify-content-between shadow-sm">
+                <div>
+                    <!-- Machine Header -->
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <h5 class="fw-bold mb-0 text-dark">{{ m.nome }}</h5>
+                            <span class="text-muted small"><i class="bi bi-diagram-3 me-1"></i>Setor: {{ m.setor }}</span>
+                        </div>
+                        <div class="d-flex flex-column align-items-end gap-1">
+                            <span class="badge badge-{{ m.badge_class|lower }} px-3 py-1 rounded-pill fw-semibold fs-7">
+                                {% if m.state == 'PRODUZINDO' %}
+                                <i class="bi bi-play-circle-fill me-1"></i>
+                                {% elif m.state == 'PARADA' %}
+                                <i class="bi bi-pause-circle-fill me-1"></i>
+                                {% else %}
+                                <i class="bi bi-dash-circle me-1"></i>
+                                {% endif %}
+                                {{ m.state_label }}
+                            </span>
+                            {% if m.is_stale %}
+                            <span class="badge badge-stale px-2 py-1 rounded-pill small" title="Dado sem atualização há mais de {{ m.stale_limit_seconds }}s">
+                                <i class="bi bi-exclamation-triangle me-1"></i> Desatualizado
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Status Details -->
+                    <div class="p-2 rounded bg-light mb-3">
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span><i class="bi bi-clock-history me-1"></i>Tempo no estado:</span>
+                            <strong class="text-dark">{{ m.tempo_decorrido_str }}</strong>
+                        </div>
+                        {% if m.state == 'PARADA' and m.motivo_geral %}
+                        <div class="d-flex justify-content-between small text-muted mb-1">
+                            <span><i class="bi bi-exclamation-circle me-1"></i>Motivo geral:</span>
+                            <span class="fw-semibold text-danger">{{ m.motivo_geral }}</span>
+                        </div>
+                        {% endif %}
+                        {% if m.abertura %}
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span><i class="bi bi-door-open me-1"></i>Abertura:</span>
+                            <span class="fw-semibold text-dark">{{ m.abertura }}</span>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Banner de Alerta: Prensa Parada há mais de 5 minutos -->
+                    {% if m.alerta_parada_5min %}
+                    <div class="alert alert-danger border-danger shadow-sm p-2 mb-3 rounded-3 d-flex align-items-start">
+                        <i class="bi bi-exclamation-octagon-fill fs-5 me-2 text-danger flex-shrink-0 mt-1"></i>
+                        <div>
+                            <strong class="d-block text-danger small fw-bold mb-1">Alerta: Prensa parada há mais de 5 minutos!</strong>
+                            <span class="small text-dark d-block">
+                                {% if m.motivo_prensa_pendente %}
+                                <span class="badge bg-danger text-white me-1">Motivo da prensa não informado</span>
+                                {% endif %}
+                                Verifique o motivo da parada e solicite ao operador que registre o motivo da máquina.
+                            </span>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- Cavities Breakdown -->
+                    {% if m.cavidades %}
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-semibold small text-secondary"><i class="bi bi-grid me-1"></i>Cavidades</span>
+                        </div>
+                        <div class="d-flex flex-column gap-2">
+                            {% for cav in m.cavidades %}
+                            <div class="p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <div class="d-flex align-items-center gap-1">
+                                        <span class="fw-bold text-dark">{{ cav.nome }}</span>
+                                        <span class="badge badge-{{ cav.badge_class|lower }} px-2 py-0 fs-8">
+                                            {{ cav.status_label }}
+                                        </span>
+                                    </div>
+                                    <span class="fw-bold text-primary">{{ cav.producao }} / {{ cav.meta }} ({{ cav.percentual }}%)</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
+                                    <span><i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz }}</strong></span>
+                                    <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
+                                </div>
+                                <div class="cavity-bar">
+                                    <div class="cavity-fill bg-info" style="width: {{ cav.percentual_bar }}%;"></div>
+                                </div>
+                                {% if cav.status_code == 'PARADA' and cav.motivo_parada %}
+                                <div class="text-danger fw-semibold small mt-1">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>Motivo: {{ cav.motivo_parada }}
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Footer Timestamp e Botão de Detalhes -->
+                <div class="pt-2 border-top text-muted small d-flex justify-content-between align-items-center">
+                    <span>Ordem: #{{ m.ordem }}</span>
+                    <a href="{% url 'production:machine_detail' m.id %}" class="btn btn-sm btn-outline-info rounded-pill px-3 py-1 fw-medium">
+                        <i class="bi bi-clock-history me-1"></i> Detalhes & Histórico
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12 text-center py-5">
+            <div class="card p-5 border-0 shadow-sm rounded-3 bg-white">
+                <i class="bi bi-inbox fs-1 text-muted mb-3"></i>
+                <h5 class="fw-bold text-dark">Nenhuma máquina configurada para produção.</h5>
+                <p class="text-muted small">Cadastre as configurações de máquinas e XIDs no Admin do sistema.</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Empty Search State Message -->
+    <div id="no-search-results" class="text-center py-5 d-none">
+        <i class="bi bi-search fs-1 text-muted mb-3"></i>
+        <h5 class="fw-bold text-dark">Nenhuma máquina encontrada.</h5>
+        <p class="text-muted small">Tente alterar o termo de busca ou o filtro de status selecionado.</p>
+    </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const searchInput = document.getElementById('machine-search-input');
+        const filterBtns = document.querySelectorAll('.filter-btn');
+        const cards = document.querySelectorAll('.machine-card-wrapper');
+        const noResults = document.getElementById('no-search-results');
+
+        let currentFilter = 'all';
+        let currentSearch = '';
+
+        function updateVisibility() {
+            let visibleCount = 0;
+
+            cards.forEach(card => {
+                const name = card.getAttribute('data-name') || '';
+                const setor = card.getAttribute('data-setor') || '';
+                const state = card.getAttribute('data-state') || '';
+
+                const matchesSearch = name.includes(currentSearch) || setor.includes(currentSearch);
+                const matchesFilter = (currentFilter === 'all') || (state === currentFilter);
+
+                if (matchesSearch && matchesFilter) {
+                    card.classList.remove('d-none');
+                    visibleCount++;
+                } else {
+                    card.classList.add('d-none');
+                }
+            });
+
+            if (visibleCount === 0 && cards.length > 0) {
+                noResults.classList.remove('d-none');
+            } else {
+                noResults.classList.add('d-none');
+            }
+        }
+
+        if (searchInput) {
+            searchInput.addEventListener('input', function(e) {
+                currentSearch = e.target.value.toLowerCase().trim();
+                updateVisibility();
+            });
+        }
+
+        filterBtns.forEach(btn => {
+            btn.addEventListener('click', function() {
+                filterBtns.forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentFilter = this.getAttribute('data-filter');
+                updateVisibility();
+            });
+        });
+    });
+</script>
 {% endblock %}

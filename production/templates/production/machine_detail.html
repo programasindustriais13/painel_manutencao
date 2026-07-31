@@ -1,0 +1,351 @@
+{% extends "production/base_production.html" %}
+
+{% block title %}Detalhes da Máquina - {{ machine.nome }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .kpi-card {
+        border-radius: 12px;
+        border: none;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .kpi-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.08);
+    }
+    .kpi-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+    }
+    .badge-produzindo, .badge-normal, .badge-success {
+        background-color: #dcfce7;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+    }
+    .badge-parada, .badge-danger {
+        background-color: #fee2e2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+    }
+    .badge-sem-comunicacao, .badge-indeterminado, .badge-secondary {
+        background-color: #f1f5f9;
+        color: #475569;
+        border: 1px solid #e2e8f0;
+    }
+    .badge-stale {
+        background-color: #fef3c7;
+        color: #b45309;
+        border: 1px solid #fde68a;
+    }
+    .cavity-bar {
+        height: 8px;
+        border-radius: 4px;
+        background-color: #e2e8f0;
+        overflow: hidden;
+    }
+    .cavity-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.3s ease;
+    }
+    .table-event-open {
+        background-color: #fff1f2 !important;
+        font-weight: 500;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4">
+    <!-- Header with Back Button -->
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-2">
+        <div class="d-flex align-items-center gap-3">
+            <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary rounded-circle p-2" title="Voltar ao Painel">
+                <i class="bi bi-arrow-left fs-5"></i>
+            </a>
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <h2 class="fw-bold text-dark mb-0">{{ machine.nome }}</h2>
+                    <span class="badge badge-{{ badge_class|lower }} px-3 py-1 rounded-pill fw-semibold fs-7">
+                        {% if state == 'PRODUZINDO' %}
+                        <i class="bi bi-play-circle-fill me-1"></i>
+                        {% elif state == 'PARADA' %}
+                        <i class="bi bi-pause-circle-fill me-1"></i>
+                        {% else %}
+                        <i class="bi bi-dash-circle me-1"></i>
+                        {% endif %}
+                        {{ state_label }}
+                    </span>
+                    {% if is_stale %}
+                    <span class="badge badge-stale px-2 py-1 rounded-pill small">
+                        <i class="bi bi-exclamation-triangle me-1"></i> Desatualizado
+                    </span>
+                    {% endif %}
+                </div>
+                <p class="text-muted mb-0 small">
+                    <i class="bi bi-diagram-3 me-1"></i>Setor: {{ setor_nome }} | 
+                    <i class="bi bi-clock me-1"></i>Tempo no Estado: <strong>{{ tempo_decorrido_str }}</strong> |
+                    <i class="bi bi-arrow-repeat me-1"></i>Última Leitura: {{ ultima_leitura_str }}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Machine Live Status Card -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-6 col-lg-3">
+                <div class="p-2 border rounded bg-light">
+                    <span class="d-block text-muted small"><i class="bi bi-exclamation-circle me-1"></i>Motivo Atual de Parada</span>
+                    <strong class="text-danger fs-6">{{ motivo_geral }}</strong>
+                </div>
+            </div>
+            <div class="col-12 col-md-6 col-lg-3">
+                <div class="p-2 border rounded bg-light">
+                    <span class="d-block text-muted small"><i class="bi bi-wifi me-1"></i>Situação da Comunicação</span>
+                    {% if sem_comunicacao %}
+                    <strong class="text-secondary fs-6"><i class="bi bi-wifi-off me-1"></i>Sem comunicação com Scada</strong>
+                    {% elif is_stale %}
+                    <strong class="text-warning fs-6"><i class="bi bi-exclamation-triangle me-1"></i>Dado Desatualizado</strong>
+                    {% else %}
+                    <strong class="text-success fs-6"><i class="bi bi-check-circle me-1"></i>Comunicação OK</strong>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-12 col-lg-6">
+                <div class="p-2 border rounded bg-light">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="fw-semibold small text-secondary"><i class="bi bi-grid me-1"></i>Produção vs Meta Total</span>
+                        <span class="small fw-bold text-dark">{{ producao_total }} / {{ meta_total }} ({{ percentual_total }}%)</span>
+                    </div>
+                    <div class="cavity-bar">
+                        <div class="cavity-fill bg-success" style="width: {{ percentual_total_bar }}%;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Banner de Alerta: Prensa Parada há mais de 5 minutos -->
+        {% if alerta_parada_5min %}
+        <div class="alert alert-danger border-danger shadow-sm p-3 mt-3 mb-0 rounded-3 d-flex align-items-start">
+            <i class="bi bi-exclamation-octagon-fill fs-4 me-2 text-danger flex-shrink-0 mt-1"></i>
+            <div>
+                <strong class="d-block text-danger small fw-bold mb-1">Alerta: Prensa parada há mais de 5 minutos!</strong>
+                <span class="small text-dark d-block">
+                    {% if motivo_prensa_pendente %}
+                    <span class="badge bg-danger text-white me-1">Motivo da prensa não informado</span>
+                    {% endif %}
+                    Verifique o motivo da parada e solicite ao operador que registre o motivo da máquina.
+                </span>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Cavidades Details -->
+        {% if cavidades %}
+        <div class="row g-2 mt-2">
+            {% for cav in cavidades %}
+            <div class="col-12 col-sm-6 col-md-3">
+                <div class="p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <div class="d-flex align-items-center gap-1">
+                            <span class="fw-bold text-dark">{{ cav.nome }}</span>
+                            <span class="badge badge-{{ cav.badge_class|lower }} px-2 py-0 fs-8">
+                                {{ cav.status_label }}
+                            </span>
+                        </div>
+                        <span class="fw-bold text-primary">{{ cav.producao }} / {{ cav.meta }} ({{ cav.percentual }}%)</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
+                        <span><i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz }}</strong></span>
+                        <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
+                    </div>
+                    <div class="cavity-bar">
+                        <div class="cavity-fill bg-info" style="width: {{ cav.percentual_bar }}%;"></div>
+                    </div>
+                    {% if cav.status_code == 'PARADA' and cav.motivo_parada %}
+                    <div class="text-danger fw-semibold small mt-1">
+                        <i class="bi bi-exclamation-triangle me-1"></i>Motivo: {{ cav.motivo_parada }}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Filter Control Bar -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <form method="get" action="." class="row g-3 align-items-end">
+            <div class="col-12 col-md-6 col-lg-4">
+                <label class="form-label small fw-semibold text-muted mb-1"><i class="bi bi-funnel me-1"></i>Filtros Rápidos por Período</label>
+                <div class="btn-group w-100" role="group">
+                    <a href="?periodo=hoje" class="btn btn-outline-secondary btn-sm {% if filters.periodo_ativo == 'hoje' %}active{% endif %}">Hoje</a>
+                    <a href="?periodo=7d" class="btn btn-outline-secondary btn-sm {% if filters.periodo_ativo == '7d' %}active{% endif %}">Últimos 7 dias</a>
+                    <a href="?periodo=30d" class="btn btn-outline-secondary btn-sm {% if filters.periodo_ativo == '30d' %}active{% endif %}">Últimos 30 dias</a>
+                </div>
+            </div>
+            <div class="col-6 col-md-3 col-lg-3">
+                <label for="data_inicio" class="form-label small fw-semibold text-muted mb-1">Data Inicial</label>
+                <input type="date" id="data_inicio" name="data_inicio" class="form-control form-control-sm" value="{{ filters.data_inicio_str }}">
+            </div>
+            <div class="col-6 col-md-3 col-lg-3">
+                <label for="data_final" class="form-label small fw-semibold text-muted mb-1">Data Final</label>
+                <input type="date" id="data_final" name="data_final" class="form-control form-control-sm" value="{{ filters.data_final_str }}">
+            </div>
+            <div class="col-12 col-lg-2 d-flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm w-100 fw-semibold">
+                    <i class="bi bi-filter me-1"></i>Filtrar
+                </button>
+            </div>
+        </form>
+    </div>
+
+    {% if date_error_msg %}
+    <div class="alert alert-warning border-0 shadow-sm py-2 px-3 mb-4 small d-flex align-items-center">
+        <i class="bi bi-exclamation-triangle-fill me-2 text-warning fs-6"></i>
+        <span>{{ date_error_msg }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Linha do Tempo Operacional (SPEC 05D) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
+            <div>
+                <h5 class="fw-bold text-dark mb-0">
+                    <i class="bi bi-activity text-success me-2"></i>Linha do Tempo Operacional
+                </h5>
+                <span class="text-muted small">Visualização contínua dos ciclos de Produção, Parada e Sem Comunicação no período</span>
+            </div>
+            <div class="d-flex align-items-center gap-3 small">
+                <span><i class="bi bi-square-fill me-1" style="color: #22c55e;"></i>Produzindo</span>
+                <span><i class="bi bi-square-fill me-1" style="color: #ef4444;"></i>Parada</span>
+                <span><i class="bi bi-square-fill me-1" style="color: #9ca3af;"></i>Sem comunicação</span>
+            </div>
+        </div>
+
+        <!-- Barra Horizontal da Linha do Tempo -->
+        <div class="p-2 bg-light border rounded-3 mb-3">
+            <div class="d-flex w-100 rounded-2 overflow-hidden position-relative" style="height: 36px; background-color: #e2e8f0;">
+                {% for seg in timeline_segments %}
+                <div class="timeline-segment position-relative"
+                     style="width: {{ seg.width_pct }}%; background-color: {{ seg.color_hex }}; min-width: 2px; height: 100%; border-right: 1px solid rgba(255,255,255,0.4);"
+                     data-bs-toggle="tooltip"
+                     data-bs-html="true"
+                     title="<strong>{{ seg.state_label }}</strong><br>Início: {{ seg.eff_start|date:'d/m/Y H:i:s' }}<br>Fim: {% if seg.is_open %}now (Em andamento){% else %}{{ seg.eff_end|date:'d/m/Y H:i:s' }}{% endif %}<br>Duração: {{ seg.duracao_str }}">
+                </div>
+                {% empty %}
+                <div class="w-100 d-flex align-items-center justify-content-center text-muted small">
+                    Nenhum intervalo registrado no período.
+                </div>
+                {% endfor %}
+            </div>
+            <div class="d-flex justify-content-between text-muted fs-8 mt-1 px-1">
+                <span>{{ filters.data_inicio_str }}</span>
+                <span>{{ filters.data_final_str }}</span>
+            </div>
+        </div>
+
+        <!-- KPIs Complementares do Período -->
+        <div class="row g-2 pt-2 border-top">
+            <div class="col-6 col-md-4 col-lg-2">
+                <div class="p-2 border rounded text-center bg-light">
+                    <span class="d-block text-muted fs-8">Tempo Produzindo</span>
+                    <strong class="text-success fs-6">{{ kpi.tempo_produzindo_str }}</strong>
+                    <span class="badge bg-success-subtle text-success d-block mt-1 fs-8">{{ kpi.percentual_produzindo }}%</span>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2">
+                <div class="p-2 border rounded text-center bg-light">
+                    <span class="d-block text-muted fs-8">Tempo Parado</span>
+                    <strong class="text-danger fs-6">{{ kpi.tempo_parado_str }}</strong>
+                    <span class="badge bg-danger-subtle text-danger d-block mt-1 fs-8">{{ kpi.percentual_parado }}%</span>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2">
+                <div class="p-2 border rounded text-center bg-light">
+                    <span class="d-block text-muted fs-8">Sem Comunicação</span>
+                    <strong class="text-secondary fs-6">{{ kpi.tempo_sem_comunicacao_str }}</strong>
+                    <span class="badge bg-secondary-subtle text-secondary d-block mt-1 fs-8">Indeterminado</span>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2">
+                <div class="p-2 border rounded text-center bg-light">
+                    <span class="d-block text-muted fs-8">Ciclos de Produção</span>
+                    <strong class="text-dark fs-6">{{ kpi.qtd_ciclos_producao }}</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2">
+                <div class="p-2 border rounded text-center bg-light">
+                    <span class="d-block text-muted fs-8">Quantidade de Paradas</span>
+                    <strong class="text-dark fs-6">{{ kpi.qtd_paradas }}</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-4 col-lg-2">
+                <div class="p-2 border rounded text-center bg-light">
+                    <span class="d-block text-muted fs-8">Duração Média Parada</span>
+                    <strong class="text-dark fs-6">{{ kpi.duracao_media_str }}</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Downtime History Table -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-list-task me-2"></i>Histórico de Eventos de Parada</h5>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Status</th>
+                        <th>Início da Parada</th>
+                        <th>Fim da Parada</th>
+                        <th>Duração no Período</th>
+                        <th>Motivo Geral de Parada</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ev in events %}
+                    <tr class="{% if ev.is_open %}table-event-open{% endif %}">
+                        <td>
+                            {% if ev.is_open %}
+                            <span class="badge bg-danger px-3 py-1 rounded-pill">
+                                <i class="bi bi-play-fill me-1"></i> Em andamento
+                            </span>
+                            {% else %}
+                            <span class="badge bg-secondary px-3 py-1 rounded-pill">
+                                Fechado
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-medium text-dark">{{ ev.inicio|date:"d/m/Y H:i:s" }}</td>
+                        <td>
+                            {% if ev.fim %}
+                            {{ ev.fim|date:"d/m/Y H:i:s" }}
+                            {% else %}
+                            <span class="text-danger fw-semibold">(Aberto)</span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-bold text-dark">{{ ev.duracao_str }}</td>
+                        <td class="text-secondary">{{ ev.motivo_geral }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center py-4 text-muted">
+                            <i class="bi bi-check-circle fs-3 d-block mb-2 text-success"></i>
+                            Nenhuma parada registrada para o período selecionado.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

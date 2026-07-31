@@ -1824,3 +1824,331 @@ E. QA e Suíte de Testes:
 - 23/23 testes unitários aprovados com sucesso.
 - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações).
 - Smoke tests locais com Waitress e DEBUG=False validados com sucesso.
+
+
+43. ETAPA 0 — AUDITORIA DO MÓDULO DE PRODUÇÃO E SCADA-LTS (2026-07-29)
+--------------------------------------------------------------------------------
+Auditoria de estado atual do app `production` e mapeamento de dependências com o Scada-LTS.
+
+Resultado: APROVADO COM BLOQUEIOS
+- Base do app `production`, rotas `/producao/`, login condicional e permissões validadas.
+- Bloqueio Arquitetural Identificado: `ScadaRouter` (`production/routers.py`) atualmente roteia
+  todos os models do app `production` para `scada` e proíbe migrações para todo o app.
+- Ação Obrigatória para SPEC 03: Ajustar `ScadaRouter` para que modelos gerenciados (`managed=True`)
+  do app `production` rotem para o banco `default` e permitam migrações aditivas.
+- Mapeado o índice sequencial das SPECs (03 a 08) e elaborada a proposta de arquitetura.
+- Nenhuma alteração de código ou migration foi realizada nesta etapa.
+- 23/23 testes unitários aprovados via `.venv\Scripts\python.exe manage.py test`.
+
+
+44. SPEC 03 — CADASTRO LOCAL DE XIDs, CAVIDADES, PARÂMETROS E ALARMES NO ADMIN (2026-07-29)
+--------------------------------------------------------------------------------
+STATUS: REPROVADA NA AUDITORIA / SUBSTITUÍDA PELA SPEC 03A
+
+Resultados da Implementação Inicial:
+A primeira execução da SPEC 03 foi reprovada na auditoria e QA por conter não-determinismo no router, chamada incorreta nos testes de migração, falta de constraints de unicidade nas cavidades e limite stale, e ausência do arquivo de inicialização de pacote (`__init__.py`) que impedia a descoberta global dos testes de produção via `manage.py test`.
+
+
+45. SPEC 03A — CORREÇÃO DO ROUTER, TESTES E INTEGRIDADE DE CONFIGURAÇÃO (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTADA
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_03A_CORRECAO_ROUTER_TESTES_INTEGRIDADE.md
+- production/__init__.py
+- production/migrations/0002_alter_productionmachineconfig_stale_limit_seconds_and_more.py
+
+Arquivos modificados:
+- production/routers.py
+- production/models.py
+- production/admin.py
+- production/tests.py
+- Instrucoes.txt
+
+Resultados das Correções e QA:
+1. `ScadaRouter`:
+   - Mapeada lista estrita de modelos gerenciados locais por model_name em minúsculo:
+     `productionmachineconfig`, `productioncavityconfig`, `productionglobalparameter`, `productionglobalalarm`.
+   - `db_for_read`: Retorna 'default' para modelos gerenciados locais e 'scada' para não gerenciados de produção.
+   - `db_for_write`: Retorna 'default' para modelos gerenciados locais. Modelos não gerenciados do Scada são categoricamente BLOQUEADOS com `PermissionError`.
+   - `allow_migrate`: Retorna False para qualquer app em `db == 'scada'`. Retorna True apenas no banco 'default' para os 4 modelos gerenciados locais. Trata corretamente chamadas com e sem hints['model'] e dicionários de hints posicionais.
+   - `allow_relation`: Permite relação entre `maintenance.Machine` e `ProductionMachineConfig` no banco default e bloqueia qualquer relação envolvendo modelo não gerenciado do Scada.
+2. Integridade e Constraints nos Models (`production/models.py`):
+   - Adicionadas `UniqueConstraint`s independentes em `ProductionCavityConfig`:
+     * `uniq_prod_cavity_machine_nome` (machine_config + nome)
+     * `uniq_prod_cavity_machine_ordem` (machine_config + ordem)
+   - Adicionado `MinValueValidator(1)` e `CheckConstraint` `chk_prod_machine_stale_limit_gte_1` em `ProductionMachineConfig` para `stale_limit_seconds >= 1`.
+3. Migration Aditiva `0002`:
+   - Auditoria de duplicidades no banco local executada antes da aplicação: 0 duplicidades encontradas.
+   - Backup do banco SQLite local realizado (`db.sqlite3.bak_spec03a`).
+   - Migration `0002` gerada e aplicada com sucesso exclusivamente no banco `default`.
+   - O banco `scada` permaneceu 100% isolado (sem escritas ou migrações).
+4. Descoberta e Execução da Suíte de Testes:
+   - Adicionado `production/__init__.py` corrigindo a descoberta de testes global.
+   - Suíte completa executada com sucesso em todas as 4 modalidades de comando (`production.tests`, `production`, `maintenance production`, `manage.py test`), com total de 47 testes aprovados (23 maintenance + 24 production). 0 falhas, 0 erros, 0 skipped.
+
+
+46. CHECKPOINT E PENDÊNCIA ARQUITETURAL DAS SPECS 03 E 03A (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: APROVADO E FECHADO
+
+Regras e Pendências Registradas:
+1. Pendência Arquitetural — `LOCAL_MANAGED_MODELS`:
+   - O `ScadaRouter` (`production/routers.py`) utiliza a constante `LOCAL_MANAGED_MODELS` para identificar quais modelos do app `production` gravam e migram no banco `default`.
+   - Toda SPEC futura que criar um novo model local `managed=True` no app `production` DEVERÁ incluir seu nome em minúsculo em `LOCAL_MANAGED_MODELS`.
+   - Isso será OBRIGATÓRIO principalmente na futura SPEC 06 (modelos locais para estado atual e histórico de paradas). Sem essa inclusão, o router tratará o novo model como pertencente ao Scada e bloqueará sua escrita.
+   - Nenhum modelo da SPEC 04 ou SPEC 06 foi criado nesta execução.
+
+2. Declaração Técnica sobre o Banco Scada:
+   - A tentativa de conexão ao alias `scada` no ambiente local falhou por falha de autenticação (MySQL 1045). Essa falha não deve ser interpretada como prova arquitetural de isolamento.
+   - O isolamento foi validado rigorosamente através de testes unitários do `ScadaRouter`, garantindo bloqueio de escrita e migração em modelos Scada.
+   - Nenhuma operação foi realizada na base Scada.
+   - A proteção definitiva em produção dependerá de um usuário MySQL configurado exclusivamente com permissão de `SELECT`.
+   - Chamadas explícitas usando `.using("scada")` jamais devem ser utilizadas para escrita.
+   - O comando `migrate --database=scada` não deve ser executado sob nenhuma hipótese.
+
+
+47. AUTORIZAÇÃO HUMANA E REORGANIZAÇÃO DOCUMENTAL — CONSOLIDAÇÃO DAS SPECS RESTANTES (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: DOCUMENTAÇÃO E PLANEJAMENTO CONSOLIDADOS
+
+Aprovação Humana e Fechamento:
+1. O fechamento documental e técnico das SPECs 03 e 03A foi formalmente aprovado pelo usuário.
+2. Foi autorizada exclusivamente a reorganização documental e o planejamento consolidado das etapas restantes.
+3. As antigas 5 SPECs restantes (04 a 08) foram consolidadas em 3 SPECs organizadas, autossuficientes e com fases internas:
+   - SPEC 04 — INTEGRAÇÃO SCADA-LTS E VISÃO ATUAL DO PAINEL DE PRODUÇÃO (Consolida as antigas SPECs 04 e 05)
+   - SPEC 05 — COLETOR, HISTÓRICO E DETALHE DAS MÁQUINAS (Consolida as antigas SPECs 06 e 07)
+   - SPEC 06 — HARDENING, SERVIÇO WINDOWS, DEPLOY E ROLLBACK (Substitui a antiga SPEC 08)
+
+Arquivos Atualizados:
+- implementation_plan.md: Reestruturado com o novo índice, detalhamento completo das 3 SPECs consolidadas, escopos, fases internas, dependências, riscos e regras de governança.
+- PROMPT/PLANO_RECOMENDADO_PRODUCAO_SCADA.md: Atualizado refletindo a sequência de 3 SPECs consolidadas.
+- Instrucoes.txt: Este registro de encerramento do planejamento.
+- SPECs 03 e 03A mantidas 100% inalteradas.
+
+Declaração de Execução Restrita:
+- NENHUM código Python/Django foi implementado nesta execução.
+- A SPEC 04 NÃO foi iniciada e aguarda autorização humana prévia.
+- O banco Scada-LTS NÃO foi acessado nesta execução.
+- NENHUMA migration foi gerada ou aplicada.
+- NENHUM commit ou push foi realizado no Git antes desta apresentação.
+
+
+48. SPEC 04 — INTEGRAÇÃO SCADA-LTS E VISÃO ATUAL DO PAINEL DE PRODUÇÃO (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTADA E APROVADA NO QA
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_04_INTEGRACAO_SCADA_E_PAINEL.md
+- production/services.py
+- production/migrations/0003_scadadatapoint_scadapointvalue_and_more.py
+
+Arquivos modificados:
+- production/models.py (ScadaDataPoint, ScadaPointValue, ScadaPointValueAnnotation com managed=False)
+- production/views.py (integração da view production_dashboard com ProductionStateService)
+- production/templates/production/dashboard.html (cards responsivos, busca, tabs de filtro, parâmetros e alarmes globais)
+- production/tests.py (34 testes em production / 57 suíte global)
+- implementation_plan.md
+- Instrucoes.txt
+
+Resultados da Implementação e QA:
+1. Models Não Gerenciados do Scada-LTS (`production/models.py`):
+   - `ScadaDataPoint` (`db_table='datapoints'`, `managed=False`)
+   - `ScadaPointValue` (`db_table='pointvalues'`, `managed=False`)
+   - `ScadaPointValueAnnotation` (`db_table='pointvalueannotations'`, `managed=False`)
+   - Roteamento exclusivo via alias `scada`. Tentativas de escrita ORM disparam `PermissionError`.
+2. Camada de Serviço de Leitura (`production/services.py`):
+   - `ScadaReaderService`: Resolução XID -> dataPointId com cache (15min), quarentena para XIDs inexistentes (10s), e busca em lote dos últimos valores usando subquery MAX(ts).
+   - Normalização dos 4 tipos nativos (Binary, Multistate, Numeric, String).
+   - `ProductionStateService`: Agregação do estado atual de máquinas, cavidades, metas, parâmetros e alarmes globais. Tratamento de falhas de comunicação e identificação de dados desatualizados (stale_limit_seconds).
+3. Interface Web (`/producao/`):
+   - Totais de KPI (Produzindo, Paradas, Sem Comunicação).
+   - Busca em tempo real por nome ou setor.
+   - Filtros rápidos por estado no frontend sem recarregar página.
+   - Design industrial responsivo em Português (pt-br).
+4. Suíte de Testes Automatizados:
+   - 34/34 testes do app `production` e 57/57 da suíte global aprovados sem falhas (100% OK).
+   - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes / exit code 0).
+
+
+49. SPEC 05 — COLETOR, HISTÓRICO E DETALHE DAS MÁQUINAS (2026-07-30)
+--------------------------------------------------------------------------------
+STATUS: IMPLEMENTADA E APROVADA NO QA
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05_COLETOR_HISTORICO_DETALHE.md
+- production/management/commands/collect_production_scada.py
+- production/migrations/0004_productionmachinestate_productiondowntimeevent.py
+- production/templates/production/machine_detail.html
+
+Arquivos modificados:
+- production/models.py (ProductionMachineState e ProductionDowntimeEvent)
+- production/routers.py (LOCAL_MANAGED_MODELS atualizado)
+- production/services.py (máquina de estados idempotente e estatísticas de detalhe)
+- production/views.py (view machine_detail)
+- production/urls.py (rota maquinas/<int:pk>/)
+- production/templates/production/dashboard.html (botão de navegação para detalhes no card)
+- production/tests.py (44 testes em production / 67 suíte global)
+- implementation_plan.md
+- Instrucoes.txt
+
+Resultados da Implementação e QA:
+1. Modelos Locais no Banco Default (`production/models.py`):
+   - `ProductionMachineState`: Estado ativo (Produzindo, Parada, Sem comunicação, Dado desatualizado), timestamp inicial e motivo.
+   - `ProductionDowntimeEvent`: Histórico de paradas com início, fim, duração em segundos, motivo geral e snapshot do status.
+   - Roteamento exclusivo no banco `default` confirmado no `ScadaRouter`. Migration `0004` aditiva aplicada no `default`.
+2. Máquina de Estados Idempotente (`ProductionStateService`):
+   - Transição `Produzindo -> Parada`: Abre 1 evento de parada.
+   - Estado `Continua Parada`: Mantém o evento aberto sem duplicar.
+   - Transição `Parada -> Produzindo`: Fecha evento aberto, calcula a duração em segundos.
+   - Falha de Comunicação / Stale: Preserva o último estado industrial válido sem abrir ou fechar eventos.
+   - Retomada pós-crash: Recupera eventos abertos e continua cronômetro.
+3. Coletor de Background (`collect_production_scada`):
+   - Comando CLI com opções `--once` e `--interval`.
+   - Lock de arquivo cross-process (`scada_collector.lock`) impede instâncias simultâneas e libera lock se o processo for encerrado.
+   - Encerramento limpo de conexões de banco (`connections.close_all()`) a cada ciclo.
+4. Tela de Detalhe da Máquina (`/producao/maquinas/<id>/`):
+   - Exibe nome, setor, estado atual, cavidades, metas, última leitura e comunicação.
+   - Filtros por data (`hoje`, `7d`, `30d`, intervalo customizado) com KPIs do período (tempo total parado, quantidade, maior parada, duração média) considerando eventos parcialmente sobrepostos.
+5. Suíte de Testes Automatizados (Restaurada e Expandida):
+   - 44/44 testes do app `production` e 67/67 da suíte global aprovados com 100% de sucesso.
+   - `manage.py check` (0 erros), `makemigrations --check --dry-run` (0 alterações pendentes).
+
+==============================================================================
+SPEC 06 — HARDENING, SERVIÇO WINDOWS, DEPLOY E ROLLBACK (FASE A — PREPARAÇÃO LOCAL)
+Data: 2026-07-30 | Status: Fase A Concluída (Aguardando Gate Humano para Fase B)
+==============================================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_06_HARDENING_DEPLOY_ROLLBACK.md
+- scripts/start_scada_collector.ps1
+- scripts/preflight_production_scada.ps1
+
+Arquivos modificados:
+- maintenance_project/settings.py (connect_timeout no scada, loggers de produção e coletor)
+- .env.example (variáveis do scada e coletor com valores fictícios)
+- .gitignore (logs/, *.log, scada_collector.lock)
+- production/management/commands/collect_production_scada.py (logger dedicado 'production.collector', mensagens estruturadas, contagem de máquinas por ciclo e liberação de lock)
+- DEPLOY_WINDOWS_SERVER.md (comandos SQL para usuário MySQL somente leitura, serviço NSSM, backup, preflight e runbook de rollback)
+- production/tests.py (71 testes globais aprovados com 100% de sucesso)
+- Instrucoes.txt
+
+Resultados da Implementação da Fase A:
+1. Hardening de Credenciais e Configuração:
+   - Sensível removido de settings.py e padronizado em variáveis de ambiente.
+   - Timeout de conexão do Scada (`SCADA_DB_CONNECT_TIMEOUT`) configurado.
+   - `.env.example` atualizado com valores totalmente ilustrativos.
+2. Documentação de Usuário MySQL Read-Only:
+   - Instruções SQL com `CREATE USER`, `GRANT SELECT ON scadalts.*` e `SHOW GRANTS` adicionadas em `DEPLOY_WINDOWS_SERVER.md`.
+3. Coletor Hardened (`collect_production_scada`):
+   - Registrador `production.collector` gravando em `logs/scada_collector.log` via `RotatingFileHandler` (UTF-8, 5MB).
+   - Bloqueio de 2ª instância, liberação limpa de lock e registro de contagem de máquinas por ciclo sem expor senhas.
+4. Scripts de Automação Windows:
+   - `scripts/start_scada_collector.ps1`: Executa o coletor via `.venv` com Python 3.11 de forma isolada do Waitress.
+   - `scripts/preflight_production_scada.ps1`: Auditoria 100% somente leitura para validação pré-deploy.
+5. Suíte de Testes (71/71 Aprovados):
+   - Criado `ProductionHardeningAndInfrastructureTestCase` testando ausência de segredos, logging, scripts de automação, concorrência e isolamento web.
+   - Suíte global passou 100% (71/71 testes).
+
+==============================================================================
+SPEC 05B — ENRIQUECIMENTO DOS CARDS DE PRODUÇÃO E ALERTA DE PARADA PROLONGADA
+Data: 2026-07-30 | Status: Concluída com Sucesso (Suíte 80/80 Testes Aprovados)
+==============================================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05B_DADOS_OPERACIONAIS_ALERTA_PARADA.md
+- production/migrations/0005_dados_operacionais_cavidades.py
+
+Arquivos modificados:
+- production/models.py (6 novos campos aditivos em ProductionCavityConfig)
+- production/admin.py (ProductionCavityConfigInline atualizado com novos campos)
+- production/services.py (coleta em lote, build_cavities_data, meta manual, produto-lote, alerta 5min e cronômetros)
+- production/templates/production/dashboard.html (banner alerta 5min, badge cavidades, matriz, produto-lote, meta manual)
+- production/templates/production/machine_detail.html (banner alerta 5min e dados operacionais das cavidades)
+- production/tests.py (Spec05BEnrichmentAndAlertTestCase cobrindo 34 regras da SPEC 05B, 80/80 testes aprovados)
+- Instrucoes.txt
+- implementation_plan.md
+
+Resultados da Implementação:
+1. Modelo e Migração Aditiva:
+   - Adicionados campos `xid_status_cavidade`, `valor_cavidade_produzindo`, `xid_matriz`, `xid_produto`, `xid_lote_bladder`, `meta_producao_manual`.
+   - Migração `0005_dados_operacionais_cavidades` aplicada com sucesso no banco `default`.
+2. Lógica e Serviços (`ProductionStateService`):
+   - Leitura em lote de todos os novos XIDs sem N+1 queries.
+   - Concatenação visual de Produto e Lote do Bladder com 4 regras de fallback.
+   - Meta manual como fonte atual para cálculo de percentual de produção.
+   - Status da cavidade 100% isolado do estado geral da prensa.
+   - Alerta visual de prensa parada >= 5 minutos (300 segundos) ativado para estados PARADA com telemetria ativa.
+3. Interfaces de Usuário (Dashboard & Detalhe):
+   - Cards enriquecidos com banner de alerta em destaque e detalhamento completo de cada cavidade.
+4. Validação e Qualidade:
+   - `manage.py check` (0 erros).
+   - Suíte de testes global expandida para 80/80 testes, 100% aprovados.
+
+==============================================================================
+SPEC 05C — INTERPRETAÇÃO DOS MOTIVOS DE PARADA DAS CAVIDADES
+Data: 2026-07-31 | Status: Concluída com Sucesso (Suíte 94/94 Testes Aprovados)
+==============================================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05C_MOTIVOS_PARADA_CAVIDADES.md
+- production/migrations/0006_remove_status_individual_cavidade.py
+
+Arquivos modificados:
+- production/models.py (Removidos campos xid_status_cavidade e valor_cavidade_produzindo de ProductionCavityConfig)
+- production/admin.py (Removidos campos do ProductionCavityConfigInline)
+- production/services.py (Criados CAVITY_REASON_MAP, PRESS_REASON_MAP, resolve_cavity_status_and_reason, format_press_reason; remoção de xid_status_cavidade das consultas em lote)
+- production/templates/production/dashboard.html (Atualizados badges e rótulos de cavidades e prensa)
+- production/templates/production/machine_detail.html (Atualizados badges e rótulos de cavidades e prensa)
+- production/tests.py (Adaptados testes anteriores e adicionado Spec05CMotivosParadaCavidadesTestCase)
+- Instrucoes.txt
+- implementation_plan.md
+- walkthrough.md
+
+Resultados da Implementação:
+1. Migração 0006_remove_status_individual_cavidade:
+   - Removidos exclusivamente os dois campos redundantes xid_status_cavidade e valor_cavidade_produzindo de ProductionCavityConfig.
+2. Inferência de Estado e Mapeamento de Motivos:
+   - Estado de cada cavidade inferido exclusivamente por xid_motivo_parada: 0 (Normal), 1 a 11 (Parada com motivo mapeado), código desconhecido ("Motivo não mapeado — código X"), leitura ausente/inválida ("Status da cavidade indisponível").
+   - Motivo geral da prensa traduzido (0 -> "Motivo da prensa não informado", 6 -> "Falta de Material", 9 -> "Mecânico", 10 -> "Elétrica", 11 -> "Outros") e oculto quando em estado PRODUZINDO.
+3. Preservação do Alerta de 5 Minutos:
+   - Alerta da prensa mantido intacto, dependendo apenas do estado geral igual a PARADA há 300s ou mais. Cavidades paradas não afetam o alerta geral.
+4. Testes e Qualidade:
+   - `manage.py check` (0 erros).
+   - Suíte de testes (71 testes na suíte `production`, 94 testes na suíte global com `maintenance`) 100% aprovados.
+
+==================================================
+SPEC 05D — HISTÓRICO DE MATRIZES E LINHA DO TEMPO OPERACIONAL
+Data: 2026-07-31 | Status: Concluída com Sucesso
+==================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05D_HISTORICO_MATRIZES_LINHA_TEMPO.md
+- production/migrations/0007_productionmachinestateinterval_and_more.py
+
+Arquivos modificados:
+- production/models.py (Criados os modelos ProductionCavityMatrixHistory e ProductionMachineStateInterval)
+- production/routers.py (Adicionados os novos modelos em ScadaRouter.LOCAL_MANAGED_MODELS)
+- production/admin.py (Registrados os novos modelos no Django Admin)
+- production/services.py (Implementados helper normalize_matrix_value, atualização atômica do histórico de matrizes e intervalos de estado em process_scada_cycle, resumo/histórico de matrizes em get_dashboard_state e linha do tempo com KPIs em get_machine_detail)
+- production/views.py (Repasse de parâmetros de filtro para get_dashboard_state)
+- production/templates/production/dashboard.html (Removido total agregado de cavidades no card da prensa e adicionado Card Geral das Matrizes em Uso com resumo e histórico filtrável)
+- production/templates/production/machine_detail.html (Adicionada Linha do Tempo Operacional com segmentos coloridos e tooltip, e KPIs complementares do período)
+- production/tests.py (Adicionada a suíte Spec05DHistoryAndTimelineTestCase)
+- Instrucoes.txt
+- implementation_plan.md
+- walkthrough.md
+
+Resultados da Implementação:
+1. Migração 0007_productionmachinestateinterval_and_more:
+   - Criados os modelos gerenciados locais `ProductionCavityMatrixHistory` e `ProductionMachineStateInterval` no banco default.
+2. Histórico Local de Matrizes:
+   - Normalização idempotente de matrizes ("12", 12, 12.0, " 12 " -> "12").
+   - Transição atômica utilizando timezone.now(): alteração de matriz fecha registro anterior e abre novo; Scada offline/stale preserva histórico aberto.
+3. Card Geral de Matrizes em Uso (/producao/):
+   - Resumo atual agrupado por matriz com contagem de cavidades Normais, Paradas e Indeterminadas.
+   - Histórico de matrizes filtrável por período (Hoje, 7d, 30d, custom) com ordenação de registros em uso no topo.
+4. Histórico de Estados e Linha do Tempo Operacional (/producao/maquinas/<id>/):
+   - Registro atômico de intervalos de estado da prensa (PRODUZINDO em verde, PARADA em vermelho, SEM_COMUNICACAO em cinza).
+   - Linha do tempo horizontal visual com tooltip de início, fim e duração.
+   - KPIs industriais complementares do período calculados sem divisão por zero e com exclusão de sem comunicação do denominador de eficiência.
