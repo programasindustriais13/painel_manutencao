@@ -75,18 +75,6 @@ class ProductionCavityConfig(models.Model):
         default=1,
         verbose_name="Ordem de Exibição"
     )
-    xid_status_cavidade = models.CharField(
-        max_length=100,
-        blank=True,
-        null=True,
-        verbose_name="XID Status da Cavidade"
-    )
-    valor_cavidade_produzindo = models.CharField(
-        max_length=50,
-        default="1",
-        verbose_name="Valor Bruto Cavidade Produzindo",
-        help_text="Valor do XID que indica que a cavidade está produzindo (ex: '1')."
-    )
     xid_matriz = models.CharField(
         max_length=100,
         blank=True,

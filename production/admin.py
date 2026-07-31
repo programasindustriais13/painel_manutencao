@@ -13,8 +13,6 @@ class ProductionCavityConfigInline(admin.TabularInline):
     fields = (
         "ordem",
         "nome",
-        "xid_status_cavidade",
-        "valor_cavidade_produzindo",
         "xid_matriz",
         "xid_produto",
         "xid_lote_bladder",

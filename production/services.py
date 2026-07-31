@@ -215,6 +215,30 @@ class ScadaReaderService:
 scada_reader = ScadaReaderService()
 
 
+CAVITY_REASON_MAP: Dict[int, str] = {
+    0: "Normal",
+    1: "Troca de Matriz",
+    2: "Troca de Blader",
+    3: "Troca de Anel Blader",
+    4: "Troca Anel Center Post",
+    5: "Ajuste Matriz",
+    6: "Falta de Material",
+    7: "Ajuste de Blader",
+    8: "IA / Lixo",
+    9: "Mecânico",
+    10: "Elétrica",
+    11: "Outros",
+}
+
+PRESS_REASON_MAP: Dict[int, str] = {
+    0: "Normal",
+    6: "Falta de Material",
+    9: "Mecânico",
+    10: "Elétrica",
+    11: "Outros",
+}
+
+
 class ProductionStateService:
     """
     Serviço agregador e de persistência da máquina de estados do módulo de produção:
@@ -223,6 +247,79 @@ class ProductionStateService:
     - Mantém a máquina de estados (Produzindo, Parada, Sem comunicação, Dado desatualizado).
     - Persiste transições de estado de forma idempotente em ProductionMachineState e ProductionDowntimeEvent.
     """
+
+    @classmethod
+    def resolve_cavity_status_and_reason(
+        cls, cav: ProductionCavityConfig, scada_values: Dict[str, Any]
+    ) -> tuple[str, str, str, str]:
+        """
+        Retorna (status_code, status_label, badge_class, motivo_exibido) para a cavidade.
+        - valor numérico 0: cavidade Normal (badge Normal, motivo_exibido = "")
+        - valores numéricos de 1 a 11: cavidade Parada (badge Parada, motivo correspondente)
+        - código numérico não mapeado != 0: "Motivo não mapeado — código X" (badge Parada)
+        - valor nulo, indisponível, falha de leitura ou inválido: "Status da cavidade indisponível" (badge Indeterminado)
+        """
+        if not cav.xid_motivo_parada or not str(cav.xid_motivo_parada).strip():
+            return "INDETERMINADO", "Indeterminado", "secondary", "Status da cavidade indisponível"
+
+        motivo_entry = scada_values.get(cav.xid_motivo_parada)
+        if not motivo_entry or motivo_entry.get("ts") is None:
+            return "INDETERMINADO", "Indeterminado", "secondary", "Status da cavidade indisponível"
+
+        raw_val = motivo_entry.get("value")
+        if raw_val is None:
+            raw_val_str = motivo_entry.get("str_value")
+            if raw_val_str is None or str(raw_val_str).strip() == "":
+                return "INDETERMINADO", "Indeterminado", "secondary", "Status da cavidade indisponível"
+            raw_val = raw_val_str
+
+        raw_str = str(raw_val).strip()
+        if not raw_str:
+            return "INDETERMINADO", "Indeterminado", "secondary", "Status da cavidade indisponível"
+
+        try:
+            code = int(float(raw_str))
+        except (ValueError, TypeError):
+            return "INDETERMINADO", "Indeterminado", "secondary", "Status da cavidade indisponível"
+
+        if code == 0:
+            return "NORMAL", "Normal", "success", ""
+        elif code in CAVITY_REASON_MAP:
+            return "PARADA", "Parada", "danger", CAVITY_REASON_MAP[code]
+        else:
+            return "PARADA", "Parada", "danger", f"Motivo não mapeado — código {code}"
+
+    @classmethod
+    def format_press_reason(cls, raw_val: Any, state: str) -> str:
+        """
+        Prensa:
+        - se estiver Produzindo, não destacar motivo geral residual;
+        - se estiver Parada e o motivo geral estiver entre 6, 9, 10 e 11, mostrar o texto correspondente;
+        - se estiver Parada e o motivo for 0, vazio ou nulo, mostrar: "Motivo da prensa não informado";
+        - código desconhecido: "Motivo não mapeado — código X".
+        """
+        if state == "PRODUZINDO":
+            return ""
+
+        if raw_val is None:
+            return "Motivo da prensa não informado"
+
+        raw_str = str(raw_val).strip()
+        if not raw_str or raw_str.lower() in ("none", "null"):
+            return "Motivo da prensa não informado"
+
+        try:
+            code = int(float(raw_str))
+            if code == 0:
+                return "Motivo da prensa não informado"
+            elif code in PRESS_REASON_MAP:
+                return PRESS_REASON_MAP[code]
+            else:
+                return f"Motivo não mapeado — código {code}"
+        except (ValueError, TypeError):
+            if raw_str == "0":
+                return "Motivo da prensa não informado"
+            return raw_str
 
     @staticmethod
     def format_elapsed_seconds(seconds: int) -> str:
@@ -319,36 +416,8 @@ class ProductionStateService:
             else:
                 produto_lote_str = "Não informado"
 
-            # Status independente da cavidade
-            if cav.xid_status_cavidade and str(cav.xid_status_cavidade).strip():
-                status_entry = scada_values.get(cav.xid_status_cavidade)
-                if status_entry and status_entry.get("ts") is not None:
-                    c_raw_val = str(status_entry.get("str_value", status_entry.get("value", ""))).strip().lower()
-                    c_target_val = str(cav.valor_cavidade_produzindo).strip().lower()
-                    if c_raw_val == c_target_val:
-                        c_status_code = "PRODUZINDO"
-                        c_status_label = "Produzindo"
-                        c_badge_class = "success"
-                    else:
-                        c_status_code = "PARADA"
-                        c_status_label = "Parada"
-                        c_badge_class = "danger"
-                else:
-                    c_status_code = "STATUS_NAO_CONFIGURADO"
-                    c_status_label = "Status não configurado"
-                    c_badge_class = "secondary"
-            else:
-                c_status_code = "STATUS_NAO_CONFIGURADO"
-                c_status_label = "Status não configurado"
-                c_badge_class = "secondary"
-
-            # Motivo de parada da cavidade quando parada
-            if c_status_code == "PARADA":
-                motivo_entry = scada_values.get(cav.xid_motivo_parada) if cav.xid_motivo_parada else None
-                c_motivo_str = str(motivo_entry.get("str_value", "")).strip() if motivo_entry else ""
-                c_motivo_exibido = c_motivo_str if c_motivo_str else "Motivo não informado"
-            else:
-                c_motivo_exibido = ""
+            # Status e motivo da cavidade inferidos via SPEC 05C
+            c_status_code, c_status_label, c_badge_class, c_motivo_exibido = cls.resolve_cavity_status_and_reason(cav, scada_values)
 
             cavities_list.append({
                 "id": cav.id,
@@ -396,8 +465,6 @@ class ProductionStateService:
                 if cfg.xid_motivo_parada_geral:
                     all_xids.add(cfg.xid_motivo_parada_geral)
                 for cav in cfg.cavities.all():
-                    if cav.xid_status_cavidade:
-                        all_xids.add(cav.xid_status_cavidade)
                     if cav.xid_matriz:
                         all_xids.add(cav.xid_matriz)
                     if cav.xid_produto:
@@ -526,8 +593,6 @@ class ProductionStateService:
             if cfg.xid_motivo_parada_geral:
                 all_xids.add(cfg.xid_motivo_parada_geral)
             for cav in cfg.cavities.all():
-                if cav.xid_status_cavidade:
-                    all_xids.add(cav.xid_status_cavidade)
                 if cav.xid_matriz:
                     all_xids.add(cav.xid_matriz)
                 if cav.xid_produto:
@@ -599,11 +664,13 @@ class ProductionStateService:
             ).order_by("-inicio").first()
 
             motivo_entry = scada_values.get(cfg.xid_motivo_parada_geral) if cfg.xid_motivo_parada_geral else None
-            motivo_geral_val = (
+            raw_motivo = (
                 (open_event.motivo_geral if open_event and open_event.motivo_geral else None)
-                or (motivo_entry.get("str_value", "") if motivo_entry else "")
-                or (state_obj.motivo_atual if state_obj else "")
+                or (motivo_entry.get("str_value", motivo_entry.get("value", "")) if motivo_entry else None)
+                or (state_obj.motivo_atual if state_obj else None)
             )
+
+            motivo_geral_val = cls.format_press_reason(raw_motivo, state)
 
             if open_event:
                 timer_secs = max(0, int((now - open_event.inicio).total_seconds()))
@@ -616,7 +683,7 @@ class ProductionStateService:
 
             # Alerta de prensa parada há mais de 5 minutos (300 segundos):
             alerta_parada_5min = (state == "PARADA" and not sem_comunicacao and not is_stale and timer_secs >= 300)
-            motivo_prensa_pendente = not (motivo_geral_val and str(motivo_geral_val).strip())
+            motivo_prensa_pendente = (state == "PARADA" and (motivo_geral_val == "Motivo da prensa não informado" or not motivo_geral_val))
 
             abertura_entry = scada_values.get(cfg.xid_abertura) if cfg.xid_abertura else None
             abertura_val = abertura_entry.get("str_value", "") if abertura_entry else None
@@ -750,8 +817,6 @@ class ProductionStateService:
         if cfg.xid_motivo_parada_geral:
             all_xids.add(cfg.xid_motivo_parada_geral)
         for cav in cfg.cavities.all():
-            if cav.xid_status_cavidade:
-                all_xids.add(cav.xid_status_cavidade)
             if cav.xid_matriz:
                 all_xids.add(cav.xid_matriz)
             if cav.xid_produto:
@@ -801,8 +866,14 @@ class ProductionStateService:
             machine_config=cfg, fim__isnull=True
         ).order_by("-inicio").first()
 
-        if open_event and open_event.motivo_geral:
-            motivo_geral_val = open_event.motivo_geral
+        motivo_entry = scada_values.get(cfg.xid_motivo_parada_geral) if cfg.xid_motivo_parada_geral else None
+        raw_motivo = (
+            (open_event.motivo_geral if open_event and open_event.motivo_geral else None)
+            or (motivo_entry.get("str_value", motivo_entry.get("value", "")) if motivo_entry else None)
+            or (state_obj.motivo_atual if state_obj else None)
+        )
+
+        motivo_geral_val = cls.format_press_reason(raw_motivo, state)
 
         if open_event:
             timer_secs = max(0, int((now - open_event.inicio).total_seconds()))
@@ -867,7 +938,7 @@ class ProductionStateService:
             "timer_secs": timer_secs,
             "alerta_parada_5min": alerta_parada_5min,
             "motivo_prensa_pendente": motivo_prensa_pendente,
-            "motivo_geral": motivo_geral_val or "Sem motivo registrado",
+            "motivo_geral": motivo_geral_val,
             "ultima_leitura_str": state_obj.ultima_leitura_scada.strftime("%d/%m/%Y %H:%M:%S") if (state_obj and state_obj.ultima_leitura_scada) else "N/A",
             "cavidades": cavities_list,
             "producao_total": total_prod,

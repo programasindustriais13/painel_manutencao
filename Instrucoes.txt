@@ -2084,3 +2084,35 @@ Resultados da Implementação:
 4. Validação e Qualidade:
    - `manage.py check` (0 erros).
    - Suíte de testes global expandida para 80/80 testes, 100% aprovados.
+
+==============================================================================
+SPEC 05C — INTERPRETAÇÃO DOS MOTIVOS DE PARADA DAS CAVIDADES
+Data: 2026-07-31 | Status: Concluída com Sucesso (Suíte 94/94 Testes Aprovados)
+==============================================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05C_MOTIVOS_PARADA_CAVIDADES.md
+- production/migrations/0006_remove_status_individual_cavidade.py
+
+Arquivos modificados:
+- production/models.py (Removidos campos xid_status_cavidade e valor_cavidade_produzindo de ProductionCavityConfig)
+- production/admin.py (Removidos campos do ProductionCavityConfigInline)
+- production/services.py (Criados CAVITY_REASON_MAP, PRESS_REASON_MAP, resolve_cavity_status_and_reason, format_press_reason; remoção de xid_status_cavidade das consultas em lote)
+- production/templates/production/dashboard.html (Atualizados badges e rótulos de cavidades e prensa)
+- production/templates/production/machine_detail.html (Atualizados badges e rótulos de cavidades e prensa)
+- production/tests.py (Adaptados testes anteriores e adicionado Spec05CMotivosParadaCavidadesTestCase)
+- Instrucoes.txt
+- implementation_plan.md
+- walkthrough.md
+
+Resultados da Implementação:
+1. Migração 0006_remove_status_individual_cavidade:
+   - Removidos exclusivamente os dois campos redundantes xid_status_cavidade e valor_cavidade_produzindo de ProductionCavityConfig.
+2. Inferência de Estado e Mapeamento de Motivos:
+   - Estado de cada cavidade inferido exclusivamente por xid_motivo_parada: 0 (Normal), 1 a 11 (Parada com motivo mapeado), código desconhecido ("Motivo não mapeado — código X"), leitura ausente/inválida ("Status da cavidade indisponível").
+   - Motivo geral da prensa traduzido (0 -> "Motivo da prensa não informado", 6 -> "Falta de Material", 9 -> "Mecânico", 10 -> "Elétrica", 11 -> "Outros") e oculto quando em estado PRODUZINDO.
+3. Preservação do Alerta de 5 Minutos:
+   - Alerta da prensa mantido intacto, dependendo apenas do estado geral igual a PARADA há 300s ou mais. Cavidades paradas não afetam o alerta geral.
+4. Testes e Qualidade:
+   - `manage.py check` (0 erros).
+   - Suíte de testes (71 testes na suíte `production`, 94 testes na suíte global com `maintenance`) 100% aprovados.

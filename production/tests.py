@@ -930,8 +930,6 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
             machine_config=self.config1,
             nome="Cavidade 1",
             ordem=1,
-            xid_status_cavidade="DP_CAV1_STATUS",
-            valor_cavidade_produzindo="1",
             xid_matriz="DP_CAV1_MATRIZ",
             xid_produto="DP_CAV1_PROD_NOME",
             xid_lote_bladder="DP_CAV1_LOTE",
@@ -944,8 +942,6 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
             machine_config=self.config1,
             nome="Cavidade 2",
             ordem=2,
-            xid_status_cavidade="DP_CAV2_STATUS",
-            valor_cavidade_produzindo="1",
             xid_matriz="DP_CAV2_MATRIZ",
             xid_produto="DP_CAV2_PROD_NOME",
             xid_lote_bladder="DP_CAV2_LOTE",
@@ -965,24 +961,24 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
             cursor.execute("DELETE FROM datapoints;")
 
             cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5B', 1);")
-            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_STATUS', 1);")
-            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV2_STATUS', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_MOTIVO', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV2_MOTIVO', 1);")
             cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (4, 'DP_MOTIVO_P5B', 1);")
 
             cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 0.0, ?);", [now_ms])
-            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 1, 1.0, ?);", [now_ms])
-            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 1, 0.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 2, 0.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 2, 1.0, ?);", [now_ms])
 
     def test_cavity_new_fields_creation_and_defaults(self):
-        """Testa criação e valores padrão dos novos campos de ProductionCavityConfig."""
+        """Testa criação e valores padrão dos campos de ProductionCavityConfig."""
         cav = ProductionCavityConfig.objects.create(
             machine_config=self.config1,
             nome="Cavidade 3",
             ordem=3
         )
-        self.assertEqual(cav.valor_cavidade_produzindo, "1")
+        self.assertFalse(hasattr(cav, "valor_cavidade_produzindo"))
+        self.assertFalse(hasattr(cav, "xid_status_cavidade"))
         self.assertEqual(cav.meta_producao_manual, 0)
-        self.assertIsNone(cav.xid_status_cavidade)
         self.assertIsNone(cav.xid_matriz)
         self.assertIsNone(cav.xid_produto)
         self.assertIsNone(cav.xid_lote_bladder)
@@ -1024,8 +1020,8 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
         now_ms = int(time.time() * 1000)
         with connections["scada"].cursor() as cursor:
             cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 1;", [now_ms])
-            cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 2;", [now_ms])
-            cursor.execute("UPDATE pointvalues SET pointValue = 0.0, ts = ? WHERE id = 3;", [now_ms])
+            cursor.execute("UPDATE pointvalues SET pointValue = 0.0, ts = ? WHERE id = 2;", [now_ms])
+            cursor.execute("UPDATE pointvalues SET pointValue = 1.0, ts = ? WHERE id = 3;", [now_ms])
         scada_reader.clear_caches()
 
         dash_state = ProductionStateService.get_dashboard_state()
@@ -1037,23 +1033,23 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
         c1 = next(c for c in m1["cavidades"] if c["nome"] == "Cavidade 1")
         c2 = next(c for c in m1["cavidades"] if c["nome"] == "Cavidade 2")
 
-        self.assertEqual(c1["status_code"], "PRODUZINDO")
-        self.assertEqual(c1["status_label"], "Produzindo")
+        self.assertEqual(c1["status_code"], "NORMAL")
+        self.assertEqual(c1["status_label"], "Normal")
 
         self.assertEqual(c2["status_code"], "PARADA")
         self.assertEqual(c2["status_label"], "Parada")
+        self.assertEqual(c2["motivo_parada"], "Troca de Matriz")
 
     def test_cavity_stopped_without_reason_shows_default_text(self):
-        """Testa se cavidade parada sem motivo cadastrado exibe 'Motivo não informado'."""
+        """Testa se cavidade sem leitura de motivo exibe 'Status da cavidade indisponível'."""
         now_ms = int(time.time() * 1000)
         scada_values = {
             "DP_STATUS_P5B": {"value": True, "str_value": "1", "ts": now_ms},
-            "DP_CAV1_STATUS": {"value": False, "str_value": "0", "ts": now_ms},
         }
         cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values)
         c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
-        self.assertEqual(c1["status_code"], "PARADA")
-        self.assertEqual(c1["motivo_parada"], "Motivo não informado")
+        self.assertEqual(c1["status_code"], "INDETERMINADO")
+        self.assertEqual(c1["motivo_parada"], "Status da cavidade indisponível")
 
     def test_manual_target_zero_null_and_over_target(self):
         """Testa meta manual zero, nula e produção superior à meta."""
@@ -1121,10 +1117,10 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
         # 3. Prensa parada há 600 segundos com motivo informado
         start_600 = now - timezone.timedelta(seconds=600)
         open_event.inicio = start_600
-        open_event.motivo_geral = "Troca de Prensa"
+        open_event.motivo_geral = "Falta de Material"
         open_event.save()
         state_obj.inicio_estado_atual = start_600
-        state_obj.motivo_atual = "Troca de Prensa"
+        state_obj.motivo_atual = "Falta de Material"
         state_obj.save()
 
         dash_state = ProductionStateService.get_dashboard_state()
@@ -1207,15 +1203,15 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
             cursor.execute("DELETE FROM datapoints;")
 
             cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5B', 1);")
-            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_STATUS', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_MOTIVO', 1);")
             cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV1_MATRIZ', 1);")
             cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (4, 'DP_CAV1_PROD_NOME', 1);")
             cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (5, 'DP_CAV1_LOTE', 1);")
 
             # Prensa Parada com telemetria atualizada
             cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 0.0, ?);", [now_ms])
-            # Cavidade 1 Produzindo
-            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 1, 1.0, ?);", [now_ms])
+            # Cavidade 1 Normal (0)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 2, 0.0, ?);", [now_ms])
             # Matriz M-101
             cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 4, NULL, ?);", [now_ms])
             cursor.execute("INSERT INTO pointvalueannotations (pointValueId, textPointValueShort) VALUES (3, 'M-101');")
@@ -1255,3 +1251,251 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
         self.assertContains(res_detail, "Alerta: Prensa parada há mais de 5 minutos!")
         self.assertContains(res_detail, "PROD-ALPHA - LOTE-77")
         self.assertContains(res_detail, "M-101")
+
+
+class Spec05CMotivosParadaCavidadesTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        scada_reader.clear_caches()
+
+        self.sector = Sector.objects.create(nome="Setor 05C")
+        self.machine1 = Machine.objects.create(nome="Prensa 05C", setor=self.sector)
+
+        self.config1 = ProductionMachineConfig.objects.create(
+            machine=self.machine1,
+            ordem_exibicao=1,
+            stale_limit_seconds=600,
+            produzindo_value="1",
+            xid_status_prensa="DP_STATUS_P5C",
+            xid_motivo_parada_geral="DP_MOTIVO_GERAL_P5C"
+        )
+
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_motivo_parada="DP_CAV1_MOTIVO",
+        )
+
+        self.cav2 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 2",
+            ordem=2,
+            xid_motivo_parada="DP_CAV2_MOTIVO",
+        )
+
+    def test_cavity_code_0_results_in_normal(self):
+        """Código 0 da cavidade resulta em Normal."""
+        scada_values = {
+            "DP_CAV1_MOTIVO": {"value": 0, "str_value": "0", "ts": 1000}
+        }
+        code, label, badge, reason = ProductionStateService.resolve_cavity_status_and_reason(self.cav1, scada_values)
+        self.assertEqual(code, "NORMAL")
+        self.assertEqual(label, "Normal")
+        self.assertEqual(badge, "success")
+        self.assertEqual(reason, "")
+
+    def test_cavity_codes_1_to_11_translated_correctly(self):
+        """Códigos 1 a 11 da cavidade são traduzidos corretamente."""
+        expected_translations = {
+            1: "Troca de Matriz",
+            2: "Troca de Blader",
+            3: "Troca de Anel Blader",
+            4: "Troca Anel Center Post",
+            5: "Ajuste Matriz",
+            6: "Falta de Material",
+            7: "Ajuste de Blader",
+            8: "IA / Lixo",
+            9: "Mecânico",
+            10: "Elétrica",
+            11: "Outros",
+        }
+        for code_num, expected_text in expected_translations.items():
+            scada_values = {
+                "DP_CAV1_MOTIVO": {"value": code_num, "str_value": str(code_num), "ts": 1000}
+            }
+            code, label, badge, reason = ProductionStateService.resolve_cavity_status_and_reason(self.cav1, scada_values)
+            self.assertEqual(code, "PARADA")
+            self.assertEqual(label, "Parada")
+            self.assertEqual(badge, "danger")
+            self.assertEqual(reason, expected_text)
+
+    def test_unknown_cavity_code_does_not_break_ui(self):
+        """Código desconhecido da cavidade não quebra e exibe 'Motivo não mapeado — código X'."""
+        scada_values = {
+            "DP_CAV1_MOTIVO": {"value": 99, "str_value": "99", "ts": 1000}
+        }
+        code, label, badge, reason = ProductionStateService.resolve_cavity_status_and_reason(self.cav1, scada_values)
+        self.assertEqual(code, "PARADA")
+        self.assertEqual(label, "Parada")
+        self.assertEqual(badge, "danger")
+        self.assertEqual(reason, "Motivo não mapeado — código 99")
+
+    def test_null_or_invalid_cavity_value_results_in_indeterminado(self):
+        """Valor nulo, invalido ou ausente resulta em estado Indeterminado."""
+        # 1. Scada sem leitura
+        code, label, badge, reason = ProductionStateService.resolve_cavity_status_and_reason(self.cav1, {})
+        self.assertEqual(code, "INDETERMINADO")
+        self.assertEqual(label, "Indeterminado")
+        self.assertEqual(badge, "secondary")
+        self.assertEqual(reason, "Status da cavidade indisponível")
+
+        # 2. Leitura com valor None
+        scada_values = {
+            "DP_CAV1_MOTIVO": {"value": None, "str_value": "", "ts": 1000}
+        }
+        code, label, badge, reason = ProductionStateService.resolve_cavity_status_and_reason(self.cav1, scada_values)
+        self.assertEqual(code, "INDETERMINADO")
+
+        # 3. Valor não numérico inválido
+        scada_values_invalid = {
+            "DP_CAV1_MOTIVO": {"value": "invalido", "str_value": "invalido", "ts": 1000}
+        }
+        code, label, badge, reason = ProductionStateService.resolve_cavity_status_and_reason(self.cav1, scada_values_invalid)
+        self.assertEqual(code, "INDETERMINADO")
+
+    def test_press_producing_with_one_cavity_stopped(self):
+        """Prensa produzindo mesmo com uma cavidade parada."""
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalueannotations;")
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5C', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_MOTIVO', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV2_MOTIVO', 1);")
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 1.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 2, 0.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 2, 1.0, ?);", [now_ms])
+        scada_reader.clear_caches()
+
+        state_dash = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in state_dash["machines"] if m["nome"] == "Prensa 05C")
+        self.assertEqual(m1["state"], "PRODUZINDO")
+        c1 = next(c for c in m1["cavidades"] if c["nome"] == "Cavidade 1")
+        c2 = next(c for c in m1["cavidades"] if c["nome"] == "Cavidade 2")
+        self.assertEqual(c1["status_code"], "NORMAL")
+        self.assertEqual(c2["status_code"], "PARADA")
+        self.assertEqual(c2["motivo_parada"], "Troca de Matriz")
+
+    def test_two_cavities_with_different_reasons(self):
+        """Duas cavidades com motivos de parada diferentes."""
+        now_ms = int(time.time() * 1000)
+        scada_values = {
+            "DP_CAV1_MOTIVO": {"value": 2, "str_value": "2", "ts": now_ms},
+            "DP_CAV2_MOTIVO": {"value": 6, "str_value": "6", "ts": now_ms},
+        }
+        cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values)
+        c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
+        c2 = next(c for c in cavs if c["nome"] == "Cavidade 2")
+        self.assertEqual(c1["motivo_parada"], "Troca de Blader")
+        self.assertEqual(c2["motivo_parada"], "Falta de Material")
+
+    def test_press_general_reasons_6_9_10_11(self):
+        """Motivos de prensa 6, 9, 10 e 11."""
+        self.assertEqual(ProductionStateService.format_press_reason(6, "PARADA"), "Falta de Material")
+        self.assertEqual(ProductionStateService.format_press_reason(9, "PARADA"), "Mecânico")
+        self.assertEqual(ProductionStateService.format_press_reason(10, "PARADA"), "Elétrica")
+        self.assertEqual(ProductionStateService.format_press_reason(11, "PARADA"), "Outros")
+        self.assertEqual(ProductionStateService.format_press_reason(12, "PARADA"), "Motivo não mapeado — código 12")
+
+    def test_stopped_press_with_reason_0_shows_motivo_nao_informado(self):
+        """Prensa parada com motivo geral 0, nulo ou vazio exibe 'Motivo da prensa não informado'."""
+        self.assertEqual(ProductionStateService.format_press_reason(0, "PARADA"), "Motivo da prensa não informado")
+        self.assertEqual(ProductionStateService.format_press_reason(None, "PARADA"), "Motivo da prensa não informado")
+        self.assertEqual(ProductionStateService.format_press_reason("", "PARADA"), "Motivo da prensa não informado")
+
+    def test_producing_press_ignores_residual_general_reason(self):
+        """Prensa produzindo ignora motivo geral residual."""
+        self.assertEqual(ProductionStateService.format_press_reason(6, "PRODUZINDO"), "")
+        self.assertEqual(ProductionStateService.format_press_reason("Mecânico", "PRODUZINDO"), "")
+
+    def test_stopped_cavity_does_not_trigger_general_alert(self):
+        """Cavidade parada nunca dispara o alerta geral da prensa."""
+        now = timezone.now()
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5C', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_CAV1_MOTIVO', 1);")
+            # Prensa Produzindo (1.0), Cavidade 1 Parada (1.0)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 1.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 2, 1.0, ?);", [now_ms])
+        scada_reader.clear_caches()
+
+        state_obj, _ = ProductionMachineState.objects.get_or_create(machine_config=self.config1)
+        state_obj.estado_atual = "PRODUZINDO"
+        state_obj.inicio_estado_atual = now - timezone.timedelta(seconds=600)
+        state_obj.save()
+
+        state_dash = ProductionStateService.get_dashboard_state()
+        m1 = next(m for m in state_dash["machines"] if m["nome"] == "Prensa 05C")
+        self.assertFalse(m1["alerta_parada_5min"])
+
+    def test_batch_read_includes_only_xid_motivo_parada(self):
+        """Leitura em lote inclui xid_motivo_parada e não consulta campos removidos."""
+        self.cav1.xid_motivo_parada = "DP_TEST_MOTIVO"
+        self.cav1.save()
+
+        all_xids = set()
+        if self.config1.xid_status_prensa:
+            all_xids.add(self.config1.xid_status_prensa)
+        for cav in self.config1.cavities.all():
+            if cav.xid_motivo_parada:
+                all_xids.add(cav.xid_motivo_parada)
+
+        self.assertIn("DP_TEST_MOTIVO", all_xids)
+        self.assertFalse(hasattr(self.cav1, "xid_status_cavidade"))
+
+    def test_removed_fields_not_in_admin(self):
+        """Campos removidos não aparecem no Inline do Admin."""
+        from production.admin import ProductionCavityConfigInline
+        self.assertNotIn("xid_status_cavidade", ProductionCavityConfigInline.fields)
+        self.assertNotIn("valor_cavidade_produzindo", ProductionCavityConfigInline.fields)
+
+    def test_migration_0006_removes_only_two_fields(self):
+        """Migration 0006 remove somente os dois campos de ProductionCavityConfig."""
+        import importlib
+        mig0006 = importlib.import_module("production.migrations.0006_remove_status_individual_cavidade")
+        ops = mig0006.Migration.operations
+        self.assertEqual(len(ops), 2)
+        field_names = {op.name for op in ops}
+        self.assertEqual(field_names, {"valor_cavidade_produzindo", "xid_status_cavidade"})
+
+    def test_dashboard_and_detail_display_text_labels_never_raw_known_codes(self):
+        """Dashboard e detalhe exibem rótulos descritivos, nunca códigos conhecidos brutos."""
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("DELETE FROM pointvalueannotations;")
+            cursor.execute("DELETE FROM pointvalues;")
+            cursor.execute("DELETE FROM datapoints;")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (1, 'DP_STATUS_P5C', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (2, 'DP_MOTIVO_GERAL_P5C', 1);")
+            cursor.execute("INSERT INTO datapoints (id, xid, dataSourceId) VALUES (3, 'DP_CAV1_MOTIVO', 1);")
+
+            # Prensa Parada, motivo geral 6 (Falta de Material), cavidade 1 motivo 1 (Troca de Matriz)
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (1, 1, 1, 0.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (2, 2, 2, 6.0, ?);", [now_ms])
+            cursor.execute("INSERT INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (3, 3, 2, 1.0, ?);", [now_ms])
+
+        scada_reader.clear_caches()
+
+        prod_leader_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        prod_user = User.objects.create_user("prod_lider_05c", "prod05c@test.com", "pwd123")
+        prod_user.groups.add(prod_leader_group)
+
+        client = Client()
+        client.force_login(prod_user)
+
+        res_dash = client.get(reverse("production:dashboard"))
+        self.assertEqual(res_dash.status_code, 200)
+        self.assertContains(res_dash, "Falta de Material")
+        self.assertContains(res_dash, "Troca de Matriz")
+
+        res_detail = client.get(reverse("production:machine_detail", kwargs={"pk": self.config1.pk}))
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertContains(res_detail, "Falta de Material")
+        self.assertContains(res_detail, "Troca de Matriz")
