@@ -11,12 +11,35 @@ from .models import (
     ProductionGlobalAlarm,
     ProductionMachineState,
     ProductionDowntimeEvent,
+    ProductionCavityMatrixHistory,
+    ProductionMachineStateInterval,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_matrix_value(raw_val: Any) -> str:
+    """
+    Normaliza o valor da matriz de forma idempotente e insensível a formatação.
+    Exemplos: '12', 12, 12.0, ' 12 ' -> '12'.
+    Se for None ou string vazia, retorna ''.
+    """
+    if raw_val is None:
+        return ""
+    s_val = str(raw_val).strip()
+    if not s_val or s_val.lower() in ("none", "null", "n/a"):
+        return ""
+    try:
+        f_val = float(s_val)
+        if f_val.is_integer():
+            return str(int(f_val))
+    except (ValueError, TypeError):
+        pass
+    return s_val
+
 
 
 class ScadaReaderService:
@@ -494,88 +517,150 @@ class ProductionStateService:
                 state_obj.sem_comunicacao = True
                 state_obj.dado_desatualizado = False
                 state_obj.save()
-                continue
-
-            ts_ms = status_entry["ts"]
-            age_seconds = (now_ms - ts_ms) / 1000.0
-            is_stale = (age_seconds > cfg.stale_limit_seconds)
-            scada_dt = timezone.datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-            raw_val = str(status_entry.get("str_value", status_entry.get("value", ""))).strip().lower()
-            target_val = str(cfg.produzindo_value).strip().lower()
-            is_producing = (raw_val == target_val)
-
-            # Caso 2: Dado Desatualizado (Stale) -> Preservar estado industrial sem abrir/fechar eventos
-            if is_stale:
-                state_obj.sem_comunicacao = False
-                state_obj.dado_desatualizado = True
-                state_obj.ultima_leitura_scada = scada_dt
-                state_obj.ultimo_timestamp_scada = ts_ms
-                state_obj.ultimo_valor_status = raw_val
-                state_obj.save()
-                continue
-
-            # Caso 3: Comunicação OK e Dado Atualizado
-            state_obj.sem_comunicacao = False
-            state_obj.dado_desatualizado = False
-            state_obj.ultima_leitura_scada = scada_dt
-            state_obj.ultimo_timestamp_scada = ts_ms
-            state_obj.ultimo_valor_status = raw_val
-            state_obj.motivo_atual = motivo_str
-
-            open_event = ProductionDowntimeEvent.objects.filter(
-                machine_config=cfg, fim__isnull=True
-            ).order_by("-inicio").first()
-
-            if not is_producing:
-                # Máquina Parada
-                if open_event:
-                    # Continua Parada -> Manter o evento aberto, atualizar motivo se necessário
-                    if motivo_str and open_event.motivo_geral != motivo_str:
-                        open_event.motivo_geral = motivo_str
-                        open_event.save(update_fields=["motivo_geral", "updated_at"])
-                    if state_obj.estado_atual != "PARADA":
-                        state_obj.estado_atual = "PARADA"
-                        state_obj.inicio_estado_atual = open_event.inicio
-                else:
-                    # Transição: Produzindo -> Parada
-                    event_start = scada_dt
-                    open_event = ProductionDowntimeEvent.objects.create(
-                        machine_config=cfg,
-                        inicio=event_start,
-                        motivo_geral=motivo_str,
-                        snapshot_valor_status=raw_val,
-                        timestamp_inicial_scada=ts_ms,
-                        origem="SCADA"
-                    )
-                    state_obj.estado_atual = "PARADA"
-                    state_obj.inicio_estado_atual = event_start
+                is_stale = False
+                is_producing = False
+                raw_val = ""
+                scada_dt = now
+                ts_ms = None
             else:
-                # Máquina Produzindo
-                if open_event:
-                    # Transição: Parada -> Produzindo -> Fechar evento aberto
-                    event_end = scada_dt
-                    duration = max(0, int((event_end - open_event.inicio).total_seconds()))
-                    open_event.fim = event_end
-                    open_event.duracao_segundos = duration
-                    open_event.timestamp_final_scada = ts_ms
-                    open_event.save()
+                ts_ms = status_entry["ts"]
+                age_seconds = (now_ms - ts_ms) / 1000.0
+                is_stale = (age_seconds > cfg.stale_limit_seconds)
+                scada_dt = timezone.datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+                raw_val = str(status_entry.get("str_value", status_entry.get("value", ""))).strip().lower()
+                target_val = str(cfg.produzindo_value).strip().lower()
+                is_producing = (raw_val == target_val)
 
-                    state_obj.estado_atual = "PRODUZINDO"
-                    state_obj.inicio_estado_atual = event_end
-                    state_obj.motivo_atual = ""
+                # Caso 2: Dado Desatualizado (Stale) -> Preservar estado industrial sem abrir/fechar eventos de parada
+                if is_stale:
+                    state_obj.sem_comunicacao = False
+                    state_obj.dado_desatualizado = True
+                    state_obj.ultima_leitura_scada = scada_dt
+                    state_obj.ultimo_timestamp_scada = ts_ms
+                    state_obj.ultimo_valor_status = raw_val
+                    state_obj.save()
                 else:
-                    # Continua Produzindo
-                    if state_obj.estado_atual != "PRODUZINDO" or not state_obj.inicio_estado_atual:
-                        state_obj.estado_atual = "PRODUZINDO"
-                        state_obj.inicio_estado_atual = scada_dt
-                        state_obj.motivo_atual = ""
+                    # Caso 3: Comunicação OK e Dado Atualizado
+                    state_obj.sem_comunicacao = False
+                    state_obj.dado_desatualizado = False
+                    state_obj.ultima_leitura_scada = scada_dt
+                    state_obj.ultimo_timestamp_scada = ts_ms
+                    state_obj.ultimo_valor_status = raw_val
+                    state_obj.motivo_atual = motivo_str
 
-            state_obj.save()
+                    open_event = ProductionDowntimeEvent.objects.filter(
+                        machine_config=cfg, fim__isnull=True
+                    ).order_by("-inicio").first()
+
+                    if not is_producing:
+                        # Máquina Parada
+                        if open_event:
+                            if motivo_str and open_event.motivo_geral != motivo_str:
+                                open_event.motivo_geral = motivo_str
+                                open_event.save(update_fields=["motivo_geral", "updated_at"])
+                            if state_obj.estado_atual != "PARADA":
+                                state_obj.estado_atual = "PARADA"
+                                state_obj.inicio_estado_atual = open_event.inicio
+                        else:
+                            event_start = scada_dt
+                            open_event = ProductionDowntimeEvent.objects.create(
+                                machine_config=cfg,
+                                inicio=event_start,
+                                motivo_geral=motivo_str,
+                                snapshot_valor_status=raw_val,
+                                timestamp_inicial_scada=ts_ms,
+                                origem="SCADA"
+                            )
+                            state_obj.estado_atual = "PARADA"
+                            state_obj.inicio_estado_atual = event_start
+                    else:
+                        # Máquina Produzindo
+                        if open_event:
+                            event_end = scada_dt
+                            duration = max(0, int((event_end - open_event.inicio).total_seconds()))
+                            open_event.fim = event_end
+                            open_event.duracao_segundos = duration
+                            open_event.timestamp_final_scada = ts_ms
+                            open_event.save()
+
+                            state_obj.estado_atual = "PRODUZINDO"
+                            state_obj.inicio_estado_atual = event_end
+                            state_obj.motivo_atual = ""
+                        else:
+                            if state_obj.estado_atual != "PRODUZINDO" or not state_obj.inicio_estado_atual:
+                                state_obj.estado_atual = "PRODUZINDO"
+                                state_obj.inicio_estado_atual = scada_dt
+                                state_obj.motivo_atual = ""
+
+                    state_obj.save()
+
+            # Atualizar intervalos operacionais da prensa (ProductionMachineStateInterval)
+            if state_obj.sem_comunicacao or state_obj.dado_desatualizado:
+                target_interval_state = "SEM_COMUNICACAO"
+            elif is_producing:
+                target_interval_state = "PRODUZINDO"
+            else:
+                target_interval_state = "PARADA"
+
+            open_interval = ProductionMachineStateInterval.objects.filter(
+                machine_config=cfg, ended_at__isnull=True
+            ).order_by("-started_at").first()
+
+            if open_interval:
+                if open_interval.state != target_interval_state:
+                    open_interval.ended_at = now
+                    open_interval.save(update_fields=["ended_at", "updated_at"])
+                    ProductionMachineStateInterval.objects.create(
+                        machine_config=cfg,
+                        state=target_interval_state,
+                        started_at=now,
+                        status_raw_value=raw_val
+                    )
+            else:
+                ProductionMachineStateInterval.objects.create(
+                    machine_config=cfg,
+                    state=target_interval_state,
+                    started_at=now,
+                    status_raw_value=raw_val
+                )
+
+            # Atualizar histórico de matrizes por cavidade (ProductionCavityMatrixHistory)
+            for cav in cfg.cavities.all():
+                mat_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
+                raw_mat = mat_entry.get("str_value", mat_entry.get("value")) if mat_entry else None
+                norm_mat = normalize_matrix_value(raw_mat)
+
+                if norm_mat:
+                    open_history = ProductionCavityMatrixHistory.objects.filter(
+                        cavity_config=cav, ended_at__isnull=True
+                    ).order_by("-started_at").first()
+
+                    if open_history:
+                        if open_history.matrix_value != norm_mat:
+                            open_history.ended_at = now
+                            open_history.save(update_fields=["ended_at", "updated_at"])
+                            ProductionCavityMatrixHistory.objects.create(
+                                cavity_config=cav,
+                                matrix_value=norm_mat,
+                                started_at=now
+                            )
+                    else:
+                        ProductionCavityMatrixHistory.objects.create(
+                            cavity_config=cav,
+                            matrix_value=norm_mat,
+                            started_at=now
+                        )
 
         return scada_values
 
     @classmethod
-    def get_dashboard_state(cls) -> dict:
+    def get_dashboard_state(
+        cls,
+        data_inicio_str: Optional[str] = None,
+        data_final_str: Optional[str] = None,
+        periodo: Optional[str] = None,
+        scada_values: Optional[Dict[str, Any]] = None
+    ) -> dict:
         configs = list(
             ProductionMachineConfig.objects.select_related("machine", "machine__setor")
             .prefetch_related("cavities")
@@ -613,7 +698,8 @@ class ProductionStateService:
             if a.xid:
                 all_xids.add(a.xid)
 
-        scada_values = scada_reader.get_last_values_batch(list(all_xids))
+        if scada_values is None:
+            scada_values = scada_reader.get_last_values_batch(list(all_xids))
 
         # Sincronizar máquina de estados com o Scada-LTS de forma idempotente
         cls.process_scada_cycle(scada_values)
@@ -658,7 +744,6 @@ class ProductionStateService:
                 badge_class = "danger"
                 paradas_count += 1
 
-            # Recuperar evento aberto ou início do estado para cálculo do cronômetro
             open_event = ProductionDowntimeEvent.objects.filter(
                 machine_config=cfg, fim__isnull=True
             ).order_by("-inicio").first()
@@ -681,7 +766,6 @@ class ProductionStateService:
 
             tempo_decorrido_str = cls.format_elapsed_seconds_human(timer_secs, state)
 
-            # Alerta de prensa parada há mais de 5 minutos (300 segundos):
             alerta_parada_5min = (state == "PARADA" and not sem_comunicacao and not is_stale and timer_secs >= 300)
             motivo_prensa_pendente = (state == "PARADA" and (motivo_geral_val == "Motivo da prensa não informado" or not motivo_geral_val))
 
@@ -746,39 +830,44 @@ class ProductionStateService:
                 "badge_class": "danger" if is_active else "success",
             })
 
-        return {
-            "machines": machines_data,
-            "total_count": len(configs),
-            "produzindo_count": produzindo_count,
-            "paradas_count": paradas_count,
-            "sem_comunicacao_count": sem_comunicacao_count,
-            "global_parameters": params_data,
-            "global_alarms": alarms_data,
-            "scada_offline": (len(scada_values) == 0 and len(all_xids) > 0),
-            "last_updated_str": timezone.now().strftime("%d/%m/%Y %H:%M:%S"),
-        }
+        # ==============================================================================
+        # CARD GERAL DAS MATRIZES (A: RESUMO ATUAL, B: HISTÓRICO DE MATRIZES)
+        # ==============================================================================
+        matrix_summary_map = {}
+        for cfg in configs:
+            for cav in cfg.cavities.all():
+                mat_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
+                raw_mat = mat_entry.get("str_value", mat_entry.get("value")) if mat_entry else None
+                norm_mat = normalize_matrix_value(raw_mat)
 
-    @classmethod
-    def get_machine_detail(
-        cls,
-        config_id: int,
-        data_inicio_str: Optional[str] = None,
-        data_final_str: Optional[str] = None,
-        periodo: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Retorna o contexto detalhado de uma máquina específica para a view /producao/maquinas/<id>/,
-        incluindo estado atual, cavidades, histórico de paradas filtrado e KPIs do período.
-        """
-        cfg = (
-            ProductionMachineConfig.objects.select_related("machine", "machine__setor")
-            .prefetch_related("cavities")
-            .get(pk=config_id)
+                c_code, _, _, _ = cls.resolve_cavity_status_and_reason(cav, scada_values)
+
+                key = norm_mat if norm_mat else ""
+                if key not in matrix_summary_map:
+                    matrix_summary_map[key] = {
+                        "matriz": norm_mat,
+                        "label": f"Matriz {norm_mat}" if norm_mat else "Matriz não informada",
+                        "is_informada": bool(norm_mat),
+                        "normais": 0,
+                        "paradas": 0,
+                        "indeterminadas": 0,
+                        "total": 0,
+                    }
+
+                if c_code == "NORMAL":
+                    matrix_summary_map[key]["normais"] += 1
+                elif c_code == "PARADA":
+                    matrix_summary_map[key]["paradas"] += 1
+                else:
+                    matrix_summary_map[key]["indeterminadas"] += 1
+                matrix_summary_map[key]["total"] += 1
+
+        matrix_summary = sorted(
+            matrix_summary_map.values(),
+            key=lambda x: (0 if x["is_informada"] else 1, x["label"])
         )
 
-        now = timezone.now()
-
-        # Resolução de intervalo de datas para os filtros
+        matrix_history_error = None
         if periodo == "hoje":
             start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_dt = now.replace(hour=23, minute=59, second=59, microsecond=999999)
@@ -795,15 +884,128 @@ class ProductionStateService:
             try:
                 d_start = timezone.datetime.strptime(data_inicio_str, "%Y-%m-%d").date()
                 d_end = timezone.datetime.strptime(data_final_str, "%Y-%m-%d").date()
-                start_dt = timezone.make_aware(timezone.datetime.combine(d_start, timezone.datetime.min.time()))
-                end_dt = timezone.make_aware(timezone.datetime.combine(d_end, timezone.datetime.max.time()))
-                periodo_ativo = "custom"
+                if d_start > d_end:
+                    matrix_history_error = "Data inicial não pode ser maior que a data final."
+                    start_dt = (now - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_dt = now
+                    periodo_ativo = "custom"
+                else:
+                    start_dt = timezone.make_aware(timezone.datetime.combine(d_start, timezone.datetime.min.time()))
+                    end_dt = timezone.make_aware(timezone.datetime.combine(d_end, timezone.datetime.max.time()))
+                    periodo_ativo = "custom"
             except ValueError:
                 end_dt = now
                 start_dt = (end_dt - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
                 periodo_ativo = "7d"
         else:
-            # Padrão: últimos 7 dias
+            end_dt = now
+            start_dt = (end_dt - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+            periodo_ativo = "7d"
+
+        matrix_history = []
+        if not matrix_history_error:
+            history_qs = ProductionCavityMatrixHistory.objects.select_related(
+                "cavity_config",
+                "cavity_config__machine_config",
+                "cavity_config__machine_config__machine"
+            ).filter(
+                Q(started_at__lte=end_dt) & (Q(ended_at__isnull=True) | Q(ended_at__gte=start_dt))
+            )
+
+            raw_history = list(history_qs)
+            raw_history.sort(key=lambda r: (0 if r.ended_at is None else 1, -r.started_at.timestamp()))
+
+            for rec in raw_history:
+                is_open = (rec.ended_at is None)
+                dur_end = rec.ended_at or now
+                eff_start = max(rec.started_at, start_dt)
+                eff_end = min(dur_end, end_dt)
+                dur_secs = max(0, int((eff_end - eff_start).total_seconds()))
+
+                matrix_history.append({
+                    "id": rec.id,
+                    "maquina_nome": rec.cavity_config.machine_config.machine.nome,
+                    "cavidade_nome": rec.cavity_config.nome,
+                    "matriz_value": rec.matrix_value,
+                    "started_at": rec.started_at,
+                    "ended_at": rec.ended_at,
+                    "duracao_str": cls.format_elapsed_seconds(dur_secs),
+                    "is_open": is_open,
+                    "situacao_label": "Em uso" if is_open else "Finalizada",
+                    "situacao_badge": "success" if is_open else "secondary",
+                })
+
+        return {
+            "machines": machines_data,
+            "total_count": len(configs),
+            "produzindo_count": produzindo_count,
+            "paradas_count": paradas_count,
+            "sem_comunicacao_count": sem_comunicacao_count,
+            "global_parameters": params_data,
+            "global_alarms": alarms_data,
+            "matrix_summary": matrix_summary,
+            "matrix_history": matrix_history,
+            "matrix_history_error": matrix_history_error,
+            "matrix_filters": {
+                "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
+                "data_final_str": end_dt.strftime("%Y-%m-%d"),
+                "periodo_ativo": periodo_ativo,
+            },
+            "scada_offline": (len(scada_values) == 0 and len(all_xids) > 0),
+            "last_updated_str": timezone.now().strftime("%d/%m/%Y %H:%M:%S"),
+        }
+
+    @classmethod
+    def get_machine_detail(
+        cls,
+        config_id: int,
+        data_inicio_str: Optional[str] = None,
+        data_final_str: Optional[str] = None,
+        periodo: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Retorna o contexto detalhado de uma máquina específica para a view /producao/maquinas/<id>/,
+        incluindo estado atual, cavidades, histórico de paradas filtrado, linha do tempo operacional e KPIs do período.
+        """
+        cfg = (
+            ProductionMachineConfig.objects.select_related("machine", "machine__setor")
+            .prefetch_related("cavities")
+            .get(pk=config_id)
+        )
+
+        now = timezone.now()
+        date_error_msg = None
+
+        if periodo == "hoje":
+            start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_dt = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+            periodo_ativo = "hoje"
+        elif periodo == "7d":
+            end_dt = now
+            start_dt = (end_dt - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+            periodo_ativo = "7d"
+        elif periodo == "30d":
+            end_dt = now
+            start_dt = (end_dt - timezone.timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+            periodo_ativo = "30d"
+        elif data_inicio_str and data_final_str:
+            try:
+                d_start = timezone.datetime.strptime(data_inicio_str, "%Y-%m-%d").date()
+                d_end = timezone.datetime.strptime(data_final_str, "%Y-%m-%d").date()
+                if d_start > d_end:
+                    date_error_msg = "Data inicial não pode ser maior que a data final."
+                    start_dt = (now - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_dt = now
+                    periodo_ativo = "custom"
+                else:
+                    start_dt = timezone.make_aware(timezone.datetime.combine(d_start, timezone.datetime.min.time()))
+                    end_dt = timezone.make_aware(timezone.datetime.combine(d_end, timezone.datetime.max.time()))
+                    periodo_ativo = "custom"
+            except ValueError:
+                end_dt = now
+                start_dt = (end_dt - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+                periodo_ativo = "7d"
+        else:
             end_dt = now
             start_dt = (end_dt - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
             periodo_ativo = "7d"
@@ -861,7 +1063,6 @@ class ProductionStateService:
             state_label = "Parada"
             badge_class = "danger"
 
-        # Cronômetro persistido
         open_event = ProductionDowntimeEvent.objects.filter(
             machine_config=cfg, fim__isnull=True
         ).order_by("-inicio").first()
@@ -889,7 +1090,7 @@ class ProductionStateService:
 
         cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(cfg, scada_values)
 
-        # Filtro de eventos de parada parcialmente ou totalmente sobrepostos ao período
+        # Filtro de eventos de parada (ProductionDowntimeEvent)
         events_qs = ProductionDowntimeEvent.objects.filter(
             machine_config=cfg
         ).filter(
@@ -925,6 +1126,74 @@ class ProductionStateService:
 
         duracao_media_seconds = round(total_downtime_seconds / qtd_paradas) if qtd_paradas > 0 else 0
 
+        # ==============================================================================
+        # LINHA DO TEMPO OPERACIONAL E KPIS COMPLEMENTARES DA MÁQUINA
+        # ==============================================================================
+        intervals_qs = ProductionMachineStateInterval.objects.filter(
+            machine_config=cfg
+        ).filter(
+            Q(started_at__lte=end_dt) & (Q(ended_at__isnull=True) | Q(ended_at__gte=start_dt))
+        ).order_by("started_at")
+
+        tempo_produzindo_sec = 0
+        tempo_parado_sec = 0
+        tempo_sem_comunicacao_sec = 0
+        qtd_ciclos_producao = 0
+        qtd_paradas_linha_tempo = 0
+        timeline_segments = []
+
+        total_period_seconds = max(1, int((end_dt - start_dt).total_seconds()))
+
+        for inv in intervals_qs:
+            eff_start = max(inv.started_at, start_dt)
+            eff_end = min(inv.ended_at or now, end_dt)
+            eff_dur = max(0, int((eff_end - eff_start).total_seconds()))
+
+            if inv.state == "PRODUZINDO":
+                tempo_produzindo_sec += eff_dur
+                qtd_ciclos_producao += 1
+                state_label_seg = "Produzindo"
+                badge_class_seg = "success"
+                color_hex = "#22c55e"
+            elif inv.state == "PARADA":
+                tempo_parado_sec += eff_dur
+                qtd_paradas_linha_tempo += 1
+                state_label_seg = "Parada"
+                badge_class_seg = "danger"
+                color_hex = "#ef4444"
+            else:
+                tempo_sem_comunicacao_sec += eff_dur
+                state_label_seg = "Sem comunicação"
+                badge_class_seg = "secondary"
+                color_hex = "#9ca3af"
+
+            width_pct = round((eff_dur / total_period_seconds) * 100, 2)
+            is_open = (inv.ended_at is None)
+
+            timeline_segments.append({
+                "id": inv.id,
+                "state": inv.state,
+                "state_label": state_label_seg,
+                "badge_class": badge_class_seg,
+                "color_hex": color_hex,
+                "started_at": inv.started_at,
+                "ended_at": inv.ended_at,
+                "eff_start": eff_start,
+                "eff_end": eff_end,
+                "duracao_segundos": eff_dur,
+                "duracao_str": cls.format_elapsed_seconds(eff_dur),
+                "width_pct": width_pct,
+                "is_open": is_open,
+            })
+
+        denom = tempo_produzindo_sec + tempo_parado_sec
+        if denom > 0:
+            percentual_produzindo = round((tempo_produzindo_sec / denom) * 100, 1)
+            percentual_parado = round((tempo_parado_sec / denom) * 100, 1)
+        else:
+            percentual_produzindo = 0.0
+            percentual_parado = 0.0
+
         return {
             "config": cfg,
             "machine": cfg.machine,
@@ -946,12 +1215,22 @@ class ProductionStateService:
             "percentual_total": total_percent,
             "percentual_total_bar": total_percent_bar,
             "events": events_data,
+            "timeline_segments": timeline_segments,
+            "total_period_seconds": total_period_seconds,
+            "date_error_msg": date_error_msg,
             "kpi": {
                 "tempo_total_parado_str": cls.format_elapsed_seconds(total_downtime_seconds),
                 "total_downtime_seconds": total_downtime_seconds,
                 "qtd_paradas": qtd_paradas,
                 "maior_parada_str": cls.format_elapsed_seconds(maior_parada_seconds),
                 "duracao_media_str": cls.format_elapsed_seconds(duracao_media_seconds),
+                "tempo_produzindo_str": cls.format_elapsed_seconds(tempo_produzindo_sec),
+                "tempo_parado_str": cls.format_elapsed_seconds(tempo_parado_sec),
+                "tempo_sem_comunicacao_str": cls.format_elapsed_seconds(tempo_sem_comunicacao_sec),
+                "percentual_produzindo": percentual_produzindo,
+                "percentual_parado": percentual_parado,
+                "qtd_ciclos_producao": qtd_ciclos_producao,
+                "qtd_paradas_linha_tempo": qtd_paradas_linha_tempo,
             },
             "filters": {
                 "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
@@ -959,3 +1238,4 @@ class ProductionStateService:
                 "periodo_ativo": periodo_ativo,
             },
         }
+

@@ -335,8 +335,108 @@ class ProductionDowntimeEvent(models.Model):
         return f"Parada {self.machine_config.machine.nome} em {self.inicio.strftime('%d/%m %H:%M')} {status_str}"
 
 
+class ProductionCavityMatrixHistory(models.Model):
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="matrix_history",
+        verbose_name="Configuração da Cavidade"
+    )
+    matrix_value = models.CharField(
+        max_length=100,
+        verbose_name="Valor da Matriz"
+    )
+    started_at = models.DateTimeField(
+        verbose_name="Data/Hora Inicial"
+    )
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora Final"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Histórico de Matriz de Cavidade"
+        verbose_name_plural = "Históricos de Matrizes de Cavidades"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["cavity_config", "started_at"]),
+            models.Index(fields=["started_at"]),
+            models.Index(fields=["ended_at"]),
+        ]
+
+    def __str__(self):
+        status_str = f"até {self.ended_at.strftime('%d/%m %H:%M')}" if self.ended_at else "(Em uso)"
+        return f"Matriz {self.matrix_value} em {self.cavity_config} desde {self.started_at.strftime('%d/%m %H:%M')} {status_str}"
+
+
+class ProductionMachineStateInterval(models.Model):
+    STATE_CHOICES = [
+        ("PRODUZINDO", "Produzindo"),
+        ("PARADA", "Parada"),
+        ("SEM_COMUNICACAO", "Sem comunicação"),
+    ]
+
+    machine_config = models.ForeignKey(
+        ProductionMachineConfig,
+        on_delete=models.CASCADE,
+        related_name="state_intervals",
+        verbose_name="Configuração da Máquina"
+    )
+    state = models.CharField(
+        max_length=30,
+        choices=STATE_CHOICES,
+        verbose_name="Estado"
+    )
+    started_at = models.DateTimeField(
+        verbose_name="Data/Hora Inicial"
+    )
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora Final"
+    )
+    status_raw_value = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        verbose_name="Valor Bruto de Status"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Intervalo de Estado da Máquina"
+        verbose_name_plural = "Intervalos de Estados das Máquinas"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["machine_config", "started_at"]),
+            models.Index(fields=["state", "started_at"]),
+            models.Index(fields=["ended_at"]),
+        ]
+
+    def __str__(self):
+        status_str = f"até {self.ended_at.strftime('%d/%m %H:%M')}" if self.ended_at else "(Em andamento)"
+        return f"{self.get_state_display()} {self.machine_config.machine.nome} em {self.started_at.strftime('%d/%m %H:%M')} {status_str}"
+
+
 # ==============================================================================
 # MODELS NÃO GERENCIADOS DO SCADA-LTS (managed=False)
+
 # Roteados exclusivamente para o alias 'scada' (somente leitura).
 # Nenhuma migration é gerada para estes modelos.
 # ==============================================================================

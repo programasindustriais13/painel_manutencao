@@ -4,6 +4,8 @@ from .models import (
     ProductionCavityConfig,
     ProductionGlobalParameter,
     ProductionGlobalAlarm,
+    ProductionCavityMatrixHistory,
+    ProductionMachineStateInterval,
 )
 
 
@@ -51,3 +53,18 @@ class ProductionGlobalAlarmAdmin(admin.ModelAdmin):
     list_display = ("nome", "chave", "xid", "ordem")
     list_editable = ("ordem", "xid")
     search_fields = ("nome", "chave", "xid")
+
+
+@admin.register(ProductionCavityMatrixHistory)
+class ProductionCavityMatrixHistoryAdmin(admin.ModelAdmin):
+    list_display = ("cavity_config", "matrix_value", "started_at", "ended_at")
+    list_filter = ("started_at", "ended_at")
+    search_fields = ("cavity_config__nome", "cavity_config__machine_config__machine__nome", "matrix_value")
+
+
+@admin.register(ProductionMachineStateInterval)
+class ProductionMachineStateIntervalAdmin(admin.ModelAdmin):
+    list_display = ("machine_config", "state", "started_at", "ended_at", "status_raw_value")
+    list_filter = ("state", "started_at", "ended_at")
+    search_fields = ("machine_config__machine__nome", "state", "status_raw_value")
+

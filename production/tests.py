@@ -16,12 +16,14 @@ from production.models import (
     ProductionGlobalAlarm,
     ProductionMachineState,
     ProductionDowntimeEvent,
+    ProductionCavityMatrixHistory,
+    ProductionMachineStateInterval,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
 )
 from production.routers import ScadaRouter
-from production.services import scada_reader, ScadaReaderService, ProductionStateService
+from production.services import scada_reader, ScadaReaderService, ProductionStateService, normalize_matrix_value
 from production.management.commands.collect_production_scada import CrossProcessLock
 
 
@@ -1499,3 +1501,270 @@ class Spec05CMotivosParadaCavidadesTestCase(TestCase):
         self.assertEqual(res_detail.status_code, 200)
         self.assertContains(res_detail, "Falta de Material")
         self.assertContains(res_detail, "Troca de Matriz")
+
+
+class Spec05DHistoryAndTimelineTestCase(TestCase):
+    """
+    Suíte de testes para a SPEC 05D:
+    - Remoção do total agregado da prensa no dashboard.
+    - Histórico local de matrizes por cavidade (ProductionCavityMatrixHistory).
+    - Card geral das matrizes em uso (Resumo Atual e Histórico Filtrável).
+    - Histórico de intervalos de estado da prensa (ProductionMachineStateInterval).
+    - Linha do Tempo Operacional e KPIs industriais na tela de detalhe da máquina.
+    """
+
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine1 = Machine.objects.create(nome="Prensa 05D", setor=self.sector, criticidade="ALTA")
+        self.machine2 = Machine.objects.create(nome="Prensa 06D", setor=self.sector, criticidade="MEDIA")
+
+        self.config1 = ProductionMachineConfig.objects.create(
+            machine=self.machine1,
+            ordem_exibicao=1,
+            stale_limit_seconds=120,
+            produzindo_value="1",
+            xid_status_prensa="DP_STATUS_P5D",
+            xid_abertura="DP_ABERTURA_P5D",
+            xid_motivo_parada_geral="DP_MOTIVO_P5D"
+        )
+        self.config2 = ProductionMachineConfig.objects.create(
+            machine=self.machine2,
+            ordem_exibicao=2,
+            stale_limit_seconds=120,
+            produzindo_value="1",
+            xid_status_prensa="DP_STATUS_P6D"
+        )
+
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_matriz="DP_CAV1_MATRIZ",
+            xid_producao="DP_CAV1_PROD",
+            meta_producao_manual=500,
+            xid_motivo_parada="DP_CAV1_MOTIVO"
+        )
+        self.cav2 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 2",
+            ordem=2,
+            xid_matriz="DP_CAV2_MATRIZ",
+            xid_producao="DP_CAV2_PROD",
+            meta_producao_manual=500,
+            xid_motivo_parada="DP_CAV2_MOTIVO"
+        )
+
+        self.prod_leader_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader = User.objects.create_user("lider_05d", "lider05d@test.com", "pwd123")
+        self.user_leader.groups.add(self.prod_leader_group)
+
+        self.user_tech = User.objects.create_user("tech_05d", "tech05d@test.com", "pwd123")
+
+        self.client = Client()
+        scada_reader.clear_caches()
+
+    def test_removal_of_aggregated_total_from_dashboard(self):
+        """Card da prensa no dashboard não exibe total agregado de produção/meta, mas cavidades preservam dados."""
+        self.client.force_login(self.user_leader)
+        res = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res.status_code, 200)
+        self.assertNotContains(res, "Total: 0 / 1000")
+        self.assertNotContains(res, "Total: {{ m.producao_total }}")
+        self.assertContains(res, "Cavidade 1")
+        self.assertContains(res, "Cavidade 2")
+
+    def test_matrix_normalization_and_history_lifecycle(self):
+        """Testa regras de normalização, abertura, manutenção e fechamento de histórico de matrizes."""
+        self.assertEqual(normalize_matrix_value("12"), "12")
+        self.assertEqual(normalize_matrix_value(12), "12")
+        self.assertEqual(normalize_matrix_value(12.0), "12")
+        self.assertEqual(normalize_matrix_value(" 12 "), "12")
+        self.assertEqual(normalize_matrix_value(None), "")
+        self.assertEqual(normalize_matrix_value(""), "")
+
+        now_ms = int(time.time() * 1000)
+        scada_values = {
+            "DP_CAV1_MATRIZ": {"value": 12.0, "str_value": "12.0", "ts": now_ms}
+        }
+        ProductionStateService.process_scada_cycle(scada_values)
+
+        history_qs = ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1)
+        self.assertEqual(history_qs.count(), 1)
+        rec1 = history_qs.first()
+        self.assertEqual(rec1.matrix_value, "12")
+        self.assertIsNone(rec1.ended_at)
+
+        # 2. Ciclo com valor equivalente " 12 " não abre novo registro
+        scada_values_equiv = {
+            "DP_CAV1_MATRIZ": {"value": " 12 ", "str_value": " 12 ", "ts": now_ms + 5000}
+        }
+        ProductionStateService.process_scada_cycle(scada_values_equiv)
+        self.assertEqual(ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1).count(), 1)
+
+        # 3. Ciclo com troca para "458" fecha anterior e abre novo
+        scada_values_new = {
+            "DP_CAV1_MATRIZ": {"value": "458", "str_value": "458", "ts": now_ms + 10000}
+        }
+        ProductionStateService.process_scada_cycle(scada_values_new)
+        self.assertEqual(ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1).count(), 2)
+
+        rec1.refresh_from_db()
+        self.assertIsNotNone(rec1.ended_at)
+        rec2 = ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1, ended_at__isnull=True).first()
+        self.assertIsNotNone(rec2)
+        self.assertEqual(rec2.matrix_value, "458")
+
+        # 4. Scada offline/nulo/stale não fecha histórico aberto
+        ProductionStateService.process_scada_cycle({})
+        self.assertEqual(ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1).count(), 2)
+        rec2.refresh_from_db()
+        self.assertIsNone(rec2.ended_at)
+
+    def test_two_independent_cavities_matrix_history(self):
+        """Duas cavidades possuem históricos de matrizes independentes e com máximo 1 registro aberto por cavidade."""
+        now_ms = int(time.time() * 1000)
+        scada_values = {
+            "DP_CAV1_MATRIZ": {"value": "M100", "str_value": "M100", "ts": now_ms},
+            "DP_CAV2_MATRIZ": {"value": "M200", "str_value": "M200", "ts": now_ms},
+        }
+        ProductionStateService.process_scada_cycle(scada_values)
+
+        self.assertEqual(ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1, ended_at__isnull=True).count(), 1)
+        self.assertEqual(ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav2, ended_at__isnull=True).count(), 1)
+
+        c1_hist = ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav1).first()
+        c2_hist = ProductionCavityMatrixHistory.objects.filter(cavity_config=self.cav2).first()
+        self.assertEqual(c1_hist.matrix_value, "M100")
+        self.assertEqual(c2_hist.matrix_value, "M200")
+
+    def test_matrix_summary_and_filtered_history_view(self):
+        """Testa geração do resumo atual de matrizes e consulta de histórico filtrável no dashboard."""
+        now_ms = int(time.time() * 1000)
+        scada_values = {
+            "DP_STATUS_P5D": {"value": 1.0, "str_value": "1", "ts": now_ms},
+            "DP_CAV1_MATRIZ": {"value": "458", "str_value": "458", "ts": now_ms},
+            "DP_CAV1_MOTIVO": {"value": 0, "str_value": "0", "ts": now_ms},
+            "DP_CAV2_MATRIZ": {"value": "458", "str_value": "458", "ts": now_ms},
+            "DP_CAV2_MOTIVO": {"value": 1, "str_value": "1", "ts": now_ms},
+        }
+        state_dash = ProductionStateService.get_dashboard_state(scada_values=scada_values)
+        summary = state_dash["matrix_summary"]
+        self.assertTrue(len(summary) >= 1)
+
+        m458 = next((s for s in summary if s["matriz"] == "458"), None)
+        self.assertIsNotNone(m458)
+        self.assertEqual(m458["normais"], 1)
+        self.assertEqual(m458["paradas"], 1)
+        self.assertEqual(m458["total"], 2)
+
+        # Testar data inicial maior que final
+        state_error = ProductionStateService.get_dashboard_state(
+            data_inicio_str="2026-10-10",
+            data_final_str="2026-10-01"
+        )
+        self.assertEqual(state_error["matrix_history_error"], "Data inicial não pode ser maior que a data final.")
+
+    def test_machine_state_interval_transitions(self):
+        """Testa transições de intervalos de estado da prensa (Produzindo, Parada, Sem comunicação)."""
+        now_ms = int(time.time() * 1000)
+
+        # 1. Primeiro ciclo Produzindo
+        scada_prod = {
+            "DP_STATUS_P5D": {"value": 1.0, "str_value": "1", "ts": now_ms}
+        }
+        ProductionStateService.process_scada_cycle(scada_prod)
+        self.assertEqual(ProductionMachineStateInterval.objects.filter(machine_config=self.config1).count(), 1)
+        inv1 = ProductionMachineStateInterval.objects.filter(machine_config=self.config1).first()
+        self.assertEqual(inv1.state, "PRODUZINDO")
+        self.assertIsNone(inv1.ended_at)
+
+        # 2. Ciclo repetido mantém o intervalo aberto sem duplicar
+        ProductionStateService.process_scada_cycle(scada_prod)
+        self.assertEqual(ProductionMachineStateInterval.objects.filter(machine_config=self.config1).count(), 1)
+
+        # 3. Transição: Produzindo -> Parada
+        scada_parada = {
+            "DP_STATUS_P5D": {"value": 0.0, "str_value": "0", "ts": now_ms + 5000}
+        }
+        ProductionStateService.process_scada_cycle(scada_parada)
+        self.assertEqual(ProductionMachineStateInterval.objects.filter(machine_config=self.config1).count(), 2)
+
+        inv1.refresh_from_db()
+        self.assertIsNotNone(inv1.ended_at)
+
+        inv2 = ProductionMachineStateInterval.objects.filter(machine_config=self.config1, ended_at__isnull=True).first()
+        self.assertEqual(inv2.state, "PARADA")
+
+        # 4. Transição: Parada -> Sem comunicação (Scada offline)
+        ProductionStateService.process_scada_cycle({})
+        self.assertEqual(ProductionMachineStateInterval.objects.filter(machine_config=self.config1).count(), 3)
+        inv3 = ProductionMachineStateInterval.objects.filter(machine_config=self.config1, ended_at__isnull=True).first()
+        self.assertEqual(inv3.state, "SEM_COMUNICACAO")
+
+        # Garantir máximo de 1 intervalo aberto
+        self.assertEqual(ProductionMachineStateInterval.objects.filter(machine_config=self.config1, ended_at__isnull=True).count(), 1)
+
+    def test_timeline_visualization_and_kpis(self):
+        """Testa geração dos segmentos da linha do tempo e KPIs complementares na tela de detalhe."""
+        now = timezone.now()
+        # Criar histórico de intervalos passados
+        ProductionMachineStateInterval.objects.create(
+            machine_config=self.config1,
+            state="PRODUZINDO",
+            started_at=now - timezone.timedelta(hours=5),
+            ended_at=now - timezone.timedelta(hours=3),
+            status_raw_value="1"
+        )
+        ProductionMachineStateInterval.objects.create(
+            machine_config=self.config1,
+            state="PARADA",
+            started_at=now - timezone.timedelta(hours=3),
+            ended_at=now - timezone.timedelta(hours=1),
+            status_raw_value="0"
+        )
+        ProductionMachineStateInterval.objects.create(
+            machine_config=self.config1,
+            state="PRODUZINDO",
+            started_at=now - timezone.timedelta(hours=1),
+            ended_at=None,
+            status_raw_value="1"
+        )
+
+        detail = ProductionStateService.get_machine_detail(config_id=self.config1.pk, periodo="hoje")
+        self.assertIn("timeline_segments", detail)
+        self.assertTrue(len(detail["timeline_segments"]) >= 3)
+
+        kpi = detail["kpi"]
+        self.assertIn("tempo_produzindo_str", kpi)
+        self.assertIn("tempo_parado_str", kpi)
+        self.assertIn("tempo_sem_comunicacao_str", kpi)
+        self.assertIn("percentual_produzindo", kpi)
+        self.assertIn("percentual_parado", kpi)
+        self.assertIn("qtd_ciclos_producao", kpi)
+        self.assertIn("qtd_paradas_linha_tempo", kpi)
+
+        # Produzindo = 2h + 1h = 3h, Parado = 2h -> % produzindo = 3/5 = 60%, % parado = 40%
+        self.assertEqual(kpi["percentual_produzindo"], 60.0)
+        self.assertEqual(kpi["percentual_parado"], 40.0)
+
+    def test_permissions_and_offline_views(self):
+        """Testa controle de acesso às rotas e resiliência das views quando Scada offline/sem histórico."""
+        self.client.force_login(self.user_tech)
+        res_dash_blocked = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res_dash_blocked.status_code, 302)
+
+        res_detail_blocked = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config1.pk}))
+        self.assertEqual(res_detail_blocked.status_code, 302)
+
+        self.client.force_login(self.user_leader)
+        res_dash_ok = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res_dash_ok.status_code, 200)
+
+        res_detail_ok = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config1.pk}))
+        self.assertEqual(res_detail_ok.status_code, 200)
+        self.assertContains(res_detail_ok, "Linha do Tempo Operacional")
+        self.assertContains(res_detail_ok, "Matriz")
+

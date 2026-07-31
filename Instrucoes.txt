@@ -2116,3 +2116,39 @@ Resultados da Implementação:
 4. Testes e Qualidade:
    - `manage.py check` (0 erros).
    - Suíte de testes (71 testes na suíte `production`, 94 testes na suíte global com `maintenance`) 100% aprovados.
+
+==================================================
+SPEC 05D — HISTÓRICO DE MATRIZES E LINHA DO TEMPO OPERACIONAL
+Data: 2026-07-31 | Status: Concluída com Sucesso
+==================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_PRODUCAO_05D_HISTORICO_MATRIZES_LINHA_TEMPO.md
+- production/migrations/0007_productionmachinestateinterval_and_more.py
+
+Arquivos modificados:
+- production/models.py (Criados os modelos ProductionCavityMatrixHistory e ProductionMachineStateInterval)
+- production/routers.py (Adicionados os novos modelos em ScadaRouter.LOCAL_MANAGED_MODELS)
+- production/admin.py (Registrados os novos modelos no Django Admin)
+- production/services.py (Implementados helper normalize_matrix_value, atualização atômica do histórico de matrizes e intervalos de estado em process_scada_cycle, resumo/histórico de matrizes em get_dashboard_state e linha do tempo com KPIs em get_machine_detail)
+- production/views.py (Repasse de parâmetros de filtro para get_dashboard_state)
+- production/templates/production/dashboard.html (Removido total agregado de cavidades no card da prensa e adicionado Card Geral das Matrizes em Uso com resumo e histórico filtrável)
+- production/templates/production/machine_detail.html (Adicionada Linha do Tempo Operacional com segmentos coloridos e tooltip, e KPIs complementares do período)
+- production/tests.py (Adicionada a suíte Spec05DHistoryAndTimelineTestCase)
+- Instrucoes.txt
+- implementation_plan.md
+- walkthrough.md
+
+Resultados da Implementação:
+1. Migração 0007_productionmachinestateinterval_and_more:
+   - Criados os modelos gerenciados locais `ProductionCavityMatrixHistory` e `ProductionMachineStateInterval` no banco default.
+2. Histórico Local de Matrizes:
+   - Normalização idempotente de matrizes ("12", 12, 12.0, " 12 " -> "12").
+   - Transição atômica utilizando timezone.now(): alteração de matriz fecha registro anterior e abre novo; Scada offline/stale preserva histórico aberto.
+3. Card Geral de Matrizes em Uso (/producao/):
+   - Resumo atual agrupado por matriz com contagem de cavidades Normais, Paradas e Indeterminadas.
+   - Histórico de matrizes filtrável por período (Hoje, 7d, 30d, custom) com ordenação de registros em uso no topo.
+4. Histórico de Estados e Linha do Tempo Operacional (/producao/maquinas/<id>/):
+   - Registro atômico de intervalos de estado da prensa (PRODUZINDO em verde, PARADA em vermelho, SEM_COMUNICACAO em cinza).
+   - Linha do tempo horizontal visual com tooltip de início, fim e duração.
+   - KPIs industriais complementares do período calculados sem divisão por zero e com exclusão de sem comunicação do denominador de eficiência.

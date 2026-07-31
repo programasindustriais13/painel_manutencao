@@ -243,6 +243,118 @@
         </div>
     </div>
 
+    <!-- Card Geral das Matrizes em Uso -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <div class="d-flex align-items-center mb-3">
+            <i class="bi bi-bounding-box-circles text-primary fs-4 me-2"></i>
+            <h5 class="fw-bold mb-0 text-dark">Matrizes em Uso</h5>
+        </div>
+
+        <!-- A) RESUMO ATUAL DAS MATRIZES -->
+        <div class="mb-4">
+            <h6 class="fw-bold text-secondary mb-2 small text-uppercase tracking-wider">
+                <i class="bi bi-pie-chart me-1"></i>Resumo Atual por Matriz
+            </h6>
+            <div class="row g-2">
+                {% for item in matrix_summary %}
+                <div class="col-12 col-sm-6 col-md-4 col-xl-3">
+                    <div class="p-3 border rounded-3 {% if not item.is_informada %}bg-light border-warning{% else %}bg-white{% endif %} shadow-sm">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="fw-bold fs-6 text-dark">
+                                <i class="bi bi-bounding-box text-primary me-1"></i>{{ item.label }}
+                            </span>
+                            <span class="badge bg-primary rounded-pill px-2 py-1">Total: {{ item.total }}</span>
+                        </div>
+                        <div class="d-flex flex-wrap gap-1 fs-8">
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">Normais: {{ item.normais }}</span>
+                            <span class="badge bg-danger-subtle text-danger border border-danger-subtle">Paradas: {{ item.paradas }}</span>
+                            {% if item.indeterminadas > 0 %}
+                            <span class="badge bg-secondary-subtle text-secondary border border-secondary-subtle">Indeterminadas: {{ item.indeterminadas }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+                {% empty %}
+                <div class="col-12 text-muted small py-2">Nenhuma matriz em uso registrada.</div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- B) HISTÓRICO DE MATRIZES -->
+        <div class="pt-3 border-top">
+            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
+                <h6 class="fw-bold text-secondary mb-0 small text-uppercase tracking-wider">
+                    <i class="bi bi-clock-history me-1"></i>Histórico de Matrizes
+                </h6>
+                <form method="get" action="." class="d-flex flex-wrap align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" role="group">
+                        <a href="?periodo=hoje" class="btn btn-outline-secondary {% if matrix_filters.periodo_ativo == 'hoje' %}active{% endif %}">Hoje</a>
+                        <a href="?periodo=7d" class="btn btn-outline-secondary {% if matrix_filters.periodo_ativo == '7d' %}active{% endif %}">Últimos 7 dias</a>
+                        <a href="?periodo=30d" class="btn btn-outline-secondary {% if matrix_filters.periodo_ativo == '30d' %}active{% endif %}">Últimos 30 dias</a>
+                    </div>
+                    <input type="date" name="data_inicio" class="form-control form-control-sm" value="{{ matrix_filters.data_inicio_str }}" style="width: auto;">
+                    <input type="date" name="data_final" class="form-control form-control-sm" value="{{ matrix_filters.data_final_str }}" style="width: auto;">
+                    <button type="submit" class="btn btn-primary btn-sm fw-semibold">Aplicar</button>
+                    <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+                </form>
+            </div>
+
+            {% if matrix_history_error %}
+            <div class="alert alert-warning border-0 shadow-sm py-2 px-3 mb-3 small d-flex align-items-center">
+                <i class="bi bi-exclamation-triangle-fill me-2 text-warning fs-6"></i>
+                <span>{{ matrix_history_error }}</span>
+            </div>
+            {% endif %}
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 fs-7">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Máquina</th>
+                            <th>Cavidade</th>
+                            <th>Matriz</th>
+                            <th>Data/Hora Inicial</th>
+                            <th>Data/Hora Final</th>
+                            <th>Duração</th>
+                            <th>Situação</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for h in matrix_history %}
+                        <tr class="{% if h.is_open %}table-success-subtle fw-medium{% endif %}">
+                            <td class="fw-bold text-dark">{{ h.maquina_nome }}</td>
+                            <td>{{ h.cavidade_nome }}</td>
+                            <td class="fw-bold text-primary">{{ h.matriz_value }}</td>
+                            <td>{{ h.started_at|date:"d/m/Y H:i:s" }}</td>
+                            <td>
+                                {% if h.ended_at %}
+                                {{ h.ended_at|date:"d/m/Y H:i:s" }}
+                                {% else %}
+                                <span class="text-success fw-bold">(Em uso)</span>
+                                {% endif %}
+                            </td>
+                            <td class="fw-semibold text-dark">{{ h.duracao_str }}</td>
+                            <td>
+                                <span class="badge bg-{{ h.situacao_badge }} px-2 py-1">
+                                    {{ h.situacao_label }}
+                                </span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-4 text-muted">
+                                <i class="bi bi-inbox fs-4 d-block mb-1"></i>
+                                Nenhum histórico encontrado para o período selecionado.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+
     <!-- Search and Quick Filter Controls -->
     <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
         <div class="row g-3 align-items-center">
@@ -340,7 +452,6 @@
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center mb-2">
                             <span class="fw-semibold small text-secondary"><i class="bi bi-grid me-1"></i>Cavidades</span>
-                            <span class="small fw-bold text-dark">Total: {{ m.producao_total }} / {{ m.meta_total }} ({{ m.percentual_total }}%)</span>
                         </div>
                         <div class="d-flex flex-column gap-2">
                             {% for cav in m.cavidades %}

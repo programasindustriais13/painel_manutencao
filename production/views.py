@@ -8,7 +8,15 @@ def production_dashboard(request):
     """
     Renderiza o dashboard geral do módulo de produção.
     """
-    state = ProductionStateService.get_dashboard_state()
+    data_inicio = request.GET.get("data_inicio", "").strip()
+    data_final = request.GET.get("data_final", "").strip()
+    periodo = request.GET.get("periodo", "").strip()
+
+    state = ProductionStateService.get_dashboard_state(
+        data_inicio_str=data_inicio if data_inicio else None,
+        data_final_str=data_final if data_final else None,
+        periodo=periodo if periodo else None
+    )
     return render(request, "production/dashboard.html", state)
 
 

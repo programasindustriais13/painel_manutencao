@@ -1,49 +1,43 @@
-# 🧠 Implementation Plan — SPEC 05B: Enriquecimento dos Cards de Produção e Alerta de Parada [STATUS: CONCLUÍDO]
+# 🧠 Implementation Plan — SPEC 05D: Histórico de Matrizes e Linha do Tempo Operacional [STATUS: CONCLUÍDO]
 
 ## 📌 Objetivo
-Adicionar aos cards do painel de produção (`/producao/`) e à tela de detalhe da máquina (`/producao/maquinas/<id>/`) informações operacionais detalhadas por cavidade (matriz, produto, lote do bladder, meta manual), suporte a estado independente por cavidade, cronômetro contínuo para o estado **Produzindo**, e alerta visual destacado para prensas paradas há mais de 5 minutos (300s). Implementado com 100% de sucesso.
+Implementar o histórico local de matrizes por cavidade (`ProductionCavityMatrixHistory`) e o histórico de intervalos de estado das prensas (`ProductionMachineStateInterval`), remover a exibição do total agregado de produção/meta nos cards das prensas em `/producao/`, criar o card **Matrizes em Uso** com resumo atual agrupado e histórico filtrável por período no dashboard, e adicionar a **Linha do Tempo Operacional** com KPIs industriais complementares na tela de detalhe da máquina (`/producao/maquinas/<id>/`).
 
 ---
 
-## 📋 Mapeamento da SPEC 05B
+## 📋 Mapeamento da SPEC 05D
 
 | SPEC | Componentes Afetados | Foco Principal |
 | :--- | :--- | :--- |
-| **SPEC 05B** | `ProductionCavityConfig`, `ScadaReaderService`, `ProductionStateService`, `dashboard.html`, `machine_detail.html` | Adiciona novos XIDs operacionais por cavidade, meta manual, produto/lote combinados, status de cavidade independente, alerta de prensa parada >= 5min e cronômetros de Produzindo e Parada. |
+| **SPEC 05D** | `ProductionCavityMatrixHistory`, `ProductionMachineStateInterval`, `ScadaRouter`, `ProductionStateService`, `dashboard.html`, `machine_detail.html`, `collect_production_scada.py` | Histórico local de matrizes por cavidade, histórico de estados da prensa, remoção do total agregado no card da prensa, card de resumo e histórico de matrizes, linha do tempo operacional e KPIs de eficiência no período. |
 
 ---
 
 ## 📌 Estado Atual do Projeto
 
 - **Branch Ativa:** `feature/producao-scada`
-- **Tabelas e Models:** `ProductionMachineConfig`, `ProductionCavityConfig`, `ProductionMachineState`, `ProductionDowntimeEvent`, `ScadaDataPoint`, `ScadaPointValue`, `ScadaPointValueAnnotation`.
-- **Testes Legados:** 67 testes executados com sucesso (44 em `production`, 23 em `maintenance`).
-- **Novo Arquivo de SPEC:** Criado em `regras_programacao/SPEC_PRODUCAO_05B_DADOS_OPERACIONAIS_ALERTA_PARADA.md`.
+- **Tabelas e Models Locais:** `ProductionMachineConfig`, `ProductionCavityConfig`, `ProductionMachineState`, `ProductionDowntimeEvent`, `ProductionCavityMatrixHistory`, `ProductionMachineStateInterval`, `ProductionGlobalParameter`, `ProductionGlobalAlarm`.
+- **Migração:** `0007_productionmachinestateinterval_and_more.py` aplicada no banco default.
+- **Suíte de Testes:** 101/101 testes passando (78 em `production`, 23 em `maintenance`).
+- **Novo Arquivo de SPEC:** Criado em `regras_programacao/SPEC_PRODUCAO_05D_HISTORICO_MATRIZES_LINHA_TEMPO.md`.
 
 ---
 
-## 📐 Detalhamento Completo da SPEC 05B
+## 📐 Detalhamento Completo da SPEC 05D
 
-### 🟢 1. Alterações de Banco e Admin (`ProductionCavityConfig`)
-- Adicionar campos opcionais em `ProductionCavityConfig`:
-  - `xid_status_cavidade` (CharField max_length=100, null=True, blank=True)
-  - `valor_cavidade_produzindo` (CharField max_length=50, default="1")
-  - `xid_matriz` (CharField max_length=100, null=True, blank=True)
-  - `xid_produto` (CharField max_length=100, null=True, blank=True)
-  - `xid_lote_bladder` (CharField max_length=100, null=True, blank=True)
-  - `meta_producao_manual` (PositiveIntegerField, default=0)
-- Gerar migration aditiva `0005` no banco `default`.
-- Atualizar `ProductionCavityConfigInline` em `production/admin.py`.
+### 🟢 1. Alterações de Banco e Admin (`models.py`, `routers.py`, `admin.py`)
+- Adicionados os modelos `ProductionCavityMatrixHistory` e `ProductionMachineStateInterval` em `production/models.py`.
+- Atualizado `ScadaRouter.LOCAL_MANAGED_MODELS` com `"productioncavitymatrixhistory"` e `"productionmachinestateinterval"`.
+- Registrados ambos os modelos no Django Admin com filtros e campos de busca otimizados.
+- Criada a migração aditiva sequencial `0007_productionmachinestateinterval_and_more.py` no banco `default`.
 
-### 🟡 2. Atualização dos Serviços (`ScadaReaderService` e `ProductionStateService`)
-- Leitura em lote de todos os novos XIDs das cavidades.
-- Concatenação de Produto e Lote (`"Produto - Lote"`, `"Produto"`, `"Lote: X"`, `"Não informado"`).
-- Interpretação do status individual da cavidade sem alterar o estado da prensa.
-- Cálculo da meta manual e limite de largura da barra em 100%.
-- Flag e banner para prensa parada há >= 5 minutos (300 segundos).
-- Cronômetro contínuo para `Produzindo há ...` e `Parada há ...`.
+### 🟡 2. Atualização dos Serviços e Coletor (`services.py`, `collect_production_scada.py`)
+- Implementada a função de normalização `normalize_matrix_value` ("12", 12, 12.0, " 12 " -> "12").
+- Atualizado `process_scada_cycle` para transição atômica e idempotente de matrizes e intervalos de estado utilizando `timezone.now()`.
+- Atualizado `get_dashboard_state` para construir o resumo agrupado por matriz e o histórico filtrável por período.
+- Atualizado `get_machine_detail` para gerar os segmentos da Linha do Tempo Operacional e calcular KPIs do período (% produzindo, % parado, tempos e contagens).
 
-### 🔵 3. Interface Visual e Testes
-- Atualizar `dashboard.html` e `machine_detail.html`.
-- Expandir `production/tests.py` com novos testes para a SPEC 05B.
-- Executar todas as verificações de QA.
+### 🔵 3. Interface Visual (`dashboard.html` e `machine_detail.html`)
+- Removido o total agregado de produção/meta no cabeçalho das cavidades em `dashboard.html`.
+- Adicionado o Card Geral "Matrizes em Uso" em `dashboard.html` com Resumo Atual por Matriz e Histórico de Matrizes filtrável.
+- Adicionada a Linha do Tempo Operacional com barra horizontal colorida, tooltips e KPIs industriais em `machine_detail.html`.
