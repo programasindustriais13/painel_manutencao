@@ -167,7 +167,7 @@ def tv_dashboard(request):
         status='EM_ATENDIMENTO'
     ).select_related('maquina', 'maquina__setor').prefetch_related('pausas')
 
-    technicians = Technician.objects.all().prefetch_related(
+    technicians = Technician.objects.filter(is_active=True).prefetch_related(
         Prefetch('allocations', queryset=active_allocations)
     ).order_by('nome')
 
@@ -184,7 +184,7 @@ def tv_dashboard(request):
 # ----------------------------------------------------
 @tecnico_or_operador_required
 def technician_management(request):
-    technicians = Technician.objects.all().order_by('nome')
+    technicians = Technician.objects.filter(is_active=True).order_by('nome')
 
     # Instantiate blank forms to render in the modals
     start_form = StartServiceForm()
@@ -222,6 +222,11 @@ def start_service(request, technician_id):
             if not tecnico_proprio or tecnico_proprio.id != technician.id:
                 messages.error(request, "Acesso negado. Você só pode iniciar serviços no seu próprio card.")
                 return redirect('technician_management')
+
+        # Bloquear se o técnico não estiver ativo no quadro da empresa.
+        if not technician.is_active:
+            messages.error(request, "Este técnico não está ativo no quadro da empresa e não pode receber novas ordens de serviço.")
+            return redirect('technician_management')
 
         # Bloquear se o técnico estiver ausente/fora da fábrica.
         if technician.is_ausente:
@@ -538,9 +543,13 @@ def set_availability(request, technician_id):
         return redirect('technician_management')
     if request.method == 'POST':
         technician = get_object_or_404(Technician, id=technician_id)
+        if not technician.is_active:
+            messages.error(request, "Este técnico não está ativo no quadro da empresa.")
+            return redirect('technician_management')
+
         novo_status = request.POST.get('novo_status', '').strip()
 
-        STATUS_PERMITIDOS = {'OCIOSO', 'AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO'}
+        STATUS_PERMITIDOS = {'OCIOSO'} | set(Technician.STATUS_AUSENCIA)
 
         if novo_status not in STATUS_PERMITIDOS:
             messages.error(request, "Status de disponibilidade inválido.")
@@ -612,11 +621,12 @@ def dashboard(request):
     data_final_str  = data_final.isoformat()
 
     # ── KPI cards (snapshot do status ATUAL dos técnicos — sem filtro temporal) ──
-    total_techs  = Technician.objects.count()
-    active_techs = Technician.objects.filter(status='EM_ATENDIMENTO').count()
-    paused_techs = Technician.objects.filter(status='EM_PAUSA').count()
-    idle_techs   = Technician.objects.filter(status='OCIOSO').count()
+    total_techs  = Technician.objects.filter(is_active=True).count()
+    active_techs = Technician.objects.filter(is_active=True, status='EM_ATENDIMENTO').count()
+    paused_techs = Technician.objects.filter(is_active=True, status='EM_PAUSA').count()
+    idle_techs   = Technician.objects.filter(is_active=True, status='OCIOSO').count()
     absent_techs = Technician.objects.filter(
+        is_active=True,
         status__in=list(Technician.STATUS_AUSENCIA)
     ).count()
 

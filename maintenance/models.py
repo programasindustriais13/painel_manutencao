@@ -56,6 +56,8 @@ class Technician(models.Model):
         ('AUSENTE_FERIAS', 'Ausente – Férias'),
         ('AUSENTE_MEDICO', 'Ausente – Licença Médica/Afastamento'),
         ('EXTERNO_PLANTAO', 'Plantão Fora da Fábrica'),
+        ('AUSENTE_FALTA_JUSTIFICADA', 'Ausente – Falta Justificada'),
+        ('AUSENTE_FALTA_NAO_JUSTIFICADA', 'Ausente – Falta Não Justificada'),
     ]
 
     PERFIL_CHOICES = [
@@ -66,15 +68,26 @@ class Technician(models.Model):
 
     # Conjunto de status que indicam que o técnico está ausente/fora da fábrica
     # e não pode receber novas ordens de serviço.
-    STATUS_AUSENCIA = {'AUSENTE_FOLGA', 'AUSENTE_FERIAS', 'AUSENTE_MEDICO', 'EXTERNO_PLANTAO'}
+    STATUS_AUSENCIA = {
+        'AUSENTE_FOLGA', 
+        'AUSENTE_FERIAS', 
+        'AUSENTE_MEDICO', 
+        'EXTERNO_PLANTAO',
+        'AUSENTE_FALTA_JUSTIFICADA',
+        'AUSENTE_FALTA_NAO_JUSTIFICADA',
+    }
 
     nome = models.CharField(max_length=100, verbose_name="Nome do Técnico")
     matricula = models.CharField(max_length=50, unique=True, verbose_name="Matrícula")
     status = models.CharField(
-        max_length=20, 
+        max_length=30, 
         choices=STATUS_CHOICES, 
         default='OCIOSO', 
         verbose_name="Status"
+    )
+    is_active = models.BooleanField(
+        default=True, 
+        verbose_name="Ativo no quadro da empresa"
     )
     # Vínculo opcional com usuário Django para autenticação do técnico.
     # null=True, blank=True: técnicos sem usuário continuam funcionando normalmente.
@@ -102,6 +115,14 @@ class Technician(models.Model):
         verbose_name="WhatsApp"
     )
 
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        super().clean()
+        if self.pk and not self.is_active:
+            if self.allocations.filter(data_fim__isnull=True).exists():
+                raise ValidationError(
+                    "O técnico possui atendimentos em aberto. Conclua ou transfira os atendimentos antes de inativá-lo."
+                )
 
     def __str__(self):
         return f"{self.nome} ({self.matricula})"
@@ -241,7 +262,7 @@ class HistoricoEscala(models.Model):
         verbose_name="Técnico"
     )
     status_definido = models.CharField(
-        max_length=20,
+        max_length=30,
         verbose_name="Status Definido"
     )
     data_alteracao = models.DateTimeField(

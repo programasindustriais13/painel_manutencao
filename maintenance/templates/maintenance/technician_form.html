@@ -41,6 +41,19 @@
                     {% endif %}
                 </div>
 
+                <div class="mb-4 form-check form-switch">
+                    {{ form.is_active }}
+                    <label class="form-check-label fw-semibold" for="{{ form.is_active.id_for_label }}">
+                        Ativo no quadro da empresa
+                    </label>
+                    {% if form.is_active.errors %}
+                        <div class="invalid-feedback d-block">
+                            {% for error in form.is_active.errors %}{{ error }}{% endfor %}
+                        </div>
+                    {% endif %}
+                    <div class="form-text text-muted">Desmarque para inativar o técnico sem apagar seus dados históricos.</div>
+                </div>
+
 
                 <!-- ================================================ -->
                 <!-- SEÇÃO: ACESSO AO SISTEMA (Opcional)               -->

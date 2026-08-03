@@ -4,7 +4,7 @@ from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, WhatsAppGroup
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup
 
 class MaintenanceSystemTestCase(TestCase):
     def setUp(self):
@@ -702,3 +702,223 @@ class ProtectedMediaTests(TestCase):
         scada_queries = connections['scada'].queries
         self.assertEqual(len(scada_queries), 0)
         response.close()
+
+
+class FaltasETecnicosInativosTestCase(TestCase):
+    def setUp(self):
+        self.operator_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.operador_user = User.objects.create_user('operador_test_spec', 'op@test.com', 'pwd123')
+        self.operador_user.groups.add(self.operator_group)
+
+        self.sector = Sector.objects.create(nome="Usinagem")
+        self.machine = Machine.objects.create(nome="Torno 01", setor=self.sector, criticidade="BAIXA")
+
+        self.tech_ativo = Technician.objects.create(
+            nome="Tecnico Ativo",
+            matricula="TEC-ACT-01",
+            status="OCIOSO",
+            is_active=True
+        )
+
+    def test_novos_status_ausencia_choices_and_properties(self):
+        """Verifica se os novos status de falta estão presentes nas choices e em STATUS_AUSENCIA."""
+        status_dict = dict(Technician.STATUS_CHOICES)
+        self.assertIn('AUSENTE_FALTA_JUSTIFICADA', status_dict)
+        self.assertIn('AUSENTE_FALTA_NAO_JUSTIFICADA', status_dict)
+        self.assertEqual(status_dict['AUSENTE_FALTA_JUSTIFICADA'], 'Ausente – Falta Justificada')
+        self.assertEqual(status_dict['AUSENTE_FALTA_NAO_JUSTIFICADA'], 'Ausente – Falta Não Justificada')
+
+        tech = Technician(nome="Test Absence", matricula="T-ABS", status="AUSENTE_FALTA_JUSTIFICADA")
+        self.assertTrue(tech.is_ausente)
+
+        tech.status = "AUSENTE_FALTA_NAO_JUSTIFICADA"
+        self.assertTrue(tech.is_ausente)
+
+    def test_bloqueio_alocacao_novos_status(self):
+        """Técnicos marcados com falta não podem receber novas ordens de serviço."""
+        client = Client()
+        client.force_login(self.operador_user)
+
+        for status_falta in ['AUSENTE_FALTA_JUSTIFICADA', 'AUSENTE_FALTA_NAO_JUSTIFICADA']:
+            self.tech_ativo.status = status_falta
+            self.tech_ativo.save()
+
+            response = client.post(
+                reverse('start_service', args=[self.tech_ativo.id]),
+                {'maquina': self.machine.id, 'atividade_observacao': 'Manutenção preventiva'}
+            )
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(Allocation.objects.filter(tecnico=self.tech_ativo).count(), 0)
+
+    def test_set_availability_novos_status_e_historico_escala(self):
+        """Altera disponibilidade para Falta Justificada/Não Justificada e verifica HistoricoEscala e retorno a OCIOSO."""
+        client = Client()
+        client.force_login(self.operador_user)
+
+        # Definição para Falta Justificada
+        response = client.post(
+            reverse('set_availability', args=[self.tech_ativo.id]),
+            {'novo_status': 'AUSENTE_FALTA_JUSTIFICADA'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.tech_ativo.refresh_from_db()
+        self.assertEqual(self.tech_ativo.status, 'AUSENTE_FALTA_JUSTIFICADA')
+
+        hist = HistoricoEscala.objects.filter(tecnico=self.tech_ativo).first()
+        self.assertIsNotNone(hist)
+        self.assertEqual(hist.status_definido, 'AUSENTE_FALTA_JUSTIFICADA')
+        self.assertEqual(hist.usuario_responsavel, self.operador_user)
+
+        # Definição para Falta Não Justificada
+        response = client.post(
+            reverse('set_availability', args=[self.tech_ativo.id]),
+            {'novo_status': 'AUSENTE_FALTA_NAO_JUSTIFICADA'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.tech_ativo.refresh_from_db()
+        self.assertEqual(self.tech_ativo.status, 'AUSENTE_FALTA_NAO_JUSTIFICADA')
+
+        # Retorno para Disponível (Ocioso)
+        response = client.post(
+            reverse('set_availability', args=[self.tech_ativo.id]),
+            {'novo_status': 'OCIOSO'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.tech_ativo.refresh_from_db()
+        self.assertEqual(self.tech_ativo.status, 'OCIOSO')
+
+    def test_technician_is_active_default(self):
+        """Garante que novos técnicos possuem is_active=True por padrão."""
+        new_tech = Technician.objects.create(nome="Novo Tec", matricula="TEC-DEF-01")
+        self.assertTrue(new_tech.is_active)
+
+    def test_listagem_operacional_apenas_tecnicos_ativos(self):
+        """Técnicos inativos não aparecem em /management/ nem em /tv/."""
+        tech_inativo = Technician.objects.create(
+            nome="Tecnico Desligado",
+            matricula="TEC-OFF-01",
+            is_active=False
+        )
+
+        client = Client()
+        client.force_login(self.operador_user)
+
+        # Verificação no /management/
+        res_mgmt = client.get(reverse('technician_management'))
+        self.assertEqual(res_mgmt.status_code, 200)
+        self.assertContains(res_mgmt, self.tech_ativo.nome)
+        self.assertNotContains(res_mgmt, tech_inativo.nome)
+
+        # Verificação no /tv/
+        res_tv = client.get(reverse('tv_dashboard'))
+        self.assertEqual(res_tv.status_code, 200)
+        self.assertContains(res_tv, self.tech_ativo.nome)
+        self.assertNotContains(res_tv, tech_inativo.nome)
+
+    def test_bloqueio_atribuicao_tecnico_inativo(self):
+        """Tentativa de iniciar ordem para técnico inativo via backend é bloqueada."""
+        tech_inativo = Technician.objects.create(
+            nome="Tecnico Inativo POST",
+            matricula="TEC-OFF-02",
+            is_active=False
+        )
+
+        client = Client()
+        client.force_login(self.operador_user)
+
+        response = client.post(
+            reverse('start_service', args=[tech_inativo.id]),
+            {'maquina': self.machine.id, 'atividade_observacao': 'Tentativa em inativo'}
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(Allocation.objects.filter(tecnico=tech_inativo).count(), 0)
+
+    def test_bloqueio_inativacao_tecnico_com_atendimento_ativo(self):
+        """Impossibilita marcar técnico como inativo enquanto possuir atendimento EM_ATENDIMENTO."""
+        now = timezone.now()
+        Allocation.objects.create(
+            tecnico=self.tech_ativo,
+            maquina=self.machine,
+            atividade_observacao="Serviço Ativo Teste",
+            data_inicio=now,
+            status='EM_ATENDIMENTO'
+        )
+        self.tech_ativo.status = 'EM_ATENDIMENTO'
+        self.tech_ativo.save()
+
+        self.tech_ativo.is_active = False
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self.tech_ativo.clean()
+
+    def test_bloqueio_inativacao_tecnico_com_atendimento_pausado(self):
+        """Impossibilita marcar técnico como inativo enquanto possuir atendimento EM_PAUSA."""
+        now = timezone.now()
+        Allocation.objects.create(
+            tecnico=self.tech_ativo,
+            maquina=self.machine,
+            atividade_observacao="Serviço Pausado Teste",
+            data_inicio=now - timedelta(hours=1),
+            data_pausa=now - timedelta(minutes=30),
+            motivo_pausa="Aguardando peça",
+            status='EM_PAUSA'
+        )
+        self.tech_ativo.status = 'EM_PAUSA'
+        self.tech_ativo.save()
+
+        self.tech_ativo.is_active = False
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self.tech_ativo.clean()
+
+    def test_inativacao_e_reativacao_sucesso(self):
+        """Técnico sem atendimentos em aberto pode ser inativado e reativado com sucesso."""
+        self.tech_ativo.is_active = False
+        self.tech_ativo.save()
+        self.tech_ativo.refresh_from_db()
+        self.assertFalse(self.tech_ativo.is_active)
+
+        self.tech_ativo.is_active = True
+        self.tech_ativo.save()
+        self.tech_ativo.refresh_from_db()
+        self.assertTrue(self.tech_ativo.is_active)
+
+    def test_preservacao_dados_historicos(self):
+        """Técnicos inativos mantêm suas alocações históricas e aparecem nos relatórios de período."""
+        now = timezone.now()
+        tech_historico = Technician.objects.create(
+            nome="Tecnico Antigo",
+            matricula="TEC-HIST-01",
+            is_active=True
+        )
+        alloc = Allocation.objects.create(
+            tecnico=tech_historico,
+            maquina=self.machine,
+            atividade_observacao="Reparo histórico concluído",
+            data_inicio=now - timedelta(days=2),
+            data_fim=now - timedelta(days=2, hours=-2),
+            observacao_conclusao="Encerrado com sucesso",
+            status='CONCLUIDO'
+        )
+
+        # Inativa o técnico após a conclusão da Ordem de Serviço
+        tech_historico.is_active = False
+        tech_historico.save()
+
+        # A alocação histórica continua vinculada intacta
+        alloc.refresh_from_db()
+        self.assertEqual(alloc.tecnico.nome, "Tecnico Antigo")
+        self.assertFalse(alloc.tecnico.is_active)
+
+        # Verifica acesso ao dashboard/relatórios de período
+        client = Client()
+        client.force_login(self.operador_user)
+        res = client.get(reverse('dashboard'))
+        self.assertEqual(res.status_code, 200)
+
+    def test_admin_tecnico_list_display_and_filter(self):
+        """Valida que o admin do Técnico registra is_active em list_display e list_filter."""
+        from maintenance.admin import TecnicoAdmin
+        self.assertIn('is_active', TecnicoAdmin.list_display)
+        self.assertIn('is_active', TecnicoAdmin.list_filter)
+

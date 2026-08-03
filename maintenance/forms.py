@@ -67,12 +67,23 @@ class TechnicianForm(forms.ModelForm):
 
     class Meta:
         model = Technician
-        fields = ['nome', 'matricula', 'whatsapp']
+        fields = ['nome', 'matricula', 'whatsapp', 'is_active']
         widgets = {
             'nome': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: João Silva'}),
             'matricula': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: TEC-12345'}),
             'whatsapp': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Ex: 31999999999'}),
+            'is_active': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
         }
+
+    def clean(self):
+        cleaned_data = super().clean()
+        is_active = cleaned_data.get('is_active')
+        if self.instance and self.instance.pk and is_active is False:
+            if self.instance.allocations.filter(data_fim__isnull=True).exists():
+                raise forms.ValidationError(
+                    "O técnico possui atendimentos em aberto. Conclua ou transfira os atendimentos antes de inativá-lo."
+                )
+        return cleaned_data
 
     def clean_username_login(self):
         username = self.cleaned_data.get('username_login', '').strip()

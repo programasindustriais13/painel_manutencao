@@ -38,8 +38,8 @@ class HistoricoEscalaInline(admin.TabularInline):
 
 @admin.register(Technician)
 class TecnicoAdmin(admin.ModelAdmin):
-    list_display = ('nome', 'matricula', 'status', 'perfil', 'user')
-    list_filter = ('status', 'perfil')
+    list_display = ('nome', 'matricula', 'status', 'is_active', 'perfil', 'user')
+    list_filter = ('is_active', 'status', 'perfil')
     search_fields = ('nome', 'matricula', 'user__username')
     inlines = [HistoricoEscalaInline]
 

@@ -1,8 +1,27 @@
+no servidor: 
+Start-ScheduledTask -TaskName "Painel Manutencao - Waitress"
+Start-Sleep -Seconds 8
+
+Get-ScheduledTask -TaskName "Painel Manutencao - Waitress" |
+    Select-Object TaskName, State
+
+Get-NetTCPConnection `
+    -LocalPort 8900 `
+    -State Listen `
+    -ErrorAction SilentlyContinue |
+    Select-Object LocalAddress, LocalPort, OwningProcess, State
+
+comando para parar:
+Stop-ScheduledTask -TaskName $TaskName
+Start-Sleep -Seconds 5
+
+comando para iniciar:  powershell -ExecutionPolicy Bypass -File .\scripts\start_production.ps1
+
 http://localhost:3000/groups
 python manage.py runserver 0.0.0.0:8000
 
 python -m venv venv
-venv\Scripts\activate
+venv\Scripts\activate  .\.venv\Scripts\activate.ps1
 
 python -m pip install --upgrade pip
 pip install -r requirements.txt --trusted-host pypi.org --trusted-host files.pythonhosted.org
@@ -2152,3 +2171,46 @@ Resultados da Implementação:
    - Registro atômico de intervalos de estado da prensa (PRODUZINDO em verde, PARADA em vermelho, SEM_COMUNICACAO em cinza).
    - Linha do tempo horizontal visual com tooltip de início, fim e duração.
    - KPIs industriais complementares do período calculados sem divisão por zero e com exclusão de sem comunicação do denominador de eficiência.
+
+==================================================
+SPEC — FALTAS E TÉCNICOS INATIVOS
+Data: 2026-08-03 | Status: Concluída com Sucesso
+==================================================
+
+Arquivos criados:
+- regras_programacao/SPEC_FALTAS_E_TECNICOS_INATIVOS.md
+- maintenance/migrations/0012_technician_is_active_and_more.py
+
+Arquivos modificados:
+- maintenance/models.py (Adicionados status AUSENTE_FALTA_JUSTIFICADA e AUSENTE_FALTA_NAO_JUSTIFICADA, atualizado STATUS_AUSENCIA, expandido max_length=30 em Technician.status e HistoricoEscala.status_definido, adicionado campo is_active=True e método clean() de validação)
+- maintenance/admin.py (Atualizado TecnicoAdmin para incluir is_active em list_display e list_filter)
+- maintenance/forms.py (Atualizado TechnicianForm para incluir is_active nos campos/widgets e validação clean() impedindo inativação de técnicos com atendimentos em aberto)
+- maintenance/views.py (Filtrados técnicos ativos em tv_dashboard e technician_management, atualizados KPI cards de capacidade atual para considerar is_active=True, atualizado set_availability para aceitar novos status e validar is_active, adicionada validação backend em start_service impedindo alocação para técnicos inativos)
+- maintenance/templates/maintenance/technician_management.html (Adicionadas opções no select de disponibilidade, badges CSS estilizados e cartões de aviso para Falta Justificada e Falta Não Justificada)
+- maintenance/templates/maintenance/crud_list.html (Adicionada coluna/badge visual de Ativo/Inativo na tabela de cadastro de técnicos)
+- maintenance/templates/maintenance/technician_form.html (Adicionado switch/checkbox para o campo "Ativo no quadro da empresa")
+- maintenance/tests.py (Adicionada a suíte FaltasETecnicosInativosTestCase cobrindo 11 novos cenários de testes)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Novos Estados de Ausência:
+   - Adicionados 'AUSENTE_FALTA_JUSTIFICADA' ("Ausente – Falta Justificada") e 'AUSENTE_FALTA_NAO_JUSTIFICADA' ("Ausente – Falta Não Justificada") em Technician.STATUS_CHOICES e Technician.STATUS_AUSENCIA.
+   - Qualquer técnico marcado com falta fica impedido de receber novas ordens de serviço, exibe destaque visual no painel /management/, registra o evento em HistoricoEscala com o usuario_responsavel e pode retornar para "Disponível (Ocioso)".
+2. Técnicos Inativos (is_active):
+   - Adicionado o campo `is_active = models.BooleanField(default=True, verbose_name="Ativo no quadro da empresa")` ao modelo Technician.
+   - Todos os técnicos existentes permaneceram ativos após a aplicação da migration 0012.
+3. Comportamento no Django Admin e CRUD:
+   - Opcionalmente ativado/desativado pelo administrador via Django Admin ou tela de Cadastros (/cruds/).
+   - `is_active` adicionado a `list_display` e `list_filter` do Admin.
+4. Comportamento nas Telas Operacionais:
+   - Técnicos inativos são omitidos automaticamente das telas /management/ e /tv/, e de seletores de novos serviços.
+5. Validação no Backend:
+   - Tentativa de atribuir nova ordem de serviço para técnico inativo via POST/API é bloqueada no backend com mensagem amigável: "Este técnico não está ativo no quadro da empresa e não pode receber novas ordens de serviço."
+   - Tentativa de inativar um técnico com atendimentos em aberto (EM_ATENDIMENTO ou EM_PAUSA) é bloqueada no backend com mensagem amigável: "O técnico possui atendimentos em aberto. Conclua ou transfira os atendimentos antes de inativá-lo."
+6. Preservação de Históricos e Relatórios:
+   - Ordens de serviço antigas, relatórios por período (relatorio_turno, exportação Excel), auditoria HistoricoEscala e gráficos do dashboard mantêm intactos os registros de técnicos inativos.
+7. Migrações e Compatibilidade:
+   - Aplicada a migration aditiva e não destrutiva `0012_technician_is_active_and_more.py`.
+   - Executada a verificação do Django (`manage.py check` e `manage.py makemigrations --check`), confirmando 0 erros e 0 migrações pendentes.
+8. Testes Automatizados:
+   - Suíte completa de 112 testes executada via pytest/django test runner, aprovada com 100% de sucesso.

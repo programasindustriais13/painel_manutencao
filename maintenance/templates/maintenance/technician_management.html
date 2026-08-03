@@ -85,6 +85,8 @@
     .badge-ausente-ferias  { background: #0e7490; color: #ecfeff; border: 1px solid #22d3ee; }
     .badge-ausente-medico  { background: #7c3aed; color: #f5f3ff; border: 1px solid #a78bfa; }
     .badge-externo-plantao { background: #c2410c; color: #fff7ed; border: 1px solid #fb923c; }
+    .badge-ausente-falta-justificada   { background: #d97706; color: #fffbeb; border: 1px solid #f59e0b; }
+    .badge-ausente-falta-nao-justificada { background: #dc2626; color: #fef2f2; border: 1px solid #ef4444; }
 
     /* Overlay do card quando ausente */
     .card-ausente {
@@ -234,6 +236,14 @@
                             <span class="badge badge-externo-plantao px-3 py-2 rounded-pill font-monospace fw-bold">
                                 <i class="bi bi-geo-alt me-1"></i>PLANTÃO EXTERNO
                             </span>
+                        {% elif tech.status == 'AUSENTE_FALTA_JUSTIFICADA' %}
+                            <span class="badge badge-ausente-falta-justificada px-3 py-2 rounded-pill font-monospace fw-bold">
+                                <i class="bi bi-file-earmark-check me-1"></i>FALTA JUSTIFICADA
+                            </span>
+                        {% elif tech.status == 'AUSENTE_FALTA_NAO_JUSTIFICADA' %}
+                            <span class="badge badge-ausente-falta-nao-justificada px-3 py-2 rounded-pill font-monospace fw-bold">
+                                <i class="bi bi-exclamation-octagon me-1"></i>FALTA NÃO JUSTIFICADA
+                            </span>
                         {% endif %}
                         {% if paused.count > 0 %}
                             <span class="badge bg-warning text-dark badge-paused-count rounded-pill">
@@ -260,6 +270,12 @@
                             {% elif tech.status == 'EXTERNO_PLANTAO' %}
                                 <i class="bi bi-geo-alt text-warning fs-3 mb-2 d-block" style="color:#c2410c !important;"></i>
                                 <strong style="color:#c2410c;">Plantão Fora da Fábrica</strong>
+                            {% elif tech.status == 'AUSENTE_FALTA_JUSTIFICADA' %}
+                                <i class="bi bi-file-earmark-check fs-3 mb-2 d-block" style="color:#d97706 !important;"></i>
+                                <strong style="color:#d97706;">Falta Justificada</strong>
+                            {% elif tech.status == 'AUSENTE_FALTA_NAO_JUSTIFICADA' %}
+                                <i class="bi bi-exclamation-octagon fs-3 mb-2 d-block" style="color:#dc2626 !important;"></i>
+                                <strong style="color:#dc2626;">Falta Não Justificada</strong>
                             {% endif %}
                             <small class="text-muted d-block mt-1">Não recebe novas ordens de serviço</small>
                         </div>
@@ -470,6 +486,8 @@
                                 <option value="AUSENTE_FERIAS"{% if tech.status == 'AUSENTE_FERIAS' %} selected{% endif %}>&#x1F3D6; Férias</option>
                                 <option value="AUSENTE_MEDICO"{% if tech.status == 'AUSENTE_MEDICO' %} selected{% endif %}>&#x1FA7A; Licença Médica</option>
                                 <option value="EXTERNO_PLANTAO"{% if tech.status == 'EXTERNO_PLANTAO' %} selected{% endif %}>&#x1F4CD; Plantão Externo</option>
+                                <option value="AUSENTE_FALTA_JUSTIFICADA"{% if tech.status == 'AUSENTE_FALTA_JUSTIFICADA' %} selected{% endif %}>&#x1F4CB; Falta Justificada</option>
+                                <option value="AUSENTE_FALTA_NAO_JUSTIFICADA"{% if tech.status == 'AUSENTE_FALTA_NAO_JUSTIFICADA' %} selected{% endif %}>&#x26A0; Falta Não Justificada</option>
                             </select>
                             <button type="submit" class="btn btn-sm btn-outline-secondary btn-availability-save">
                                 <i class="bi bi-check-lg"></i> Salvar

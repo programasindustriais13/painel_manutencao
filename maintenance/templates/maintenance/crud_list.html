@@ -135,10 +135,11 @@
                     <table class="table table-hover align-middle border-top">
                         <thead class="table-light">
                             <tr>
-                                <th scope="col" style="width: 10%;">ID</th>
-                                <th scope="col" style="width: 45%;">Nome Completo</th>
-                                <th scope="col" style="width: 25%;">Matrícula</th>
-                                <th scope="col" style="width: 10%;">Status Atual</th>
+                                <th scope="col" style="width: 8%;">ID</th>
+                                <th scope="col" style="width: 35%;">Nome Completo</th>
+                                <th scope="col" style="width: 20%;">Matrícula</th>
+                                <th scope="col" style="width: 15%;">Ativo no Quadro</th>
+                                <th scope="col" style="width: 12%;">Status Atual</th>
                                 <th scope="col" class="text-end" style="width: 10%;">Ações</th>
                             </tr>
                         </thead>
@@ -148,6 +149,13 @@
                                 <th scope="row" class="font-monospace text-muted">{{ tech.id }}</th>
                                 <td><span class="fw-semibold text-dark">{{ tech.nome }}</span></td>
                                 <td><span class="font-monospace small text-muted">{{ tech.matricula }}</span></td>
+                                <td>
+                                    {% if tech.is_active %}
+                                        <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle rounded-pill">Ativo</span>
+                                    {% else %}
+                                        <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle rounded-pill">Inativo</span>
+                                    {% endif %}
+                                </td>
                                 <td>
                                     {% if tech.status == 'OCIOSO' %}
                                         <span class="badge bg-secondary">Ocioso</span>
