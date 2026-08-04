@@ -20,14 +20,20 @@ class ScadaRouter:
     """
 
     LOCAL_MANAGED_MODELS = {
+        "productionshift",
         "productionmachineconfig",
         "productioncavityconfig",
         "productionglobalparameter",
         "productionglobalalarm",
         "productionmachinestate",
         "productiondowntimeevent",
+        "productioncavitystate",
+        "productioncavitydowntimeevent",
         "productioncavitymatrixhistory",
         "productionmachinestateinterval",
+        "productionrateaggregate",
+        "productionparameterconfig",
+        "productionparameteranomalyevent",
     }
 
     def db_for_read(self, model, **hints):

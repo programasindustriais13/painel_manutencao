@@ -302,3 +302,31 @@ class WhatsAppGroup(models.Model):
     class Meta:
         verbose_name = "Grupo de WhatsApp"
         verbose_name_plural = "Grupos de WhatsApp"
+
+
+class AllocationProgressUpdate(models.Model):
+    allocation = models.ForeignKey(
+        Allocation,
+        on_delete=models.CASCADE,
+        related_name="progress_updates",
+        verbose_name="Alocação"
+    )
+    autor = models.ForeignKey(
+        'auth.User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Autor da Atualização"
+    )
+    descricao = models.TextField(verbose_name="Descrição da Atualização")
+    criado_em = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
+
+    def __str__(self):
+        autor_str = self.autor.get_full_name() or self.autor.username if self.autor else "Sistema"
+        return f"Nota em Alocação #{self.allocation_id} por {autor_str} em {self.criado_em.strftime('%d/%m/%Y %H:%M')}"
+
+    class Meta:
+        verbose_name = "Atualização de Progresso"
+        verbose_name_plural = "Atualizações de Progresso"
+        ordering = ["criado_em"]
+

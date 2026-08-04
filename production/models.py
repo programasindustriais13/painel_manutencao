@@ -1,6 +1,76 @@
 from django.db import models
 from django.core.validators import MinValueValidator
+from django.utils import timezone
 from maintenance.models import Machine
+
+
+class ProductionShift(models.Model):
+    nome = models.CharField(
+        max_length=50,
+        verbose_name="Nome do Turno",
+        help_text="Ex: 1º Turno, Turno Manhã, etc."
+    )
+    horario_inicial = models.TimeField(
+        verbose_name="Horário Inicial"
+    )
+    horario_final = models.TimeField(
+        verbose_name="Horário Final"
+    )
+    atravessa_meia_noite = models.BooleanField(
+        default=False,
+        verbose_name="Atravessa a Meia-Noite",
+        help_text="Marcado automaticamente se o horário final for menor ou igual ao horário inicial."
+    )
+    percentual_meta = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.00,
+        verbose_name="Percentual de Distribuição da Meta (%)",
+        help_text="Percentual da meta diária alocado para este turno. A soma dos turnos ativos deve dar 100.00% (ou 0.00% para distribuição igual)."
+    )
+    ordem_exibicao = models.PositiveIntegerField(
+        default=1,
+        verbose_name="Ordem de Exibição"
+    )
+    ativo = models.BooleanField(
+        default=True,
+        verbose_name="Ativo"
+    )
+
+    class Meta:
+        verbose_name = "Turno de Produção"
+        verbose_name_plural = "Turnos de Produção"
+        ordering = ["ordem_exibicao", "horario_inicial"]
+
+    def __str__(self):
+        h_ini = self.horario_inicial.strftime("%H:%M") if self.horario_inicial else ""
+        h_fim = self.horario_final.strftime("%H:%M") if self.horario_final else ""
+        return f"{self.nome} ({h_ini} - {h_fim})"
+
+    def save(self, *args, **kwargs):
+        if self.horario_inicial and self.horario_final:
+            self.atravessa_meia_noite = (self.horario_final <= self.horario_inicial)
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        super().clean()
+        if self.horario_inicial and self.horario_final:
+            self.atravessa_meia_noite = (self.horario_final <= self.horario_inicial)
+
+        if self.ativo:
+            qs = ProductionShift.objects.filter(ativo=True)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            active_shifts = list(qs) + [self]
+            custom_percents = [float(s.percentual_meta or 0) for s in active_shifts]
+            total_percent = sum(custom_percents)
+            if any(p > 0 for p in custom_percents):
+                if abs(total_percent - 100.0) > 0.01:
+                    raise ValidationError(
+                        f"A soma dos percentuais dos turnos ativos deve ser 100.00% (soma atual: {total_percent:.2f}%)."
+                    )
+
 
 class ProductionMachineConfig(models.Model):
     machine = models.OneToOneField(
@@ -429,9 +499,246 @@ class ProductionMachineStateInterval(models.Model):
             models.Index(fields=["ended_at"]),
         ]
 
+class ProductionCavityState(models.Model):
+    CAVITY_STATE_CHOICES = [
+        ("NORMAL", "Normal"),
+        ("PARADA", "Parada"),
+        ("INDETERMINADO", "Indeterminado"),
+    ]
+
+    cavity_config = models.OneToOneField(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="state",
+        verbose_name="Configuração da Cavidade"
+    )
+    estado_atual = models.CharField(
+        max_length=50,
+        choices=CAVITY_STATE_CHOICES,
+        default="NORMAL",
+        verbose_name="Estado Atual"
+    )
+    inicio_estado_atual = models.DateTimeField(
+        default=timezone.now,
+        verbose_name="Início do Estado Atual"
+    )
+    ultimo_motivo = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Último Motivo Registrado"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Estado Atual da Cavidade"
+        verbose_name_plural = "Estados Atuais das Cavidades"
+
     def __str__(self):
-        status_str = f"até {self.ended_at.strftime('%d/%m %H:%M')}" if self.ended_at else "(Em andamento)"
-        return f"{self.get_state_display()} {self.machine_config.machine.nome} em {self.started_at.strftime('%d/%m %H:%M')} {status_str}"
+        return f"Estado {self.cavity_config.nome} ({self.cavity_config.machine_config.machine.nome}): {self.estado_atual}"
+
+
+class ProductionCavityDowntimeEvent(models.Model):
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="downtime_events",
+        verbose_name="Configuração da Cavidade"
+    )
+    inicio = models.DateTimeField(
+        verbose_name="Início da Parada"
+    )
+    fim = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Fim da Parada"
+    )
+    duracao_segundos = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Duração (segundos)"
+    )
+    motivo_parada = models.CharField(
+        max_length=255,
+        verbose_name="Motivo da Parada"
+    )
+    snapshot_valor_motivo = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Snapshot Valor do Motivo"
+    )
+    timestamp_inicial_scada = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Timestamp Inicial Scada (ms)"
+    )
+    timestamp_final_scada = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Timestamp Final Scada (ms)"
+    )
+    origem = models.CharField(
+        max_length=50,
+        default="SCADA",
+        verbose_name="Origem do Registro"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Evento de Parada por Cavidade"
+        verbose_name_plural = "Eventos de Parada por Cavidade"
+        ordering = ["-inicio"]
+        indexes = [
+            models.Index(fields=["cavity_config", "inicio"]),
+            models.Index(fields=["cavity_config", "fim"]),
+        ]
+
+    def __str__(self):
+        status_str = f"até {self.fim.strftime('%d/%m %H:%M')}" if self.fim else "(Em andamento)"
+        return f"Parada Cavidade {self.cavity_config.nome} em {self.inicio.strftime('%d/%m %H:%M')} {status_str}"
+
+
+class ProductionRateAggregate(models.Model):
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="rate_aggregates",
+        verbose_name="Configuração de Cavidade"
+    )
+    produto = models.CharField(max_length=100, null=True, blank=True, verbose_name="Produto")
+    matriz = models.CharField(max_length=100, null=True, blank=True, verbose_name="Matriz")
+    inicio_intervalo = models.DateTimeField(verbose_name="Início do Intervalo")
+    fim_intervalo = models.DateTimeField(verbose_name="Fim do Intervalo")
+    minutos_produzindo = models.PositiveIntegerField(verbose_name="Minutos Produzindo")
+    quantidade_produzida = models.PositiveIntegerField(verbose_name="Quantidade Produzida")
+    taxa_pneus_hora = models.DecimalField(max_digits=7, decimal_places=2, verbose_name="Taxa (Pneus/Hora)")
+    quantidade_amostras = models.PositiveIntegerField(default=1, verbose_name="Quantidade de Amostras")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
+
+    class Meta:
+        verbose_name = "Agregado de Taxa de Produção"
+        verbose_name_plural = "Agregados de Taxa de Produção"
+        ordering = ["-inicio_intervalo"]
+        indexes = [
+            models.Index(fields=["cavity_config", "produto", "matriz"]),
+            models.Index(fields=["inicio_intervalo"]),
+        ]
+
+    def __str__(self):
+        return f"{self.cavity_config.nome} ({self.produto or 'S/P'}): {self.taxa_pneus_hora} pneus/h ({self.inicio_intervalo.strftime('%d/%m %H:%M')})"
+
+
+class ProductionParameterConfig(models.Model):
+    nome = models.CharField(max_length=100, verbose_name="Nome do Parâmetro")
+    chave = models.CharField(max_length=50, verbose_name="Chave Única")
+    xid = models.CharField(max_length=50, verbose_name="XID Scada")
+    unidade = models.CharField(max_length=20, default="°C", verbose_name="Unidade de Medida")
+    ordem = models.PositiveIntegerField(default=1, verbose_name="Ordem de Exibição")
+
+    machine_config = models.ForeignKey(
+        ProductionMachineConfig,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="parameter_configs",
+        verbose_name="Prensa / Máquina"
+    )
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="parameter_configs",
+        verbose_name="Cavidade"
+    )
+
+    limite_minimo = models.FloatField(null=True, blank=True, verbose_name="Limite Mínimo")
+    limite_maximo = models.FloatField(null=True, blank=True, verbose_name="Limite Máximo")
+    tolerancia_segundos = models.PositiveIntegerField(default=0, verbose_name="Tolerância (Segundos)")
+    histerese = models.FloatField(default=0.0, verbose_name="Histerese de Retorno")
+    ativo = models.BooleanField(default=True, verbose_name="Ativo")
+    stale_limit_seconds = models.PositiveIntegerField(default=120, verbose_name="Limite Stale (Segundos)")
+
+    class Meta:
+        verbose_name = "Configuração de Parâmetro de Processo"
+        verbose_name_plural = "Configurações de Parâmetros de Processo"
+        ordering = ["ordem", "nome"]
+
+    def __str__(self):
+        target = self.cavity_config.nome if self.cavity_config else (self.machine_config.machine.nome if self.machine_config else "Global")
+        return f"{self.nome} ({target}) [{self.limite_minimo or '-'} ~ {self.limite_maximo or '-'}{self.unidade}]"
+
+
+class ProductionParameterAnomalyEvent(models.Model):
+    parameter_config = models.ForeignKey(
+        ProductionParameterConfig,
+        on_delete=models.CASCADE,
+        related_name="anomaly_events",
+        verbose_name="Parâmetro"
+    )
+    machine_config = models.ForeignKey(
+        ProductionMachineConfig,
+        on_delete=models.CASCADE,
+        related_name="anomaly_events",
+        verbose_name="Máquina"
+    )
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="anomaly_events",
+        verbose_name="Cavidade"
+    )
+    inicio = models.DateTimeField(verbose_name="Início da Anomalia")
+    inicio_fora_faixa = models.DateTimeField(null=True, blank=True, verbose_name="Início Fora da Faixa")
+    fim = models.DateTimeField(null=True, blank=True, verbose_name="Fim da Anomalia")
+    duracao_segundos = models.PositiveIntegerField(default=0, verbose_name="Duração (Segundos)")
+
+    menor_valor = models.FloatField(verbose_name="Menor Valor Registrado")
+    maior_valor = models.FloatField(verbose_name="Maior Valor Registrado")
+    ultimo_valor = models.FloatField(verbose_name="Último Valor Registrado")
+    tipo_limite = models.CharField(max_length=10, choices=[("MINIMO", "Mínimo Violado"), ("MAXIMO", "Máximo Violado")], verbose_name="Tipo de Limite")
+
+    produto_snapshot = models.CharField(max_length=100, null=True, blank=True, verbose_name="Produto (Snapshot)")
+    matriz_snapshot = models.CharField(max_length=100, null=True, blank=True, verbose_name="Matriz (Snapshot)")
+    lote_snapshot = models.CharField(max_length=100, null=True, blank=True, verbose_name="Lote (Snapshot)")
+    downtime_event = models.ForeignKey(
+        ProductionDowntimeEvent,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="anomaly_events",
+        verbose_name="Evento de Parada Relacionado"
+    )
+
+    class Meta:
+        verbose_name = "Evento de Anomalia de Parâmetro"
+        verbose_name_plural = "Eventos de Anomalias de Parâmetros"
+        ordering = ["-inicio"]
+        indexes = [
+            models.Index(fields=["parameter_config", "inicio"]),
+            models.Index(fields=["parameter_config", "fim"]),
+        ]
+
+    def __str__(self):
+        status_str = f"até {self.fim.strftime('%d/%m %H:%M')}" if self.fim else "(Em andamento)"
+        return f"Anomalia {self.parameter_config.nome} ({self.tipo_limite}) em {self.inicio.strftime('%d/%m %H:%M')} {status_str}"
 
 
 # ==============================================================================

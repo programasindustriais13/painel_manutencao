@@ -97,16 +97,17 @@
     </div>
 
     <!-- Machine Live Status Card -->
+    <!-- Machine Summary Cards -->
     <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
-        <div class="row g-3 align-items-center">
-            <div class="col-12 col-md-6 col-lg-3">
-                <div class="p-2 border rounded bg-light">
+        <div class="row g-2 g-md-3 align-items-center">
+            <div class="col-12 col-sm-6 col-xl">
+                <div class="p-2 border rounded bg-light h-100">
                     <span class="d-block text-muted small"><i class="bi bi-exclamation-circle me-1"></i>Motivo Atual de Parada</span>
                     <strong class="text-danger fs-6">{{ motivo_geral }}</strong>
                 </div>
             </div>
-            <div class="col-12 col-md-6 col-lg-3">
-                <div class="p-2 border rounded bg-light">
+            <div class="col-12 col-sm-6 col-xl">
+                <div class="p-2 border rounded bg-light h-100">
                     <span class="d-block text-muted small"><i class="bi bi-wifi me-1"></i>Situação da Comunicação</span>
                     {% if sem_comunicacao %}
                     <strong class="text-secondary fs-6"><i class="bi bi-wifi-off me-1"></i>Sem comunicação com Scada</strong>
@@ -117,10 +118,27 @@
                     {% endif %}
                 </div>
             </div>
-            <div class="col-12 col-lg-6">
-                <div class="p-2 border rounded bg-light">
+            <div class="col-12 col-sm-6 col-xl">
+                <div class="p-2 border rounded bg-light h-100">
+                    <span class="d-block text-muted small"><i class="bi bi-clock-history me-1"></i>Turno Ativo</span>
+                    {% if active_shift and active_shift.has_shifts %}
+                    <strong class="text-primary fs-6">{{ active_shift.nome }}</strong>
+                    <span class="d-block text-muted fs-8">{{ active_shift.horario_inicial_str }} - {{ active_shift.horario_final_str }} (Peso: {{ active_shift.effective_percent }}%)</span>
+                    {% else %}
+                    <strong class="text-secondary fs-6">Sem Turno Ativo</strong>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="col-12 col-sm-6 col-xl">
+                <div class="p-2 border rounded bg-light h-100">
+                    <span class="d-block text-muted small"><i class="bi bi-person-wrench me-1"></i>Manutenção Responsável</span>
+                    <strong class="text-dark fs-6">{{ responsaveis_manutencao }}</strong>
+                </div>
+            </div>
+            <div class="col-12 col-sm-6 col-xl">
+                <div class="p-2 border rounded bg-light h-100">
                     <div class="d-flex justify-content-between align-items-center mb-1">
-                        <span class="fw-semibold small text-secondary"><i class="bi bi-grid me-1"></i>Produção vs Meta Total</span>
+                        <span class="fw-semibold small text-secondary"><i class="bi bi-grid me-1"></i>Produção vs Meta</span>
                         <span class="small fw-bold text-dark">{{ producao_total }} / {{ meta_total }} ({{ percentual_total }}%)</span>
                     </div>
                     <div class="cavity-bar">
@@ -151,7 +169,7 @@
         <div class="row g-2 mt-2">
             {% for cav in cavidades %}
             <div class="col-12 col-sm-6 col-md-3">
-                <div class="p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}">
+                <a href="{% url 'production:cavity_detail' machine_id=config.id cavity_id=cav.id %}" class="text-decoration-none text-dark d-block p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}" title="Clique para ver detalhes da cavidade {{ cav.nome }}">
                     <div class="d-flex justify-content-between align-items-center mb-1">
                         <div class="d-flex align-items-center gap-1">
                             <span class="fw-bold text-dark">{{ cav.nome }}</span>
@@ -165,15 +183,32 @@
                         <span><i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz }}</strong></span>
                         <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
                     </div>
+                    <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
+                        <span><i class="bi bi-bullseye me-1"></i>Meta Turno: <strong class="text-dark">{{ cav.meta_turno }}</strong></span>
+                        <span><i class="bi bi-check2-circle me-1"></i>Realiz. Turno: <strong class="text-dark">{{ cav.producao_turno }}</strong> (<span class="{% if cav.diferenca_meta_turno >= 0 %}text-success{% else %}text-danger{% endif %}">{{ cav.diferenca_meta_turno_str }}</span>)</span>
+                    </div>
                     <div class="cavity-bar">
                         <div class="cavity-fill bg-info" style="width: {{ cav.percentual_bar }}%;"></div>
                     </div>
-                    {% if cav.status_code == 'PARADA' and cav.motivo_parada %}
+                    {% if cav.status_code == 'PARADA' %}
+                    {% if cav.motivo_parada %}
                     <div class="text-danger fw-semibold small mt-1">
                         <i class="bi bi-exclamation-triangle me-1"></i>Motivo: {{ cav.motivo_parada }}
                     </div>
                     {% endif %}
-                </div>
+                    <div class="mt-1 pt-1 border-top" style="font-size: 0.75rem;">
+                        {% if cav.perda_estimada.disponivel %}
+                        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle d-block text-start p-1" title="{{ cav.perda_estimada.texto_formatado }}">
+                            <i class="bi bi-graph-down-arrow me-1"></i>Perda Estimada: <strong>~{{ cav.perda_estimada.perda_pneus }} pneus</strong> ({{ cav.perda_estimada.taxa_pneus_hora }} p/h)
+                        </span>
+                        {% else %}
+                        <span class="text-muted d-block" style="font-size: 0.7rem;" title="{{ cav.perda_estimada.texto_formatado }}">
+                            <i class="bi bi-info-circle me-1"></i>Estimativa de perda indisponível (amostras &lt; 3)
+                        </span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                </a>
             </div>
             {% endfor %}
         </div>
@@ -293,6 +328,82 @@
                     <strong class="text-dark fs-6">{{ kpi.duracao_media_str }}</strong>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Anomalias de Parâmetros de Processo -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-activity me-2 text-warning"></i>Anomalias de Parâmetros de Processo</h5>
+            <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle px-3 py-2 rounded-pill fw-semibold">
+                <i class="bi bi-exclamation-triangle-fill me-1"></i>{{ anomalias_ativas|length }} ativa(s)
+            </span>
+        </div>
+
+        <div class="alert alert-secondary py-2 px-3 mb-3 d-flex align-items-center gap-2 fs-8 text-secondary">
+            <i class="bi bi-info-circle-fill"></i>
+            <span>{{ precisao_temporal_notice }}</span>
+        </div>
+
+        <div class="anomalies-list">
+            {% for anom in anomalias_ativas %}
+            <div class="p-3 border border-warning-subtle rounded-3 mb-2 bg-warning-subtle bg-opacity-10">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="fw-bold text-dark"><i class="bi bi-thermometer-half me-1 text-danger"></i>{{ anom.parametro }} ({{ anom.cavidade_nome }})</span>
+                    <span class="badge bg-danger text-white px-2 py-1 fs-8"><i class="bi bi-exclamation-circle me-1"></i>{{ anom.tipo_limite }} VIOLADO</span>
+                </div>
+                <div class="row g-2 text-muted small mt-1">
+                    <div class="col-12 col-md-4">
+                        <span class="d-block">Último Valor: <strong class="text-danger fs-6">{{ anom.valor_atual }}{{ anom.unidade }}</strong></span>
+                        <span class="d-block fs-8 text-secondary">Limite: {{ anom.limite }}{{ anom.unidade }}</span>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <span class="d-block">Mín: {{ anom.menor_valor }}{{ anom.unidade }} | Máx: {{ anom.maior_valor }}{{ anom.unidade }}</span>
+                        <span class="d-block fs-8 text-secondary">Produto/Matriz: {{ anom.produto }} / {{ anom.matriz }}</span>
+                    </div>
+                    <div class="col-12 col-md-4 text-md-end">
+                        <span class="d-block text-muted small"><i class="bi bi-clock me-1"></i>Início: {{ anom.inicio_str }}</span>
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="text-center py-3 text-muted fs-8">
+                <i class="bi bi-check-circle fs-4 d-block mb-1 text-success"></i>
+                Nenhuma anomalia de parâmetro de processo ativa nesta máquina.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Manutenção: Responsáveis e Atualizações Parciais do Reparo -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-tools me-2 text-primary"></i>Manutenção — Responsáveis e Notas de Progresso</h5>
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-2 rounded-pill fw-semibold">
+                <i class="bi bi-person-fill me-1"></i>{{ responsaveis_manutencao }}
+            </span>
+        </div>
+
+        <div class="timeline-progress-updates">
+            {% for pu in atualizacoes_manutencao %}
+            <div class="p-3 border rounded-3 mb-2 bg-light">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="fw-bold text-dark"><i class="bi bi-person-circle me-1 text-secondary"></i>{{ pu.autor }} <small class="text-muted fw-normal">(Técnico: {{ pu.tecnico }})</small></span>
+                    <div class="d-flex align-items-center gap-2">
+                        {% if pu.status_alocacao %}
+                        <span class="badge bg-secondary-subtle text-secondary px-2 py-0 fs-8">{{ pu.status_alocacao }}</span>
+                        {% endif %}
+                        <span class="text-muted small"><i class="bi bi-clock me-1"></i>{{ pu.criado_em_str }}</span>
+                    </div>
+                </div>
+                <p class="mb-0 text-dark small" style="white-space: pre-line;">{{ pu.descricao }}</p>
+            </div>
+            {% empty %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-chat-square-text fs-3 d-block mb-2 text-secondary"></i>
+                Nenhuma atualização de progresso registrada pela manutenção para esta máquina.
+            </div>
+            {% endfor %}
         </div>
     </div>
 

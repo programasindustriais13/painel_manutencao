@@ -4,7 +4,7 @@ from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup, AllocationProgressUpdate
 
 class MaintenanceSystemTestCase(TestCase):
     def setUp(self):
@@ -921,4 +921,90 @@ class FaltasETecnicosInativosTestCase(TestCase):
         from maintenance.admin import TecnicoAdmin
         self.assertIn('is_active', TecnicoAdmin.list_display)
         self.assertIn('is_active', TecnicoAdmin.list_filter)
+
+
+class AllocationProgressUpdateTestCase(TestCase):
+    def setUp(self):
+        self.operator_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.tech_group, _ = Group.objects.get_or_create(name='Técnicos')
+
+        self.user_op = User.objects.create_user('operator_06c', 'op06c@test.com', 'pwd123')
+        self.user_op.groups.add(self.operator_group)
+
+        self.user_tech1 = User.objects.create_user('tech1_06c', 't106c@test.com', 'pwd123')
+        self.user_tech1.groups.add(self.tech_group)
+
+        self.user_tech2 = User.objects.create_user('tech2_06c', 't206c@test.com', 'pwd123')
+        self.user_tech2.groups.add(self.tech_group)
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 01", setor=self.sector)
+
+        self.tech1 = Technician.objects.create(nome="Técnico 1", matricula="M01", status="EM_ATENDIMENTO", user=self.user_tech1, perfil="TECNICO")
+        self.tech2 = Technician.objects.create(nome="Técnico 2", matricula="M02", status="EM_ATENDIMENTO", user=self.user_tech2, perfil="TECNICO")
+
+        self.alloc1 = Allocation.objects.create(
+            tecnico=self.tech1,
+            maquina=self.machine,
+            atividade_observacao="Manutenção de Prensa",
+            data_inicio=timezone.now(),
+            status="EM_ATENDIMENTO"
+        )
+        self.alloc2 = Allocation.objects.create(
+            tecnico=self.tech2,
+            maquina=self.machine,
+            atividade_observacao="Troca de válvula",
+            data_inicio=timezone.now(),
+            status="EM_ATENDIMENTO"
+        )
+
+    def test_tech1_can_add_progress_update_to_own_allocation(self):
+        """Técnico adiciona nota de progresso parcial em sua própria alocação."""
+        client = Client()
+        client.force_login(self.user_tech1)
+        url = reverse('add_allocation_progress_update', kwargs={'allocation_id': self.alloc1.id})
+        res = client.post(url, {'descricao': 'Substituída primeira vedação.'})
+
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(AllocationProgressUpdate.objects.filter(allocation=self.alloc1).count(), 1)
+        pu = AllocationProgressUpdate.objects.get(allocation=self.alloc1)
+        self.assertEqual(pu.descricao, 'Substituída primeira vedação.')
+        self.assertEqual(pu.autor, self.user_tech1)
+
+        # Garante que o status da alocação não foi alterado
+        self.alloc1.refresh_from_db()
+        self.assertEqual(self.alloc1.status, 'EM_ATENDIMENTO')
+
+    def test_tech1_cannot_add_progress_update_to_other_tech_allocation(self):
+        """Técnico tenta adicionar nota na alocação de outro técnico e é bloqueado."""
+        client = Client()
+        client.force_login(self.user_tech1)
+        url = reverse('add_allocation_progress_update', kwargs={'allocation_id': self.alloc2.id})
+        res = client.post(url, {'descricao': 'Tentativa não autorizada.'})
+
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(AllocationProgressUpdate.objects.filter(allocation=self.alloc2).count(), 0)
+
+    def test_blank_description_is_rejected(self):
+        """Descrição vazia ou contendo apenas espaços deve ser rejeitada."""
+        client = Client()
+        client.force_login(self.user_tech1)
+        url = reverse('add_allocation_progress_update', kwargs={'allocation_id': self.alloc1.id})
+        res = client.post(url, {'descricao': '   '})
+
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(AllocationProgressUpdate.objects.filter(allocation=self.alloc1).count(), 0)
+
+    def test_operator_can_add_progress_update_to_any_allocation(self):
+        """Operador/Admin pode incluir notas de progresso em qualquer alocação."""
+        client = Client()
+        client.force_login(self.user_op)
+        url = reverse('add_allocation_progress_update', kwargs={'allocation_id': self.alloc2.id})
+        res = client.post(url, {'descricao': 'Operador registrou prioridade.'})
+
+        self.assertEqual(res.status_code, 302)
+        self.assertEqual(AllocationProgressUpdate.objects.filter(allocation=self.alloc2).count(), 1)
+        pu = AllocationProgressUpdate.objects.get(allocation=self.alloc2)
+        self.assertEqual(pu.autor, self.user_op)
+
 

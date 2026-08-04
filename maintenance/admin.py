@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.admin.models import LogEntry
 from django.utils.html import format_html
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup, AllocationProgressUpdate
 
 
 @admin.register(Sector)
@@ -50,13 +50,20 @@ class HistoricoPausaInline(admin.TabularInline):
     readonly_fields = ['data_pausa', 'data_retorno', 'motivo_pausa']
 
 
+class AllocationProgressUpdateInline(admin.TabularInline):
+    model = AllocationProgressUpdate
+    extra = 0
+    readonly_fields = ['autor', 'criado_em', 'descricao']
+    can_delete = False
+
+
 @admin.register(Allocation)
 class AlocacaoAdmin(admin.ModelAdmin):
     list_display = ('tecnico', 'maquina', 'exibir_status_real', 'usuario_operador', 'data_inicio', 'data_pausa', 'data_fim')
     list_filter = ('status', 'usuario_operador', 'data_inicio', 'data_pausa', 'data_fim')
     search_fields = ('tecnico__nome', 'maquina__nome', 'usuario_operador__username')
     date_hierarchy = 'data_inicio'
-    inlines = [HistoricoPausaInline]
+    inlines = [HistoricoPausaInline, AllocationProgressUpdateInline]
 
     def exibir_status_real(self, obj):
         if obj.data_fim is not None:
@@ -118,3 +125,12 @@ class WhatsAppGroupAdmin(admin.ModelAdmin):
     list_display = ('nome', 'jid', 'is_active')
     list_filter = ('is_active',)
     search_fields = ('nome', 'jid')
+
+
+@admin.register(AllocationProgressUpdate)
+class AllocationProgressUpdateAdmin(admin.ModelAdmin):
+    list_display = ("allocation", "autor", "criado_em", "descricao")
+    list_filter = ("criado_em", "autor")
+    search_fields = ("allocation__maquina__nome", "allocation__tecnico__nome", "descricao", "autor__username")
+    date_hierarchy = "criado_em"
+

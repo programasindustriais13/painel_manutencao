@@ -109,6 +109,7 @@ class Command(BaseCommand):
                 try:
                     from production.models import ProductionMachineConfig
                     scada_vals = ProductionStateService.process_scada_cycle()
+                    ProductionStateService.purge_old_rate_aggregates(days=90)
                     machines_count = ProductionMachineConfig.objects.count()
                     logger.info(f"Ciclo concluído: {machines_count} máquina(s) processada(s).")
                     self.stdout.write(".", ending="")

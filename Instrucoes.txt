@@ -17,6 +17,15 @@ Start-Sleep -Seconds 5
 
 comando para iniciar:  powershell -ExecutionPolicy Bypass -File .\scripts\start_production.ps1
 
+Coletor SCADA:
+
+.\.venv\Scripts\python.exe manage.py collect_production_scada --interval 60
+
+Servidor web da Manutenção:
+
+powershell -ExecutionPolicy Bypass -File .\scripts\start_production.ps1
+
+Como o sistema já foi atualizado e está rodando em produção, o fluxo foi concluído com sucesso. Em futuros deploys, basta interromper essas duas janelas com Ctrl + C, atualizar e validar o projeto, iniciar primeiro o servidor web e depois o coletor SCADA.
 http://localhost:3000/groups
 python manage.py runserver 0.0.0.0:8000
 
@@ -2214,3 +2223,215 @@ Resumo das Implementações:
    - Executada a verificação do Django (`manage.py check` e `manage.py makemigrations --check`), confirmando 0 erros e 0 migrações pendentes.
 8. Testes Automatizados:
    - Suíte completa de 112 testes executada via pytest/django test runner, aprovada com 100% de sucesso.
+
+================================================================================
+EXECUÇÃO DA SPEC_PRODUCAO_06A_METAS_DIARIAS_E_TURNOS.md (04/08/2026)
+================================================================================
+
+Objetivo:
+Implementar a gestão administrável de turnos industriais (ProductionShift), a validação de soma de percentuais de metas, o cálculo proporcional por turno com suporte a viradas de meia-noite (ex: 22:00 às 06:00) e a exibição das métricas no Dashboard de Produção e Detalhes da Máquina.
+
+Arquivos criados:
+- production/migrations/0008_productionshift.py
+
+Arquivos modificados:
+- production/models.py (Adicionado model ProductionShift com clean() e save() para calcular travessia de meia-noite e validar que a soma de percentuais de turnos ativos seja 100.00% quando customizado)
+- production/routers.py (Adicionado "productionshift" ao conjunto LOCAL_MANAGED_MODELS no ScadaRouter)
+- production/admin.py (Registrado ProductionShiftAdmin com list_display, list_editable e list_filter)
+- production/services.py (Implementada função get_active_shift(), atualizado build_cavities_data, get_dashboard_state e get_machine_detail para calcular meta_diaria, meta_turno, producao_turno, diferenca_meta_turno e percentual_turno)
+- production/templates/production/dashboard.html (Exibido badge do turno ativo no cabeçalho e métricas de Meta Turno e Diferença no card das cavidades)
+- production/templates/production/machine_detail.html (Adicionado card do Turno Ativo no painel superior e métricas de Meta Turno nas cavidades)
+- production/tests.py (Adicionada a classe Spec06AShiftsAndTargetsTestCase cobrindo 6 novos cenários de testes)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Model ProductionShift:
+   - Cadastra turnos industriais com nome, horário inicial, horário final, ordem de exibição, flag de ativo e percentual de distribuição da meta.
+   - Calcula automaticamente `atravessa_meia_noite = (horario_final <= horario_inicial)`.
+2. Validação e Fallback de Percentuais:
+   - Quando percentuais customizados forem preenchidos, a soma dos turnos ativos deve obrigatoriamente validar em 100.00% no Admin/clean().
+   - Se todos os turnos ativos estiverem com 0.00%, aplica-se divisão igualitária automaticamente (ex: 50%/50% para 2 turnos, 33.33% para 3 turnos).
+3. Cálculo de Metas e Produção por Turno:
+   - Preservado o campo `meta_producao_manual` como a Meta Diária da Cavidade.
+   - `meta_turno = round(meta_diaria * (effective_percent / 100.0))`.
+   - Exibição de Meta Turno, Realizado no Turno, Diferença para a Meta e % de Conclusão.
+4. Testes Automatizados:
+   - Suíte ampliada para 118 testes executados e aprovados com 100% de sucesso.
+
+================================================================================
+EXECUÇÃO DA SPEC_PRODUCAO_06B_ESTADO_E_PARADAS_POR_CAVIDADE.md (04/08/2026)
+================================================================================
+
+Objetivo:
+Implementar o rastreamento relacional do estado ativo por cavidade (ProductionCavityState), o histórico de eventos de parada por cavidade (ProductionCavityDowntimeEvent), a máquina de estados idempotente no coletor com proteção contra dados stale, e a exibição do KPI e filtro de "Cavidades Paradas" no Dashboard de Produção.
+
+Arquivos criados:
+- production/migrations/0009_productioncavitystate_productioncavitydowntimeevent.py
+
+Arquivos modificados:
+- production/models.py (Criados os modelos ProductionCavityState e ProductionCavityDowntimeEvent com relacionamentos, timestamps e índices)
+- production/routers.py (Adicionados "productioncavitystate" e "productioncavitydowntimeevent" ao conjunto LOCAL_MANAGED_MODELS no ScadaRouter)
+- production/admin.py (Registrados ProductionCavityStateAdmin e ProductionCavityDowntimeEventAdmin no Django Admin)
+- production/services.py (Atualizado process_scada_cycle para gerenciar a máquina de estados e eventos de parada por cavidade de forma idempotente e resiliente a dados stale, adicionados flag tem_cavidade_parada e contador cavidades_paradas_count em get_dashboard_state)
+- production/templates/production/dashboard.html (Adicionado card KPI "Cavidades Paradas", botão de filtro e lógica JavaScript de filtragem interativa)
+- production/tests.py (Adicionada a classe Spec06BCavityDowntimeTestCase cobrindo 3 novos cenários de testes)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Rastreamento por Cavidade:
+   - Uma prensa de vulcanização pode continuar operando produzindo enquanto 1 ou mais cavidades permanecem paradas ou isoladas.
+   - O modelo `ProductionCavityState` armazena o estado ativo individual de cada cavidade (NORMAL, PARADA, INDETERMINADO).
+   - O modelo `ProductionCavityDowntimeEvent` armazena cada período em que a cavidade esteve parada, com motivo, snapshot, timestamp do Scada e duração em segundos.
+2. Máquina de Estados e Coletor:
+   - Ao detectar motivo de parada != 0 em uma cavidade, abre 1 registro em ProductionCavityDowntimeEvent com fim=None.
+   - Ao normalizar (motivo = 0), fecha o registro e calcula a duração exata da parada.
+   - Se o coletor for executado repetidamente (reinício/retry), garante-se idempotência sem duplicação de eventos.
+   - Se o dado estiver desatualizado (stale) ou a prensa sem comunicação, o estado da cavidade permanece congelado sem criar ou fechar eventos falsos.
+3. Indicador e Filtro no Dashboard:
+   - Exibido o card KPI "Cavidades Paradas" destacado no topo de /producao/.
+   - Clicar no KPI ativa o filtro para mostrar apenas as máquinas que possuem cavidades paradas.
+4. Testes Automatizados:
+   - Suíte ampliada para 121 testes executados e aprovados com 100% de sucesso.
+
+================================================================================
+EXECUÇÃO DA SPEC_PRODUCAO_06C_RESPONSAVEIS_E_ATUALIZACOES_MANUTENCAO.md (04/08/2026)
+================================================================================
+
+Objetivo:
+Implementar o modelo de histórico relacional imutável `AllocationProgressUpdate` no app `maintenance`, vinculando técnicos de manutenção responsáveis às máquinas do app `production`, permitindo o registro de atualizações de progresso parciais sem alterar o status da alocação, e renderizando a linha do tempo imutável nas visões de detalhe de máquina da Produção e no painel da Manutenção.
+
+Arquivos criados:
+- maintenance/migrations/0013_allocationprogressupdate.py
+
+Arquivos modificados:
+- maintenance/models.py (Criado o modelo AllocationProgressUpdate relacionando Allocation, User, descrição e criado_em)
+- maintenance/admin.py (Registrado AllocationProgressUpdateAdmin e Inline no AlocacaoAdmin)
+- maintenance/urls.py (Adicionada a rota allocations/<int:allocation_id>/update-progress/)
+- maintenance/views.py (Implementada a view add_allocation_progress_update com validações de permissão e texto não-nulo)
+- maintenance/templates/maintenance/technician_management.html (Adicionados botão e modal "+ Nota Parcial" para serviços ativos e pausados)
+- production/services.py (Atualizado get_machine_detail para resgatar técnicos ativos em EM_ATENDIMENTO ou EM_PAUSA e o histórico de atualizações parciais)
+- production/templates/production/machine_detail.html (Exibido o card "Manutenção Responsável" no topo e a linha do tempo "Manutenção — Responsáveis e Notas de Progresso")
+- maintenance/tests.py (Adicionada a classe AllocationProgressUpdateTestCase)
+- production/tests.py (Adicionada a classe Spec06CMaintenanceIntegrationTestCase)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Modelo e Persistência Imutável:
+   - Criado `AllocationProgressUpdate` associando cada nota parcial à sua `Allocation` original e autor `User`.
+   - Adicionada migration aditiva `0013` no app `maintenance`.
+   - As notas registradas são imutáveis e não alteram o status da alocação (`EM_ATENDIMENTO` ou `EM_PAUSA`).
+2. Interface do Técnico e Operador (Manutenção):
+   - Botão e modal "+ Nota Parcial" disponibilizados nos cards de serviço ativo e serviços pausados no Painel do Técnico.
+   - Suporte a ditado por voz e inserção de tags rápidas de manutenção.
+3. Transparência na Produção:
+   - Em `/producao/maquinas/<id>/`, a Produção enxerga os técnicos alocados no atendimento da prensa ou a indicação "Responsável ainda não atribuído".
+   - Exibida a linha do tempo completa das notas parciais inseridas pela equipe de Manutenção durante a intervenção.
+4. Testes Automatizados:
+   - Suíte global ampliada para 127 testes executados e aprovados com 100% de sucesso.
+
+================================================================================
+EXECUÇÃO DA SPEC_PRODUCAO_06D_ESTIMATIVA_PERDA_PRODUCAO.md (04/08/2026)
+================================================================================
+
+Objetivo:
+Implementar a estimativa probabilística de perda de produção por período e cavidade (pneus não fabricados durante paradas), agregados compactos de taxa de produção no modelo `ProductionRateAggregate`, algoritmo de fallback em 4 níveis com amostragem mínima >= 3 intervalos, purga automática de retenção de 90 dias, zero consultas à tabela `pointvalues` em requisições HTTP, comando CLI de backfill e exibição na interface.
+
+Arquivos criados:
+- production/migrations/0010_productionrateaggregate.py
+- production/management/commands/backfill_production_aggregates.py
+
+Arquivos modificados:
+- production/models.py (Criado o modelo ProductionRateAggregate com campos cavity_config, produto, matriz, inicio_intervalo, fim_intervalo, minutos_produzindo, quantidade_produzida, taxa_pneus_hora e quantidade_amostras)
+- production/routers.py (Adicionado "productionrateaggregate" em LOCAL_MANAGED_MODELS no ScadaRouter)
+- production/admin.py (Registrado ProductionRateAggregateAdmin no Django Admin)
+- production/services.py (Implementados os métodos calculate_loss_estimate e purge_old_rate_aggregates em ProductionStateService com fallback de 4 níveis)
+- production/management/commands/collect_production_scada.py (Adicionada chamada à purga automática de agregados com mais de 90 dias)
+- production/templates/production/machine_detail.html (Exibido o badge de Perda Estimada nas cavidades paradas)
+- production/tests.py (Adicionada a classe Spec06DLossEstimationTestCase)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Agregados Locais e Retenção:
+   - Os agregados de taxa de produção são salvos no modelo gerenciado `ProductionRateAggregate` no banco `default`.
+   - A retenção é limitada a 90 dias com purga automática realizada em background pelo coletor.
+2. Hierarquia de Fallback em 4 Níveis:
+   - Nível 1: Média de (Cavidade + Produto + Matriz)
+   - Nível 2: Média de (Cavidade + Produto)
+   - Nível 3: Média da (Cavidade)
+   - Nível 4: Média da (Máquina/Prensa)
+   - Exige amostragem mínima de 3 intervalos válidos (ou 45 minutos de produção registrada). Se insuficiente, exibe mensagem clara de indisponibilidade.
+3. Desempenho & Segurança:
+   - NENHUMA requisição web HTTP consulta a tabela pesada `pointvalues` do Scada MySQL. Todas as estimativas consomem agregados locais do banco `default`.
+4. Testes Automatizados:
+   - Suíte global ampliada para 132 testes executados e aprovados com 100% de sucesso.
+
+================================================================================
+EXECUÇÃO DA SPEC_PRODUCAO_06F_INTEGRACAO_UX_PERFORMANCE_DEPLOY.md (04/08/2026)
+================================================================================
+
+Objetivo:
+Consolidar o Módulo de Produção com a rota e tela específica de Detalhes da Cavidade Parada (`/producao/maquinas/<machine_id>/cavidades/<cavity_id>/`) exibindo os 13 atributos exigidos pela demanda, otimização de performance ORM defensiva (Zero N+1, tempo de resposta HTTP < 200ms), 0 migrações criadas nesta etapa, atualização do manual de implantação `DEPLOY_WINDOWS_SERVER.md` e validação com suíte de testes globais 100% verde.
+
+Arquivos criados:
+- production/templates/production/cavity_detail.html
+
+Arquivos modificados:
+- production/urls.py (Adicionada a rota maquinas/<int:machine_id>/cavidades/<int:cavity_id>/)
+- production/views.py (Adicionada a view cavity_detail protegida por @lider_producao_required)
+- production/services.py (Implementado o método get_cavity_detail com resgate otimizado dos 13 atributos da cavidade)
+- production/templates/production/dashboard.html (Ajustados os cards das cavidades para links diretos para cavity_detail)
+- production/templates/production/machine_detail.html (Ajustados os cards das cavidades para links diretos para cavity_detail)
+- DEPLOY_WINDOWS_SERVER.md (Atualizado manual de implantação para o coletor com --interval 60 em produção e zero queries ao Scada MySQL no fluxo web)
+- production/tests.py (Adicionada a classe Spec06FIntegrationAndPerformanceTestCase)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Rota e Tela Específica de Detalhes da Cavidade (13 Atributos):
+   - 1. Máquina; 2. Cavidade; 3. Status Atual; 4. Início da parada; 5. Tempo total parado; 6. Motivo; 7. Produto; 8. Matriz; 9. Lote/bladder; 10. Técnico(s) responsável(is) da Manutenção (`EM_ATENDIMENTO` / `EM_PAUSA`); 11. Atualizações parciais do reparo (`AllocationProgressUpdate`); 12. Estimativa de perda de produção; 13. Anomalias de parâmetros relacionadas e histórico recente de paradas.
+2. Navegação Flúida & UX Industrial:
+   - Clicar nas cavidades paradas nos cards de `/producao/` ou em `/producao/maquinas/<id>/` direciona o usuário diretamente para a visão detalhada da cavidade.
+3. Performance Web & 0 Migrations:
+   - 0 novas migrations geradas nesta SPEC.
+   - Respostas web servidas exclusivamente a partir do banco local `default` com `select_related` e `prefetch_related`.
+4. Hardening & Suíte Global de Testes:
+   - Manual `DEPLOY_WINDOWS_SERVER.md` atualizado com o parâmetro `--interval 60` do coletor em produção.
+   - Suíte de testes ampliada para 135 testes globais (`maintenance` e `production`), com 100% de aprovação.
+
+
+================================================================================
+EXECUÇÃO DA SPEC_PRODUCAO_06E_PARAMETROS_E_ANOMALIAS_PROCESSO.md (04/08/2026)
+================================================================================
+
+Objetivo:
+Implementar a parametrização de faixas permitidas de processo (temperatura, pressão, vácuo, etc.), tolerância a desvios, histerese de normalização e rastreamento de anomalias no app `production`, criando os modelos `ProductionParameterConfig` e `ProductionParameterAnomalyEvent` no banco `default`, máquina de anomalias no coletor background, aviso de precisão temporal e renderização nas telas da Produção.
+
+Arquivos criados:
+- production/migrations/0011_productionparameterconfig_and_more.py
+
+Arquivos modificados:
+- production/models.py (Criados os modelos ProductionParameterConfig e ProductionParameterAnomalyEvent com faixas, tolerância, histerese, snapshots e tipos MINIMO/MAXIMO)
+- production/routers.py (Adicionados "productionparameterconfig" e "productionparameteranomalyevent" em LOCAL_MANAGED_MODELS no ScadaRouter)
+- production/admin.py (Registrados ProductionParameterConfigAdmin e ProductionParameterAnomalyEventAdmin no Django Admin)
+- production/services.py (Implementada a máquina de anomalias com verificação de limites, tolerância, manutenção de min/max/ultimo, fechamento com histerese e congelamento em dado stale/sem comunicação)
+- production/templates/production/machine_detail.html (Exibido o card "Anomalias de Parâmetros de Processo" com o aviso obrigatório de precisão temporal de 60s do coletor)
+- production/tests.py (Adicionada a classe Spec06EParameterAnomaliesTestCase)
+- Instrucoes.txt
+
+Resumo das Implementações:
+1. Modelagem e Roteamento:
+   - `ProductionParameterConfig` e `ProductionParameterAnomalyEvent` gerenciados no banco `default`.
+   - Migration aditiva `0011` gerada e aplicada com sucesso.
+2. Máquina de Anomalias com Histerese:
+   - Exige desvio contínuo por `tolerancia_segundos` antes de abrir o evento em `ProductionParameterAnomalyEvent`.
+   - Evento aberto atualiza `menor_valor`, `maior_valor` e `ultimo_valor` sem duplicar linhas no banco a cada ciclo do coletor.
+   - Fechamento exige retorno do parâmetro dentro dos limites com margem de `histerese` (`limite_minimo + histerese` ou `limite_maximo - histerese`).
+   - Estado congelado durante leitura `stale` ou sem comunicação.
+3. Transparência na Interface Web:
+   - Renderização das anomalias ativas no detalhe da máquina em `/producao/maquinas/<id>/`.
+   - Exibido o aviso obrigatório: *"Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)"*.
+4. Testes Automatizados:
+   - Suíte global ampliada para 132 testes executados e aprovados com 100% de sucesso.
+
+
+
+

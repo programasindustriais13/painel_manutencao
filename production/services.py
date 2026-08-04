@@ -4,21 +4,128 @@ from typing import Dict, List, Any, Optional
 from django.db import models, transaction
 from django.db.models import Max, Q
 from django.utils import timezone
+from maintenance.models import Machine, Allocation, AllocationProgressUpdate
 from .models import (
+    ProductionShift,
     ProductionMachineConfig,
     ProductionCavityConfig,
     ProductionGlobalParameter,
     ProductionGlobalAlarm,
     ProductionMachineState,
     ProductionDowntimeEvent,
+    ProductionCavityState,
+    ProductionCavityDowntimeEvent,
     ProductionCavityMatrixHistory,
     ProductionMachineStateInterval,
+    ProductionRateAggregate,
+    ProductionParameterConfig,
+    ProductionParameterAnomalyEvent,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def get_active_shift(at_datetime=None) -> Dict[str, Any]:
+    """
+    Retorna as informações do turno ativo para uma determinada data/hora (ou timezone.localtime()).
+    Suporta turnos diurnos e turnos que atravessam a meia-noite.
+    """
+    if at_datetime is None:
+        at_datetime = timezone.localtime()
+    elif timezone.is_naive(at_datetime):
+        at_datetime = timezone.make_aware(at_datetime)
+
+    active_shifts = list(ProductionShift.objects.filter(ativo=True).order_by("ordem_exibicao", "horario_inicial"))
+    if not active_shifts:
+        return {
+            "shift": None,
+            "nome": "Sem turno ativo",
+            "horario_inicial_str": "",
+            "horario_final_str": "",
+            "effective_percent": 100.0,
+            "shift_start_dt": None,
+            "shift_end_dt": None,
+            "active_shifts_count": 0,
+            "total_active_percent": 0.0,
+            "has_shifts": False,
+        }
+
+    custom_percents = [float(s.percentual_meta or 0) for s in active_shifts]
+    total_custom = sum(custom_percents)
+    is_custom = any(p > 0 for p in custom_percents) and abs(total_custom - 100.0) < 0.01
+
+    curr_time = at_datetime.time()
+    curr_date = at_datetime.date()
+
+    matched_shift = None
+    matched_percent = 100.0 / len(active_shifts)
+    shift_start_dt = None
+    shift_end_dt = None
+
+    for s in active_shifts:
+        percent = float(s.percentual_meta) if is_custom else (100.0 / len(active_shifts))
+        h_ini = s.horario_inicial
+        h_fim = s.horario_final
+
+        is_match = False
+        if s.atravessa_meia_noite:
+            if curr_time >= h_ini or curr_time < h_fim:
+                is_match = True
+        else:
+            if h_ini <= curr_time < h_fim:
+                is_match = True
+
+        if is_match and matched_shift is None:
+            matched_shift = s
+            matched_percent = percent
+            if s.atravessa_meia_noite:
+                if curr_time >= h_ini:
+                    start_date = curr_date
+                    end_date = curr_date + timezone.timedelta(days=1)
+                else:
+                    start_date = curr_date - timezone.timedelta(days=1)
+                    end_date = curr_date
+            else:
+                start_date = curr_date
+                end_date = curr_date
+
+            shift_start_dt = timezone.make_aware(timezone.datetime.combine(start_date, h_ini))
+            shift_end_dt = timezone.make_aware(timezone.datetime.combine(end_date, h_fim))
+
+    if matched_shift is None:
+        matched_shift = active_shifts[0]
+        matched_percent = float(matched_shift.percentual_meta) if is_custom else (100.0 / len(active_shifts))
+        s = matched_shift
+        h_ini = s.horario_inicial
+        h_fim = s.horario_final
+        if s.atravessa_meia_noite:
+            if curr_time >= h_ini:
+                start_date = curr_date
+                end_date = curr_date + timezone.timedelta(days=1)
+            else:
+                start_date = curr_date - timezone.timedelta(days=1)
+                end_date = curr_date
+        else:
+            start_date = curr_date
+            end_date = curr_date
+        shift_start_dt = timezone.make_aware(timezone.datetime.combine(start_date, h_ini))
+        shift_end_dt = timezone.make_aware(timezone.datetime.combine(end_date, h_fim))
+
+    return {
+        "shift": matched_shift,
+        "nome": matched_shift.nome,
+        "horario_inicial_str": matched_shift.horario_inicial.strftime("%H:%M"),
+        "horario_final_str": matched_shift.horario_final.strftime("%H:%M"),
+        "effective_percent": round(matched_percent, 2),
+        "shift_start_dt": shift_start_dt,
+        "shift_end_dt": shift_end_dt,
+        "active_shifts_count": len(active_shifts),
+        "total_active_percent": 100.0,
+        "has_shifts": True,
+    }
 
 
 def normalize_matrix_value(raw_val: Any) -> str:
@@ -397,26 +504,132 @@ class ProductionStateService:
         return cls.format_elapsed_seconds(diff_secs)
 
     @classmethod
+    def calculate_loss_estimate(
+        cls,
+        cavity_config: ProductionCavityConfig,
+        duracao_parada_segundos: int,
+        produto: Optional[str] = None,
+        matriz: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Calcula a estimativa de perda de produção (pneus não fabricados) para uma cavidade e duração de parada.
+        Utiliza fallback progressivo em 4 níveis:
+          1. Cavidade + Produto + Matriz
+          2. Cavidade + Produto
+          3. Cavidade
+          4. Máquina (Prensa)
+        Exige amostragem mínima de 3 intervalos válidos (ou 45 minutos acumulados).
+        Retorna dicionário com status de disponibilidade, perda_pneus, taxa_pneus_hora, qtd_amostras, nivel_fallback e texto_formatado.
+        """
+        duracao_parada_minutos = max(0, float(duracao_parada_segundos) / 60.0)
+        
+        levels = []
+        if produto and matriz:
+            levels.append((
+                1,
+                f"Média de {cavity_config.nome} com {produto} e Matriz {matriz}",
+                Q(cavity_config=cavity_config, produto=produto, matriz=matriz)
+            ))
+
+        if produto:
+            levels.append((
+                2,
+                f"Média de {cavity_config.nome} com {produto}",
+                Q(cavity_config=cavity_config, produto=produto)
+            ))
+
+        levels.append((
+            3,
+            f"Média de {cavity_config.nome}",
+            Q(cavity_config=cavity_config)
+        ))
+
+        levels.append((
+            4,
+            f"Média da máquina {cavity_config.machine_config.machine.nome}",
+            Q(cavity_config__machine_config=cavity_config.machine_config)
+        ))
+
+        for level_num, level_label, q_filter in levels:
+            records = list(ProductionRateAggregate.objects.filter(q_filter))
+            total_samples = sum(r.quantidade_amostras for r in records)
+            total_minutos = sum(r.minutos_produzindo for r in records)
+
+            if total_samples >= 3 or total_minutos >= 45:
+                total_prod = sum(r.quantidade_produzida for r in records)
+                if total_minutos > 0:
+                    taxa_pneus_hora = (float(total_prod) / (float(total_minutos) / 60.0))
+                    perda_pneus = int(round((duracao_parada_minutos / 60.0) * taxa_pneus_hora))
+                    taxa_fmt = round(taxa_pneus_hora, 1)
+
+                    return {
+                        "disponivel": True,
+                        "perda_pneus": perda_pneus,
+                        "taxa_pneus_hora": taxa_fmt,
+                        "qtd_amostras": total_samples,
+                        "nivel_fallback": level_num,
+                        "nivel_label": level_label,
+                        "texto_formatado": f"Perda estimada: aproximadamente {perda_pneus} pneus (Base: média de {taxa_fmt} pneus/hora em {total_samples} intervalos válidos)",
+                    }
+
+        return {
+            "disponivel": False,
+            "perda_pneus": None,
+            "taxa_pneus_hora": None,
+            "qtd_amostras": 0,
+            "nivel_fallback": None,
+            "nivel_label": "",
+            "texto_formatado": "Estimativa indisponível — ainda não existem dados suficientes para uma média confiável.",
+        }
+
+    @classmethod
+    def purge_old_rate_aggregates(cls, days: int = 90) -> int:
+        """Purga agregados de taxa de produção com mais de `days` dias no banco default."""
+        limit_dt = timezone.now() - timezone.timedelta(days=days)
+        deleted_count, _ = ProductionRateAggregate.objects.filter(inicio_intervalo__lt=limit_dt).delete()
+        return deleted_count
+
+    @classmethod
     def build_cavities_data(
-        cls, config: ProductionMachineConfig, scada_values: Dict[str, Any]
+        cls,
+        config: ProductionMachineConfig,
+        scada_values: Dict[str, Any],
+        shift_info: Optional[Dict[str, Any]] = None
     ) -> tuple[List[Dict[str, Any]], int, int, int, int]:
+        if shift_info is None:
+            shift_info = get_active_shift()
+
         cavities_list = []
         total_prod = 0
         total_meta = 0
+
+        effective_percent = shift_info.get("effective_percent", 100.0) if shift_info else 100.0
+        has_shifts = shift_info.get("has_shifts", False) if shift_info else False
 
         for cav in config.cavities.all():
             # Produção atual
             c_prod_entry = scada_values.get(cav.xid_producao) if cav.xid_producao else None
             c_prod = int(c_prod_entry["value"]) if c_prod_entry and isinstance(c_prod_entry.get("value"), (int, float)) else 0
 
-            # Meta manual de produção (fonte do dashboard)
-            c_meta = cav.meta_producao_manual or 0
+            # Meta manual de produção (fonte do dashboard, considerada Meta Diária)
+            c_meta_diaria = cav.meta_producao_manual or 0
+            if has_shifts:
+                c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+            else:
+                c_meta_turno = c_meta_diaria
+
+            c_prod_turno = c_prod
+            diferenca_meta_turno = c_prod_turno - c_meta_turno
+            diferenca_meta_turno_str = f"+{diferenca_meta_turno}" if diferenca_meta_turno > 0 else str(diferenca_meta_turno)
 
             total_prod += c_prod
-            total_meta += c_meta
+            total_meta += c_meta_diaria
 
-            percent = round((c_prod / c_meta) * 100) if c_meta > 0 else 0
-            percent_bar = min(100, percent) if c_meta > 0 else 0
+            percent = round((c_prod / c_meta_diaria) * 100) if c_meta_diaria > 0 else 0
+            percent_bar = min(100, max(0, percent)) if c_meta_diaria > 0 else 0
+
+            percent_turno = round((c_prod_turno / c_meta_turno) * 100) if c_meta_turno > 0 else 0
+            percent_turno_bar = min(100, max(0, percent_turno)) if c_meta_turno > 0 else 0
 
             # Matriz
             matriz_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
@@ -442,6 +655,13 @@ class ProductionStateService:
             # Status e motivo da cavidade inferidos via SPEC 05C
             c_status_code, c_status_label, c_badge_class, c_motivo_exibido = cls.resolve_cavity_status_and_reason(cav, scada_values)
 
+            cav_state_obj = getattr(cav, "state", None)
+            dur_parada_secs = 0
+            if cav_state_obj and cav_state_obj.estado_atual == "PARADA" and cav_state_obj.inicio_estado_atual:
+                dur_parada_secs = max(0, int((timezone.now() - cav_state_obj.inicio_estado_atual).total_seconds()))
+
+            perda_est = cls.calculate_loss_estimate(cav, dur_parada_secs, prod_val, matriz_val)
+
             cavities_list.append({
                 "id": cav.id,
                 "nome": cav.nome,
@@ -454,14 +674,22 @@ class ProductionStateService:
                 "lote_val": lote_val,
                 "produto_lote_str": produto_lote_str,
                 "producao": c_prod,
-                "meta": c_meta,
+                "meta": c_meta_diaria,
+                "meta_diaria": c_meta_diaria,
+                "meta_turno": c_meta_turno,
+                "producao_turno": c_prod_turno,
+                "diferenca_meta_turno": diferenca_meta_turno,
+                "diferenca_meta_turno_str": diferenca_meta_turno_str,
                 "percentual": percent,
                 "percentual_bar": percent_bar,
+                "percentual_turno": percent_turno,
+                "percentual_turno_bar": percent_turno_bar,
                 "motivo_parada": c_motivo_exibido,
+                "perda_estimada": perda_est,
             })
 
         total_percent = round((total_prod / total_meta) * 100) if total_meta > 0 else 0
-        total_percent_bar = min(100, total_percent) if total_meta > 0 else 0
+        total_percent_bar = min(100, max(0, total_percent)) if total_meta > 0 else 0
 
         return cavities_list, total_prod, total_meta, total_percent, total_percent_bar
 
@@ -500,6 +728,9 @@ class ProductionStateService:
                         all_xids.add(cav.xid_meta)
                     if cav.xid_motivo_parada:
                         all_xids.add(cav.xid_motivo_parada)
+            for p_cfg in ProductionParameterConfig.objects.filter(ativo=True):
+                if p_cfg.xid:
+                    all_xids.add(p_cfg.xid)
             scada_values = scada_reader.get_last_values_batch(list(all_xids))
 
         now = timezone.now()
@@ -624,8 +855,62 @@ class ProductionStateService:
                     status_raw_value=raw_val
                 )
 
-            # Atualizar histórico de matrizes por cavidade (ProductionCavityMatrixHistory)
+            # Atualizar máquina de estados e histórico de matrizes por cavidade
             for cav in cfg.cavities.all():
+                cav_state_obj, _ = ProductionCavityState.objects.get_or_create(cavity_config=cav)
+
+                # Se o dado estiver desatualizado (stale) ou sem comunicação, congela o estado da cavidade
+                if not (state_obj.sem_comunicacao or state_obj.dado_desatualizado):
+                    c_code, c_label, c_badge, c_motivo = cls.resolve_cavity_status_and_reason(cav, scada_values)
+                    motivo_entry = scada_values.get(cav.xid_motivo_parada) if cav.xid_motivo_parada else None
+                    raw_motivo = str(motivo_entry.get("str_value", motivo_entry.get("value", ""))) if motivo_entry else ""
+
+                    open_cav_event = ProductionCavityDowntimeEvent.objects.filter(
+                        cavity_config=cav, fim__isnull=True
+                    ).order_by("-inicio").first()
+
+                    if c_code == "PARADA":
+                        if open_cav_event:
+                            if c_motivo and open_cav_event.motivo_parada != c_motivo:
+                                open_cav_event.motivo_parada = c_motivo
+                                open_cav_event.save(update_fields=["motivo_parada", "updated_at"])
+                            if cav_state_obj.estado_atual != "PARADA":
+                                cav_state_obj.estado_atual = "PARADA"
+                                cav_state_obj.inicio_estado_atual = open_cav_event.inicio
+                                cav_state_obj.ultimo_motivo = c_motivo
+                                cav_state_obj.save()
+                        else:
+                            open_cav_event = ProductionCavityDowntimeEvent.objects.create(
+                                cavity_config=cav,
+                                inicio=now,
+                                motivo_parada=c_motivo or "Parada de Cavidade",
+                                snapshot_valor_motivo=raw_motivo,
+                                timestamp_inicial_scada=ts_ms,
+                                origem="SCADA"
+                            )
+                            cav_state_obj.estado_atual = "PARADA"
+                            cav_state_obj.inicio_estado_atual = now
+                            cav_state_obj.ultimo_motivo = c_motivo
+                            cav_state_obj.save()
+                    else:
+                        if open_cav_event:
+                            duration = max(0, int((now - open_cav_event.inicio).total_seconds()))
+                            open_cav_event.fim = now
+                            open_cav_event.duracao_segundos = duration
+                            open_cav_event.timestamp_final_scada = ts_ms
+                            open_cav_event.save()
+
+                            cav_state_obj.estado_atual = "NORMAL"
+                            cav_state_obj.inicio_estado_atual = now
+                            cav_state_obj.ultimo_motivo = ""
+                            cav_state_obj.save()
+                        else:
+                            if cav_state_obj.estado_atual != "NORMAL" or not cav_state_obj.inicio_estado_atual:
+                                cav_state_obj.estado_atual = "NORMAL"
+                                cav_state_obj.inicio_estado_atual = now
+                                cav_state_obj.ultimo_motivo = ""
+                                cav_state_obj.save()
+
                 mat_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
                 raw_mat = mat_entry.get("str_value", mat_entry.get("value")) if mat_entry else None
                 norm_mat = normalize_matrix_value(raw_mat)
@@ -651,6 +936,97 @@ class ProductionStateService:
                             started_at=now
                         )
 
+        # Avaliação de anomalias de parâmetros de processo (ProductionParameterConfig / ProductionParameterAnomalyEvent)
+        for p_cfg in ProductionParameterConfig.objects.filter(ativo=True).select_related("machine_config", "cavity_config"):
+            m_cfg = p_cfg.machine_config or (p_cfg.cavity_config.machine_config if p_cfg.cavity_config else None)
+            if not m_cfg:
+                continue
+
+            m_state = getattr(m_cfg, "state", None) or ProductionMachineState.objects.filter(machine_config=m_cfg).first()
+            if not m_state or m_state.sem_comunicacao or m_state.dado_desatualizado:
+                # Congela a anomalia em estado desatualizado/sem comunicação
+                continue
+
+            p_entry = scada_values.get(p_cfg.xid) if p_cfg.xid else None
+            if not p_entry:
+                continue
+
+            raw_p_val = p_entry.get("value")
+            if raw_p_val is None:
+                continue
+
+            try:
+                p_val = float(raw_p_val)
+            except (ValueError, TypeError):
+                continue
+
+            min_violated = (p_cfg.limite_minimo is not None and p_val < p_cfg.limite_minimo)
+            max_violated = (p_cfg.limite_maximo is not None and p_val > p_cfg.limite_maximo)
+
+            open_anomaly = ProductionParameterAnomalyEvent.objects.filter(
+                parameter_config=p_cfg,
+                fim__isnull=True
+            ).order_by("-inicio").first()
+
+            if open_anomaly:
+                open_anomaly.menor_valor = min(open_anomaly.menor_valor, p_val)
+                open_anomaly.maior_valor = max(open_anomaly.maior_valor, p_val)
+                open_anomaly.ultimo_valor = p_val
+
+                should_close = False
+                if open_anomaly.tipo_limite == "MINIMO":
+                    close_thresh = (p_cfg.limite_minimo or 0.0) + (p_cfg.histerese or 0.0)
+                    if p_val >= close_thresh:
+                        should_close = True
+                elif open_anomaly.tipo_limite == "MAXIMO":
+                    close_thresh = (p_cfg.limite_maximo or 0.0) - (p_cfg.histerese or 0.0)
+                    if p_val <= close_thresh:
+                        should_close = True
+
+                if should_close:
+                    dur = max(0, int((now - open_anomaly.inicio).total_seconds()))
+                    open_anomaly.fim = now
+                    open_anomaly.duracao_segundos = dur
+                    open_anomaly.save()
+                else:
+                    open_anomaly.save(update_fields=["menor_valor", "maior_valor", "ultimo_valor"])
+            else:
+                if min_violated or max_violated:
+                    prod_snap = ""
+                    mat_snap = ""
+                    lote_snap = ""
+
+                    if p_cfg.cavity_config:
+                        mat_item = scada_values.get(p_cfg.cavity_config.xid_matriz) if p_cfg.cavity_config.xid_matriz else None
+                        mat_snap = str(mat_item.get("str_value", mat_item.get("value", ""))) if mat_item else ""
+
+                        prod_item = scada_values.get(p_cfg.cavity_config.xid_produto) if p_cfg.cavity_config.xid_produto else None
+                        prod_snap = str(prod_item.get("str_value", prod_item.get("value", ""))) if prod_item else ""
+
+                        lote_item = scada_values.get(p_cfg.cavity_config.xid_lote_bladder) if p_cfg.cavity_config.xid_lote_bladder else None
+                        lote_snap = str(lote_item.get("str_value", lote_item.get("value", ""))) if lote_item else ""
+
+                    active_downtime = ProductionDowntimeEvent.objects.filter(
+                        machine_config=m_cfg,
+                        fim__isnull=True
+                    ).order_by("-inicio").first()
+
+                    ProductionParameterAnomalyEvent.objects.create(
+                        parameter_config=p_cfg,
+                        machine_config=m_cfg,
+                        cavity_config=p_cfg.cavity_config,
+                        inicio=now,
+                        inicio_fora_faixa=now,
+                        menor_valor=p_val,
+                        maior_valor=p_val,
+                        ultimo_valor=p_val,
+                        tipo_limite="MINIMO" if min_violated else "MAXIMO",
+                        produto_snapshot=prod_snap,
+                        matriz_snapshot=mat_snap,
+                        lote_snapshot=lote_snap,
+                        downtime_event=active_downtime
+                    )
+
         return scada_values
 
     @classmethod
@@ -661,6 +1037,8 @@ class ProductionStateService:
         periodo: Optional[str] = None,
         scada_values: Optional[Dict[str, Any]] = None
     ) -> dict:
+        active_shift_info = get_active_shift()
+
         configs = list(
             ProductionMachineConfig.objects.select_related("machine", "machine__setor")
             .prefetch_related("cavities")
@@ -772,7 +1150,9 @@ class ProductionStateService:
             abertura_entry = scada_values.get(cfg.xid_abertura) if cfg.xid_abertura else None
             abertura_val = abertura_entry.get("str_value", "") if abertura_entry else None
 
-            cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(cfg, scada_values)
+            cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(
+                cfg, scada_values, shift_info=active_shift_info
+            )
 
             machines_data.append({
                 "id": cfg.id,
@@ -793,6 +1173,7 @@ class ProductionStateService:
                 "motivo_prensa_pendente": motivo_prensa_pendente,
                 "alerta_parada_5min": alerta_parada_5min,
                 "cavidades": cavities_list,
+                "tem_cavidade_parada": any(c["status_code"] == "PARADA" for c in cavities_list),
                 "producao_total": total_prod,
                 "meta_total": total_meta,
                 "percentual_total": total_percent,
@@ -935,12 +1316,16 @@ class ProductionStateService:
                     "situacao_badge": "success" if is_open else "secondary",
                 })
 
+        cavidades_paradas_count = sum(1 for m in machines_data for c in m["cavidades"] if c["status_code"] == "PARADA")
+
         return {
+            "active_shift": active_shift_info,
             "machines": machines_data,
             "total_count": len(configs),
             "produzindo_count": produzindo_count,
             "paradas_count": paradas_count,
             "sem_comunicacao_count": sem_comunicacao_count,
+            "cavidades_paradas_count": cavidades_paradas_count,
             "global_parameters": params_data,
             "global_alarms": alarms_data,
             "matrix_summary": matrix_summary,
@@ -1085,10 +1470,14 @@ class ProductionStateService:
 
         tempo_decorrido_str = cls.format_elapsed_seconds_human(timer_secs, state)
 
+        active_shift_info = get_active_shift()
+
         alerta_parada_5min = (state == "PARADA" and not sem_comunicacao and not is_stale and timer_secs >= 300)
         motivo_prensa_pendente = not (motivo_geral_val and str(motivo_geral_val).strip())
 
-        cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(cfg, scada_values)
+        cavities_list, total_prod, total_meta, total_percent, total_percent_bar = cls.build_cavities_data(
+            cfg, scada_values, shift_info=active_shift_info
+        )
 
         # Filtro de eventos de parada (ProductionDowntimeEvent)
         events_qs = ProductionDowntimeEvent.objects.filter(
@@ -1194,10 +1583,61 @@ class ProductionStateService:
             percentual_produzindo = 0.0
             percentual_parado = 0.0
 
+        # Buscar responsáveis ativos e histórico de atualizações parciais da manutenção
+        open_allocs = (
+            Allocation.objects.filter(maquina=cfg.machine, data_fim__isnull=True, status__in=["EM_ATENDIMENTO", "EM_PAUSA"])
+            .select_related("tecnico")
+            .prefetch_related("progress_updates")
+        )
+        tech_names = list(dict.fromkeys(a.tecnico.nome for a in open_allocs if a.tecnico))
+        responsaveis_label = ", ".join(tech_names) if tech_names else "Responsável ainda não atribuído"
+
+        progress_updates_qs = (
+            AllocationProgressUpdate.objects.filter(allocation__maquina=cfg.machine)
+            .select_related("allocation", "allocation__tecnico", "autor")
+            .order_by("-criado_em")[:50]
+        )
+
+        atualizacoes_manutencao = [
+            {
+                "autor": pu.autor.get_full_name() or pu.autor.username if pu.autor else "Sistema",
+                "tecnico": pu.allocation.tecnico.nome if (pu.allocation and pu.allocation.tecnico) else "N/A",
+                "descricao": pu.descricao,
+                "criado_em_str": pu.criado_em.strftime("%d/%m/%Y %H:%M"),
+                "status_alocacao": pu.allocation.get_status_display() if pu.allocation else "",
+            }
+            for pu in progress_updates_qs
+        ]
+
+        # Anomalias de parâmetros de processo
+        active_anomalies_qs = ProductionParameterAnomalyEvent.objects.filter(
+            machine_config=cfg,
+            fim__isnull=True
+        ).select_related("parameter_config", "cavity_config").order_by("-inicio")
+
+        anomalias_ativas = [
+            {
+                "id": a.id,
+                "parametro": a.parameter_config.nome,
+                "unidade": a.parameter_config.unidade,
+                "tipo_limite": a.tipo_limite,
+                "limite": a.parameter_config.limite_minimo if a.tipo_limite == "MINIMO" else a.parameter_config.limite_maximo,
+                "valor_atual": a.ultimo_valor,
+                "menor_valor": a.menor_valor,
+                "maior_valor": a.maior_valor,
+                "inicio_str": a.inicio.strftime("%d/%m/%Y %H:%M"),
+                "cavidade_nome": a.cavity_config.nome if a.cavity_config else "Máquina Geral",
+                "produto": a.produto_snapshot or "N/A",
+                "matriz": a.matriz_snapshot or "N/A",
+            }
+            for a in active_anomalies_qs
+        ]
+
         return {
             "config": cfg,
             "machine": cfg.machine,
             "setor_nome": cfg.machine.setor.nome if cfg.machine.setor else "Geral",
+            "active_shift": active_shift_info,
             "state": state,
             "state_label": state_label,
             "badge_class": badge_class,
@@ -1218,6 +1658,11 @@ class ProductionStateService:
             "timeline_segments": timeline_segments,
             "total_period_seconds": total_period_seconds,
             "date_error_msg": date_error_msg,
+            "responsaveis_manutencao": responsaveis_label,
+            "responsaveis_lista": tech_names,
+            "atualizacoes_manutencao": atualizacoes_manutencao,
+            "anomalias_ativas": anomalias_ativas,
+            "precisao_temporal_notice": "Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)",
             "kpi": {
                 "tempo_total_parado_str": cls.format_elapsed_seconds(total_downtime_seconds),
                 "total_downtime_seconds": total_downtime_seconds,
@@ -1237,5 +1682,153 @@ class ProductionStateService:
                 "data_final_str": end_dt.strftime("%Y-%m-%d"),
                 "periodo_ativo": periodo_ativo,
             },
+        }
+
+    @classmethod
+    def get_cavity_detail(cls, machine_id: int, cavity_id: int) -> Dict[str, Any]:
+        """
+        Retorna o contexto detalhado da cavidade com todos os 13 atributos exigidos pela SPEC 06F.
+        Utiliza consultas otimizadas (select_related / prefetch_related) sem requisições ao Scada MySQL.
+        """
+        cavity = (
+            ProductionCavityConfig.objects.select_related(
+                "machine_config",
+                "machine_config__machine",
+                "machine_config__machine__setor"
+            )
+            .filter(id=cavity_id, machine_config_id=machine_id)
+            .first()
+        )
+
+        if not cavity:
+            return {}
+
+        cfg = cavity.machine_config
+        active_shift_info = get_active_shift()
+
+        scada_values = cls.process_scada_cycle()
+
+        mat_entry = scada_values.get(cavity.xid_matriz) if cavity.xid_matriz else None
+        matriz_val = str(mat_entry.get("str_value", mat_entry.get("value", ""))).strip() if mat_entry else "Não informada"
+
+        prod_entry = scada_values.get(cavity.xid_produto) if cavity.xid_produto else None
+        prod_val = str(prod_entry.get("str_value", prod_entry.get("value", ""))).strip() if prod_entry else "Não informado"
+
+        lote_entry = scada_values.get(cavity.xid_lote_bladder) if cavity.xid_lote_bladder else None
+        lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else "Não informado"
+
+        c_code, c_label, c_badge, c_motivo = cls.resolve_cavity_status_and_reason(cavity, scada_values)
+
+        open_cav_event = (
+            ProductionCavityDowntimeEvent.objects.filter(cavity_config=cavity, fim__isnull=True)
+            .order_by("-inicio")
+            .first()
+        )
+
+        inicio_parada = open_cav_event.inicio if open_cav_event else None
+        dur_parada_secs = 0
+        if open_cav_event:
+            dur_parada_secs = max(0, int((timezone.now() - open_cav_event.inicio).total_seconds()))
+        elif c_code == "PARADA":
+            cav_state = getattr(cavity, "state", None)
+            if cav_state and cav_state.inicio_estado_atual:
+                inicio_parada = cav_state.inicio_estado_atual
+                dur_parada_secs = max(0, int((timezone.now() - cav_state.inicio_estado_atual).total_seconds()))
+
+        tempo_parado_str = cls.format_elapsed_seconds(dur_parada_secs) if dur_parada_secs > 0 else "00:00:00"
+
+        perda_estimada = cls.calculate_loss_estimate(cavity, dur_parada_secs, prod_val, matriz_val)
+
+        active_allocations = (
+            Allocation.objects.filter(
+                maquina=cfg.machine,
+                status__in=["EM_ATENDIMENTO", "EM_PAUSA"]
+            ).select_related("tecnico")
+        )
+
+        tech_names = list(set([a.tecnico.nome for a in active_allocations if a.tecnico]))
+        responsaveis_label = ", ".join(tech_names) if tech_names else "Responsável ainda não atribuído"
+
+        progress_updates_qs = (
+            AllocationProgressUpdate.objects.filter(allocation__maquina=cfg.machine)
+            .select_related("autor", "allocation", "allocation__tecnico")
+            .order_by("-criado_em")[:15]
+        )
+
+        atualizacoes_manutencao = [
+            {
+                "id": pu.id,
+                "autor": pu.autor.get_full_name() or pu.autor.username if pu.autor else "Sistema",
+                "tecnico": pu.allocation.tecnico.nome if (pu.allocation and pu.allocation.tecnico) else "N/A",
+                "descricao": pu.descricao,
+                "criado_em_str": pu.criado_em.strftime("%d/%m/%Y %H:%M"),
+                "status_alocacao": pu.allocation.get_status_display() if pu.allocation else "",
+            }
+            for pu in progress_updates_qs
+        ]
+
+        anomalias_qs = (
+            ProductionParameterAnomalyEvent.objects.filter(
+                Q(machine_config=cfg) | Q(cavity_config=cavity)
+            )
+            .select_related("parameter_config")
+            .order_by("-inicio")[:10]
+        )
+
+        anomalias_relacionadas = [
+            {
+                "id": a.id,
+                "parametro": a.parameter_config.nome,
+                "unidade": a.parameter_config.unidade,
+                "tipo_limite": a.tipo_limite,
+                "limite": a.parameter_config.limite_minimo if a.tipo_limite == "MINIMO" else a.parameter_config.limite_maximo,
+                "valor_atual": a.ultimo_valor,
+                "inicio_str": a.inicio.strftime("%d/%m/%Y %H:%M"),
+                "fim_str": a.fim.strftime("%d/%m/%Y %H:%M") if a.fim else "Em andamento",
+                "is_active": a.fim is None,
+            }
+            for a in anomalias_qs
+        ]
+
+        historico_eventos_qs = (
+            ProductionCavityDowntimeEvent.objects.filter(cavity_config=cavity)
+            .order_by("-inicio")[:15]
+        )
+
+        historico_eventos = [
+            {
+                "id": e.id,
+                "inicio_str": e.inicio.strftime("%d/%m/%Y %H:%M"),
+                "fim_str": e.fim.strftime("%d/%m/%Y %H:%M") if e.fim else "Em andamento",
+                "duracao_str": cls.format_elapsed_seconds(e.duracao_segundos) if e.fim else cls.format_elapsed_seconds(max(0, int((timezone.now() - e.inicio).total_seconds()))),
+                "motivo_parada": e.motivo_parada,
+                "is_open": e.fim is None,
+            }
+            for e in historico_eventos_qs
+        ]
+
+        return {
+            "cavity": cavity,
+            "config": cfg,
+            "machine": cfg.machine,
+            "setor_nome": cfg.machine.setor.nome if cfg.machine.setor else "Geral",
+            "active_shift": active_shift_info,
+            "status_code": c_code,
+            "status_label": c_label,
+            "badge_class": c_badge,
+            "inicio_parada": inicio_parada,
+            "inicio_parada_str": inicio_parada.strftime("%d/%m/%Y %H:%M:%S") if inicio_parada else "N/A",
+            "tempo_parado_str": tempo_parado_str,
+            "motivo_parada": c_motivo or "Nenhum motivo de parada ativo",
+            "produto": prod_val,
+            "matriz": matriz_val,
+            "lote_bladder": lote_val,
+            "responsaveis_manutencao": responsaveis_label,
+            "responsaveis_lista": tech_names,
+            "atualizacoes_manutencao": atualizacoes_manutencao,
+            "perda_estimada": perda_estimada,
+            "anomalias_relacionadas": anomalias_relacionadas,
+            "historico_eventos": historico_eventos,
+            "precisao_temporal_notice": "Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)",
         }
 

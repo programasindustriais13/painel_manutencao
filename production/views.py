@@ -36,3 +36,19 @@ def machine_detail(request, pk):
         periodo=periodo if periodo else None
     )
     return render(request, "production/machine_detail.html", detail_state)
+
+
+@lider_producao_required
+def cavity_detail(request, machine_id, cavity_id):
+    """
+    Renderiza os detalhes completos de uma cavidade específica (13 atributos da SPEC 06F).
+    """
+    context = ProductionStateService.get_cavity_detail(
+        machine_id=machine_id,
+        cavity_id=cavity_id
+    )
+    if not context:
+        from django.http import Http404
+        raise Http404("Cavidade não encontrada.")
+    return render(request, "production/cavity_detail.html", context)
+

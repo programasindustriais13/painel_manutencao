@@ -1,0 +1,212 @@
+{% extends "production/base_production.html" %}
+{% load static %}
+
+{% block title %}Detalhes da Cavidade {{ cavity.nome }} - {{ machine.nome }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <!-- Breadcrumb & Header -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1 small">
+                    <li class="breadcrumb-item"><a href="{% url 'production:dashboard' %}" class="text-decoration-none"><i class="bi bi-grid-fill me-1"></i>Painel de Produção</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'production:machine_detail' pk=config.id %}" class="text-decoration-none">{{ machine.nome }}</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">{{ cavity.nome }}</li>
+                </ol>
+            </nav>
+            <h2 class="h3 fw-bold mb-0 text-dark">
+                <i class="bi bi-disc me-2 text-primary"></i>Detalhes da Cavidade: {{ cavity.nome }}
+                <span class="fs-6 text-muted fw-normal ms-2">({{ machine.nome }} — {{ setor_nome }})</span>
+            </h2>
+        </div>
+        <div>
+            <a href="{% url 'production:machine_detail' pk=config.id %}" class="btn btn-outline-secondary btn-sm shadow-sm rounded-pill px-3">
+                <i class="bi bi-arrow-left me-1"></i>Voltar à Prensa
+            </a>
+        </div>
+    </div>
+
+    <!-- Status & Stop Overview Card (Atributos 1, 2, 3, 4, 5, 6) -->
+    <div class="card border-0 shadow-sm rounded-3 p-4 bg-white mb-4">
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light text-center h-100 d-flex flex-column justify-content-center">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-info-circle me-1"></i>Situação Atual</span>
+                    <div>
+                        <span class="badge bg-{{ badge_class }} fs-6 px-3 py-2 rounded-pill">
+                            <i class="bi bi-record-fill me-1"></i>{{ status_label }}
+                        </span>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small"><i class="bi bi-clock me-1"></i>Início da Parada</span>
+                    <strong class="text-dark fs-6 d-block mt-1">{{ inicio_parada_str }}</strong>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small"><i class="bi bi-stopwatch me-1"></i>Tempo Total Parado</span>
+                    <strong class="text-danger fs-5 d-block mt-1">{{ tempo_parado_str }}</strong>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small"><i class="bi bi-exclamation-triangle me-1"></i>Motivo da Parada</span>
+                    <strong class="text-danger fs-6 d-block mt-1">{{ motivo_parada }}</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Operacional & Especificação (Atributos 7, 8, 9) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-box-seam me-2 text-primary"></i>Especificação Operacional da Cavidade</h5>
+        <div class="row g-3">
+            <div class="col-12 col-md-4">
+                <div class="p-3 border rounded bg-light">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-tag me-1"></i>Produto Em Furo</span>
+                    <strong class="text-dark fs-6">{{ produto }}</strong>
+                </div>
+            </div>
+            <div class="col-12 col-md-4">
+                <div class="p-3 border rounded bg-light">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-bounding-box me-1"></i>Matriz Instalada</span>
+                    <strong class="text-dark fs-6">{{ matriz }}</strong>
+                </div>
+            </div>
+            <div class="col-12 col-md-4">
+                <div class="p-3 border rounded bg-light">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-layers me-1"></i>Lote do Bladder</span>
+                    <strong class="text-dark fs-6">{{ lote_bladder }}</strong>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Estimativa de Perda de Produção (Atributo 12) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-graph-down-arrow me-2 text-warning"></i>Estimativa de Perda de Produção</h5>
+        {% if perda_estimada.disponivel %}
+        <div class="p-3 border border-warning-subtle bg-warning-subtle bg-opacity-10 rounded-3">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <div>
+                    <h4 class="fw-bold text-danger mb-1"><i class="bi bi-exclamation-octagon me-2"></i>~{{ perda_estimada.perda_pneus }} pneus não fabricados</h4>
+                    <p class="mb-0 text-muted small">
+                        Base: Média de <strong>{{ perda_estimada.taxa_pneus_hora }} pneus/hora</strong> ({{ perda_estimada.nivel_label }}) extraída de {{ perda_estimada.qtd_amostras }} intervalos válidos.
+                    </p>
+                </div>
+                <span class="badge bg-warning text-dark px-3 py-2 fs-7 fw-semibold rounded-pill">
+                    Nível de Fallback #{{ perda_estimada.nivel_fallback }}
+                </span>
+            </div>
+        </div>
+        {% else %}
+        <div class="p-3 border rounded-3 bg-light text-muted text-center">
+            <i class="bi bi-info-circle fs-4 d-block mb-1 text-secondary"></i>
+            {{ perda_estimada.texto_formatado }}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Manutenção: Responsáveis e Notas de Progresso (Atributos 10, 11) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-tools me-2 text-primary"></i>Manutenção — Responsáveis e Notas de Progresso</h5>
+            <span class="badge bg-primary-subtle text-primary border border-primary-subtle px-3 py-2 rounded-pill fw-semibold">
+                <i class="bi bi-person-fill me-1"></i>{{ responsaveis_manutencao }}
+            </span>
+        </div>
+
+        <div class="timeline-progress-updates">
+            {% for pu in atualizacoes_manutencao %}
+            <div class="p-3 border rounded-3 mb-2 bg-light">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="fw-bold text-dark"><i class="bi bi-person-circle me-1 text-secondary"></i>{{ pu.autor }} <small class="text-muted fw-normal">(Técnico: {{ pu.tecnico }})</small></span>
+                    <div class="d-flex align-items-center gap-2">
+                        {% if pu.status_alocacao %}
+                        <span class="badge bg-secondary-subtle text-secondary px-2 py-0 fs-8">{{ pu.status_alocacao }}</span>
+                        {% endif %}
+                        <span class="text-muted small"><i class="bi bi-clock me-1"></i>{{ pu.criado_em_str }}</span>
+                    </div>
+                </div>
+                <p class="mb-0 text-dark small" style="white-space: pre-line;">{{ pu.descricao }}</p>
+            </div>
+            {% empty %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-chat-square-text fs-3 d-block mb-2 text-secondary"></i>
+                Nenhuma atualização de progresso registrada pela manutenção para esta máquina.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Anomalias de Parâmetros e Histórico Recente (Atributo 13) -->
+    <div class="row g-4 mb-4">
+        <!-- Anomalias de Parâmetros Relacionadas -->
+        <div class="col-12 col-lg-6">
+            <div class="card border-0 shadow-sm rounded-3 p-3 bg-white h-100">
+                <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-activity me-2 text-warning"></i>Anomalias de Parâmetros Relacionadas</h5>
+                <div class="alert alert-secondary py-2 px-3 mb-3 d-flex align-items-center gap-2 fs-8 text-secondary">
+                    <i class="bi bi-info-circle-fill"></i>
+                    <span>{{ precisao_temporal_notice }}</span>
+                </div>
+                <div class="anomalies-list">
+                    {% for anom in anomalias_relacionadas %}
+                    <div class="p-2 border border-warning-subtle rounded-3 mb-2 bg-warning-subtle bg-opacity-10 fs-8">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <strong class="text-dark">{{ anom.parametro }}</strong>
+                            <span class="badge bg-danger text-white px-2 py-0 fs-8">{{ anom.tipo_limite }}</span>
+                        </div>
+                        <div class="d-flex justify-content-between text-muted mt-1">
+                            <span>Valor: <strong class="text-danger">{{ anom.valor_atual }}{{ anom.unidade }}</strong></span>
+                            <span>Início: {{ anom.inicio_str }}</span>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="text-center py-3 text-muted fs-8">
+                        <i class="bi bi-check-circle fs-4 d-block mb-1 text-success"></i>
+                        Nenhuma anomalia de parâmetro registrada nesta cavidade.
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Histórico Recente de Paradas da Cavidade -->
+        <div class="col-12 col-lg-6">
+            <div class="card border-0 shadow-sm rounded-3 p-3 bg-white h-100">
+                <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-list-task me-2 text-primary"></i>Histórico Recente de Paradas</h5>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 fs-8">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Início</th>
+                                <th>Fim</th>
+                                <th>Duração</th>
+                                <th>Motivo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for ev in historico_eventos %}
+                            <tr>
+                                <td>{{ ev.inicio_str }}</td>
+                                <td>{{ ev.fim_str }}</td>
+                                <td><span class="badge bg-light text-dark border">{{ ev.duracao_str }}</span></td>
+                                <td class="text-danger fw-semibold">{{ ev.motivo_parada }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-center text-muted py-3">Nenhum evento histórico recente registrado para esta cavidade.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

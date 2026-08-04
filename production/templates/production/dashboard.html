@@ -108,6 +108,11 @@
             </p>
         </div>
         <div class="d-flex align-items-center gap-2">
+            {% if active_shift and active_shift.has_shifts %}
+            <span class="badge bg-primary px-3 py-2 fs-7 rounded-pill" title="Turno Ativo">
+                <i class="bi bi-clock-history me-1"></i> {{ active_shift.nome }} ({{ active_shift.horario_inicial_str }} - {{ active_shift.horario_final_str }})
+            </span>
+            {% endif %}
             {% if scada_offline %}
             <span class="badge bg-danger px-3 py-2 fs-7 rounded-pill">
                 <i class="bi bi-wifi-off me-1"></i> Scada Offline
@@ -137,9 +142,9 @@
     {% endif %}
 
     <!-- KPI Summary Row -->
-    <div class="row g-3 mb-4">
-        <div class="col-12 col-sm-6 col-lg-3">
-            <div class="card kpi-card shadow-sm p-3 bg-white">
+    <div class="row g-2 g-md-3 mb-4">
+        <div class="col-6 col-md-4 col-xl">
+            <div class="card kpi-card shadow-sm p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <div class="kpi-icon bg-info-subtle text-info me-3">
                         <i class="bi bi-cpu"></i>
@@ -151,8 +156,8 @@
                 </div>
             </div>
         </div>
-        <div class="col-12 col-sm-6 col-lg-3">
-            <div class="card kpi-card shadow-sm p-3 bg-white">
+        <div class="col-6 col-md-4 col-xl">
+            <div class="card kpi-card shadow-sm p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <div class="kpi-icon bg-success-subtle text-success me-3">
                         <i class="bi bi-play-circle-fill"></i>
@@ -164,8 +169,8 @@
                 </div>
             </div>
         </div>
-        <div class="col-12 col-sm-6 col-lg-3">
-            <div class="card kpi-card shadow-sm p-3 bg-white">
+        <div class="col-6 col-md-4 col-xl">
+            <div class="card kpi-card shadow-sm p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <div class="kpi-icon bg-danger-subtle text-danger me-3">
                         <i class="bi bi-pause-circle-fill"></i>
@@ -177,8 +182,21 @@
                 </div>
             </div>
         </div>
-        <div class="col-12 col-sm-6 col-lg-3">
-            <div class="card kpi-card shadow-sm p-3 bg-white">
+        <div class="col-6 col-md-4 col-xl">
+            <div class="card kpi-card shadow-sm p-3 bg-white h-100 border-warning cursor-pointer" id="kpi-card-cavidades-paradas" style="cursor: pointer;">
+                <div class="d-flex align-items-center">
+                    <div class="kpi-icon bg-warning-subtle text-warning me-3">
+                        <i class="bi bi-grid-3x3-gap-fill"></i>
+                    </div>
+                    <div>
+                        <div class="text-muted small fw-medium">Cavidades Paradas</div>
+                        <div class="fs-3 fw-bold text-warning" id="kpi-cavidades-paradas">{{ cavidades_paradas_count }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-4 col-xl">
+            <div class="card kpi-card shadow-sm p-3 bg-white h-100">
                 <div class="d-flex align-items-center">
                     <div class="kpi-icon bg-secondary-subtle text-secondary me-3">
                         <i class="bi bi-dash-circle"></i>
@@ -371,6 +389,7 @@
                     <button type="button" class="filter-btn active" data-filter="all">Todas ({{ total_count }})</button>
                     <button type="button" class="filter-btn" data-filter="PRODUZINDO">Produzindo ({{ produzindo_count }})</button>
                     <button type="button" class="filter-btn" data-filter="PARADA">Paradas ({{ paradas_count }})</button>
+                    <button type="button" class="filter-btn" data-filter="CAVIDADES_PARADAS">Cavidades Paradas ({{ cavidades_paradas_count }})</button>
                     <button type="button" class="filter-btn" data-filter="SEM_COMUNICACAO">Sem Comunicação ({{ sem_comunicacao_count }})</button>
                 </div>
             </div>
@@ -383,7 +402,8 @@
         <div class="col-12 col-md-6 col-xl-4 machine-card-wrapper" 
              data-name="{{ m.nome|lower }}" 
              data-setor="{{ m.setor|lower }}" 
-             data-state="{{ m.state }}">
+             data-state="{{ m.state }}"
+             data-has-stopped-cavities="{% if m.tem_cavidade_parada %}true{% else %}false{% endif %}">
             <div class="machine-card p-3 h-100 d-flex flex-column justify-content-between shadow-sm">
                 <div>
                     <!-- Machine Header -->
@@ -455,7 +475,7 @@
                         </div>
                         <div class="d-flex flex-column gap-2">
                             {% for cav in m.cavidades %}
-                            <div class="p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}">
+                            <a href="{% url 'production:cavity_detail' machine_id=m.id cavity_id=cav.id %}" class="text-decoration-none text-dark d-block p-2 border rounded bg-white small {% if cav.status_code == 'PARADA' %}border-danger bg-danger-subtle{% endif %}" title="Clique para ver detalhes completos da cavidade {{ cav.nome }}">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
                                     <div class="d-flex align-items-center gap-1">
                                         <span class="fw-bold text-dark">{{ cav.nome }}</span>
@@ -469,15 +489,19 @@
                                     <span><i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz }}</strong></span>
                                     <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
                                 </div>
+                                <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
+                                    <span><i class="bi bi-bullseye me-1"></i>Meta Turno: <strong class="text-dark">{{ cav.meta_turno }}</strong></span>
+                                    <span><i class="bi bi-check2-circle me-1"></i>Realiz. Turno: <strong class="text-dark">{{ cav.producao_turno }}</strong> (<span class="{% if cav.diferenca_meta_turno >= 0 %}text-success{% else %}text-danger{% endif %}">{{ cav.diferenca_meta_turno_str }}</span>)</span>
+                                </div>
                                 <div class="cavity-bar">
                                     <div class="cavity-fill bg-info" style="width: {{ cav.percentual_bar }}%;"></div>
                                 </div>
                                 {% if cav.status_code == 'PARADA' and cav.motivo_parada %}
                                 <div class="text-danger fw-semibold small mt-1">
-                                    <i class="bi bi-exclamation-triangle me-1"></i>Motivo: {{ cav.motivo_parada }}
+                                    <i class="bi bi-exclamation-triangle me-1"></i>Motivo: {{ cav.motivo_parada }} (Clique para ver detalhes)
                                 </div>
                                 {% endif %}
-                            </div>
+                            </a>
                             {% endfor %}
                         </div>
                     </div>
@@ -531,9 +555,18 @@
                 const name = card.getAttribute('data-name') || '';
                 const setor = card.getAttribute('data-setor') || '';
                 const state = card.getAttribute('data-state') || '';
+                const hasStoppedCavities = card.getAttribute('data-has-stopped-cavities') === 'true';
 
                 const matchesSearch = name.includes(currentSearch) || setor.includes(currentSearch);
-                const matchesFilter = (currentFilter === 'all') || (state === currentFilter);
+                let matchesFilter = false;
+
+                if (currentFilter === 'all') {
+                    matchesFilter = true;
+                } else if (currentFilter === 'CAVIDADES_PARADAS') {
+                    matchesFilter = hasStoppedCavities;
+                } else {
+                    matchesFilter = (state === currentFilter);
+                }
 
                 if (matchesSearch && matchesFilter) {
                     card.classList.remove('d-none');
@@ -565,6 +598,16 @@
                 updateVisibility();
             });
         });
+
+        const kpiCavidadesCard = document.getElementById('kpi-card-cavidades-paradas');
+        if (kpiCavidadesCard) {
+            kpiCavidadesCard.addEventListener('click', function() {
+                const targetBtn = document.querySelector('.filter-btn[data-filter="CAVIDADES_PARADAS"]');
+                if (targetBtn) {
+                    targetBtn.click();
+                }
+            });
+        }
     });
 </script>
 {% endblock %}

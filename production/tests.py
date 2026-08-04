@@ -8,22 +8,34 @@ from django.core.management import call_command
 import time
 from io import StringIO
 
-from maintenance.models import Sector, Machine
+from maintenance.models import Sector, Machine, Technician, Allocation, AllocationProgressUpdate
 from production.models import (
+    ProductionShift,
     ProductionMachineConfig,
     ProductionCavityConfig,
     ProductionGlobalParameter,
     ProductionGlobalAlarm,
     ProductionMachineState,
     ProductionDowntimeEvent,
+    ProductionCavityState,
+    ProductionCavityDowntimeEvent,
     ProductionCavityMatrixHistory,
     ProductionMachineStateInterval,
+    ProductionRateAggregate,
+    ProductionParameterConfig,
+    ProductionParameterAnomalyEvent,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
 )
 from production.routers import ScadaRouter
-from production.services import scada_reader, ScadaReaderService, ProductionStateService, normalize_matrix_value
+from production.services import (
+    scada_reader,
+    ScadaReaderService,
+    ProductionStateService,
+    get_active_shift,
+    normalize_matrix_value,
+)
 from production.management.commands.collect_production_scada import CrossProcessLock
 
 
@@ -1767,4 +1779,614 @@ class Spec05DHistoryAndTimelineTestCase(TestCase):
         self.assertEqual(res_detail_ok.status_code, 200)
         self.assertContains(res_detail_ok, "Linha do Tempo Operacional")
         self.assertContains(res_detail_ok, "Matriz")
+
+
+class Spec06AShiftsAndTargetsTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 01", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1
+        )
+        self.cavity1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade 1",
+            ordem=1,
+            meta_producao_manual=100
+        )
+        self.cavity2 = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade 2",
+            ordem=2,
+            meta_producao_manual=150
+        )
+
+        self.user_leader = User.objects.create_user("leader_06a", "lider@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+    def test_production_shift_creation_and_midnight_crossing(self):
+        """Testa criação de turnos diurno e noturno (atravessando meia-noite)."""
+        shift_day = ProductionShift.objects.create(
+            nome="1º Turno",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=50.00,
+            ordem_exibicao=1,
+            ativo=True
+        )
+        self.assertFalse(shift_day.atravessa_meia_noite)
+
+        shift_night = ProductionShift.objects.create(
+            nome="3º Turno",
+            horario_inicial=timezone.datetime.strptime("22:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            percentual_meta=50.00,
+            ordem_exibicao=2,
+            ativo=True
+        )
+        self.assertTrue(shift_night.atravessa_meia_noite)
+
+    def test_percentage_sum_validation(self):
+        """Testa validação de soma dos percentuais em 100% no clean()."""
+        shift1 = ProductionShift(
+            nome="T1",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=40.00,
+            ativo=True
+        )
+        shift1.save()
+
+        shift2 = ProductionShift(
+            nome="T2",
+            horario_inicial=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("22:00", "%H:%M").time(),
+            percentual_meta=40.00,
+            ativo=True
+        )
+
+        with self.assertRaises(ValidationError):
+            shift2.full_clean()
+
+    def test_equal_distribution_fallback(self):
+        """Testa divisão igualitária quando percentual é 0.00."""
+        ProductionShift.objects.create(
+            nome="T1",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=0.00,
+            ativo=True
+        )
+        ProductionShift.objects.create(
+            nome="T2",
+            horario_inicial=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("22:00", "%H:%M").time(),
+            percentual_meta=0.00,
+            ativo=True
+        )
+
+        info = get_active_shift(at_datetime=timezone.make_aware(timezone.datetime(2026, 8, 4, 10, 0)))
+        self.assertEqual(info["nome"], "T1")
+        self.assertEqual(info["effective_percent"], 50.0)
+
+    def test_active_shift_resolution_night(self):
+        """Testa resolução de turno noturno no meio da madrugada (ex: 02:00)."""
+        ProductionShift.objects.create(
+            nome="Noite",
+            horario_inicial=timezone.datetime.strptime("22:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            percentual_meta=100.00,
+            ativo=True
+        )
+
+        info = get_active_shift(at_datetime=timezone.make_aware(timezone.datetime(2026, 8, 4, 2, 30)))
+        self.assertEqual(info["nome"], "Noite")
+        self.assertTrue(info["has_shifts"])
+
+    def test_shift_target_calculation_in_services(self):
+        """Testa cálculo de meta do turno e percentuais no service."""
+        ProductionShift.objects.create(
+            nome="Manhã",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=40.00,
+            ativo=True
+        )
+        ProductionShift.objects.create(
+            nome="Tarde",
+            horario_inicial=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("22:00", "%H:%M").time(),
+            percentual_meta=60.00,
+            ativo=True
+        )
+
+        shift_info = get_active_shift(at_datetime=timezone.make_aware(timezone.datetime(2026, 8, 4, 10, 0)))
+        cavs, prod_tot, meta_tot, pct, pct_bar = ProductionStateService.build_cavities_data(
+            self.config, scada_values={}, shift_info=shift_info
+        )
+
+        c1 = next(c for c in cavs if c["id"] == self.cavity1.id)
+        # cavity1 meta_diaria = 100, effective_percent = 40% -> meta_turno = 40
+        self.assertEqual(c1["meta_diaria"], 100)
+        self.assertEqual(c1["meta_turno"], 40)
+
+        c2 = next(c for c in cavs if c["id"] == self.cavity2.id)
+        # cavity2 meta_diaria = 150, effective_percent = 40% -> meta_turno = 60
+        self.assertEqual(c2["meta_diaria"], 150)
+        self.assertEqual(c2["meta_turno"], 60)
+
+    def test_views_render_shift_data(self):
+        """Testa renderização das métricas de turno no dashboard e machine_detail."""
+        ProductionShift.objects.create(
+            nome="Turno Único",
+            horario_inicial=timezone.datetime.strptime("00:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("23:59", "%H:%M").time(),
+            percentual_meta=100.00,
+            ativo=True
+        )
+
+        self.client.force_login(self.user_leader)
+        res_dash = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res_dash.status_code, 200)
+        self.assertContains(res_dash, "Turno Único")
+        self.assertContains(res_dash, "Meta Turno:")
+
+        res_detail = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config.pk}))
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertContains(res_detail, "Turno Ativo")
+        self.assertContains(res_detail, "Turno Único")
+
+
+class Spec06BCavityDowntimeTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        scada_reader.clear_caches()
+        init_scada_test_tables()
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 02", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1,
+            produzindo_value="1",
+            xid_status_prensa="STATUS_P2",
+            stale_limit_seconds=120
+        )
+        self.cavity1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade Esquerda",
+            ordem=1,
+            xid_motivo_parada="MOTIVO_CAV1"
+        )
+        self.cavity2 = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade Direita",
+            ordem=2,
+            xid_motivo_parada="MOTIVO_CAV2"
+        )
+
+        self.user_leader = User.objects.create_user("leader_06b", "lider06b@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+    def test_cavity_downtime_event_transitions(self):
+        """Testa transição Normal -> Parada -> Normal em cavidade com criação/fechamento idempotente de evento."""
+        now_ms = int(time.time() * 1000)
+        
+        scada_values = {
+            "STATUS_P2": {"value": 1, "str_value": "1", "ts": now_ms},
+            "MOTIVO_CAV1": {"value": 3, "str_value": "3", "ts": now_ms},
+            "MOTIVO_CAV2": {"value": 0, "str_value": "0", "ts": now_ms},
+        }
+
+        ProductionStateService.process_scada_cycle(scada_values)
+
+        state1 = ProductionCavityState.objects.get(cavity_config=self.cavity1)
+        self.assertEqual(state1.estado_atual, "PARADA")
+
+        open_events1 = ProductionCavityDowntimeEvent.objects.filter(cavity_config=self.cavity1, fim__isnull=True)
+        self.assertEqual(open_events1.count(), 1)
+        self.assertEqual(open_events1.first().snapshot_valor_motivo, "3")
+
+        state2 = ProductionCavityState.objects.get(cavity_config=self.cavity2)
+        self.assertEqual(state2.estado_atual, "NORMAL")
+        self.assertEqual(ProductionCavityDowntimeEvent.objects.filter(cavity_config=self.cavity2).count(), 0)
+
+        # Idempotência: rerodar o ciclo sem alteração não pode duplicar eventos
+        ProductionStateService.process_scada_cycle(scada_values)
+        self.assertEqual(ProductionCavityDowntimeEvent.objects.filter(cavity_config=self.cavity1).count(), 1)
+
+        # Cavidade 1 normaliza (MOTIVO_CAV1="0")
+        later_ms = now_ms + 60000
+        scada_values_norm = {
+            "STATUS_P2": {"value": 1, "str_value": "1", "ts": later_ms},
+            "MOTIVO_CAV1": {"value": 0, "str_value": "0", "ts": later_ms},
+            "MOTIVO_CAV2": {"value": 0, "str_value": "0", "ts": later_ms},
+        }
+
+        ProductionStateService.process_scada_cycle(scada_values_norm)
+
+        state1.refresh_from_db()
+        self.assertEqual(state1.estado_atual, "NORMAL")
+
+        closed_events1 = ProductionCavityDowntimeEvent.objects.filter(cavity_config=self.cavity1, fim__isnull=False)
+        self.assertEqual(closed_events1.count(), 1)
+        self.assertTrue(closed_events1.first().duracao_segundos >= 0)
+
+    def test_stale_data_freezes_cavity_state(self):
+        """Testa se dado desatualizado congela transições de cavidade sem abrir nem fechar eventos."""
+        old_ms = int((time.time() - 300) * 1000)
+        scada_values_stale = {
+            "STATUS_P2": {"value": 1, "str_value": "1", "ts": old_ms},
+            "MOTIVO_CAV1": {"value": 5, "str_value": "5", "ts": old_ms},
+        }
+
+        ProductionStateService.process_scada_cycle(scada_values_stale)
+
+        self.assertEqual(ProductionCavityDowntimeEvent.objects.filter(cavity_config=self.cavity1).count(), 0)
+
+    def test_dashboard_kpi_and_filter(self):
+        """Testa o contador KPI de Cavidades Paradas e renderização no dashboard."""
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT INTO datapoints (xid, dataSourceId, pointName) VALUES ('STATUS_P2', 1, 'Status')")
+            dp1_id = cursor.lastrowid
+            cursor.execute("INSERT INTO datapoints (xid, dataSourceId, pointName) VALUES ('MOTIVO_CAV1', 1, 'Motivo Cav 1')")
+            dp2_id = cursor.lastrowid
+
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 1, 1.0, %s)", [dp1_id, now_ms])
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 2, 2.0, %s)", [dp2_id, now_ms])
+
+        scada_reader.clear_caches()
+
+        self.client.force_login(self.user_leader)
+        res = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Cavidades Paradas")
+        self.assertEqual(res.context["cavidades_paradas_count"], 1)
+
+
+class Spec06CMaintenanceIntegrationTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        scada_reader.clear_caches()
+        init_scada_test_tables()
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 03", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1,
+            produzindo_value="1",
+            xid_status_prensa="STATUS_P3"
+        )
+
+        self.user_leader = User.objects.create_user("leader_06c", "lider06c@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+        self.tech_user = User.objects.create_user("tech_resp_06c", "techresp@test.com", "pass123")
+        self.tech = Technician.objects.create(nome="Técnico João", matricula="TJ01", status="EM_ATENDIMENTO", user=self.tech_user, perfil="TECNICO")
+
+    def test_responsavel_unassigned_when_no_active_allocation(self):
+        """Verifica se exibe 'Responsável ainda não atribuído' quando não há alocação ativa."""
+        detail = ProductionStateService.get_machine_detail(self.config.pk)
+        self.assertEqual(detail["responsaveis_manutencao"], "Responsável ainda não atribuído")
+        self.assertEqual(len(detail["responsaveis_lista"]), 0)
+
+        self.client.force_login(self.user_leader)
+        res = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config.pk}))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Responsável ainda não atribuído")
+
+    def test_responsavel_assigned_and_progress_updates_timeline(self):
+        """Verifica resgate de responsáveis ativos e linha do tempo de atualizações parciais."""
+        alloc = Allocation.objects.create(
+            tecnico=self.tech,
+            maquina=self.machine,
+            atividade_observacao="Manutenção corretiva mecânica",
+            data_inicio=timezone.now(),
+            status="EM_ATENDIMENTO"
+        )
+
+        pu = AllocationProgressUpdate.objects.create(
+            allocation=alloc,
+            autor=self.tech_user,
+            descricao="Substituição de gaxeta realizada."
+        )
+
+        detail = ProductionStateService.get_machine_detail(self.config.pk)
+        self.assertEqual(detail["responsaveis_manutencao"], "Técnico João")
+        self.assertEqual(len(detail["atualizacoes_manutencao"]), 1)
+        self.assertEqual(detail["atualizacoes_manutencao"][0]["descricao"], "Substituição de gaxeta realizada.")
+
+        self.client.force_login(self.user_leader)
+        res = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config.pk}))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Técnico João")
+        self.assertContains(res, "Substituição de gaxeta realizada.")
+
+
+class Spec06DLossEstimationTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        scada_reader.clear_caches()
+        init_scada_test_tables()
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 04", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1,
+            produzindo_value="1",
+            xid_status_prensa="STATUS_P4"
+        )
+
+        self.cavity1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade Única",
+            ordem=1,
+            xid_motivo_parada="MOTIVO_CAV4_1"
+        )
+
+        self.user_leader = User.objects.create_user("leader_06d", "lider06d@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+    def test_loss_estimation_insufficient_samples(self):
+        """Verifica se retorna estimativa indisponível se houver menos de 3 amostras."""
+        res = ProductionStateService.calculate_loss_estimate(
+            cavity_config=self.cavity1,
+            duracao_parada_segundos=7200,
+            produto="Pneu R15",
+            matriz="M-15"
+        )
+        self.assertFalse(res["disponivel"])
+        self.assertIn("dados suficientes", res["texto_formatado"])
+
+    def test_loss_estimation_four_level_fallback(self):
+        """Testa o cálculo da taxa e o fallback em 4 níveis."""
+        now = timezone.now()
+
+        for i in range(3):
+            ProductionRateAggregate.objects.create(
+                cavity_config=self.cavity1,
+                produto="Pneu R15",
+                matriz="M-15",
+                inicio_intervalo=now - timezone.timedelta(hours=i + 1),
+                fim_intervalo=now - timezone.timedelta(hours=i + 1) + timezone.timedelta(minutes=15),
+                minutos_produzindo=15,
+                quantidade_produzida=5,
+                taxa_pneus_hora=20.00,
+                quantidade_amostras=1
+            )
+
+        res = ProductionStateService.calculate_loss_estimate(
+            cavity_config=self.cavity1,
+            duracao_parada_segundos=7200,
+            produto="Pneu R15",
+            matriz="M-15"
+        )
+
+        self.assertTrue(res["disponivel"])
+        self.assertEqual(res["nivel_fallback"], 1)
+        self.assertEqual(res["taxa_pneus_hora"], 20.0)
+        self.assertEqual(res["perda_pneus"], 40)
+        self.assertIn("aproximadamente 40 pneus", res["texto_formatado"])
+
+    def test_purge_old_rate_aggregates(self):
+        """Testa purga de agregados mais antigos que 90 dias."""
+        now = timezone.now()
+        old_agg = ProductionRateAggregate.objects.create(
+            cavity_config=self.cavity1,
+            produto="Pneu Antigo",
+            matriz="M-01",
+            inicio_intervalo=now - timezone.timedelta(days=100),
+            fim_intervalo=now - timezone.timedelta(days=100) + timezone.timedelta(minutes=15),
+            minutos_produzindo=15,
+            quantidade_produzida=4,
+            taxa_pneus_hora=16.00,
+            quantidade_amostras=1
+        )
+
+        deleted = ProductionStateService.purge_old_rate_aggregates(days=90)
+        self.assertEqual(deleted, 1)
+        self.assertFalse(ProductionRateAggregate.objects.filter(id=old_agg.id).exists())
+
+
+class Spec06EParameterAnomaliesTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        scada_reader.clear_caches()
+        init_scada_test_tables()
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 05", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1,
+            produzindo_value="1",
+            xid_status_prensa="STATUS_P5"
+        )
+
+        self.param_temp = ProductionParameterConfig.objects.create(
+            nome="Temperatura de Cura",
+            chave="TEMP_CURA_P5",
+            xid="XID_TEMP_CURA_P5",
+            unidade="°C",
+            ordem=1,
+            machine_config=self.config,
+            limite_minimo=150.0,
+            limite_maximo=180.0,
+            tolerancia_segundos=0,
+            histerese=2.0,
+            ativo=True
+        )
+
+        ProductionMachineState.objects.create(
+            machine_config=self.config,
+            estado_atual="PRODUZINDO",
+            sem_comunicacao=False,
+            dado_desatualizado=False,
+            ultimo_timestamp_scada=int(time.time() * 1000)
+        )
+
+        self.user_leader = User.objects.create_user("leader_06e", "lider06e@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+    def test_anomaly_opens_updates_and_closes_with_hysteresis(self):
+        """Testa abertura de anomalia por limite máximo, atualização de min/max/ultimo e fechamento com histerese."""
+        now_ms = int(time.time() * 1000)
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT INTO datapoints (xid, dataSourceId, pointName) VALUES ('STATUS_P5', 1, 'Status P5')")
+            dp_status_id = cursor.lastrowid
+            cursor.execute("INSERT INTO datapoints (xid, dataSourceId, pointName) VALUES ('XID_TEMP_CURA_P5', 1, 'Temp Cura P5')")
+            dp_id = cursor.lastrowid
+
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 2, 1.0, %s)", [dp_status_id, now_ms])
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 2, 185.0, %s)", [dp_id, now_ms])
+
+        scada_reader.clear_caches()
+        ProductionStateService.process_scada_cycle()
+
+        anomalies = ProductionParameterAnomalyEvent.objects.filter(parameter_config=self.param_temp, fim__isnull=True)
+        self.assertEqual(anomalies.count(), 1)
+        anom = anomalies.first()
+        self.assertEqual(anom.tipo_limite, "MAXIMO")
+        self.assertEqual(anom.maior_valor, 185.0)
+
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 2, 190.0, %s)", [dp_id, now_ms + 1000])
+
+        scada_reader.clear_caches()
+        ProductionStateService.process_scada_cycle()
+
+        anom.refresh_from_db()
+        self.assertIsNone(anom.fim)
+        self.assertEqual(anom.maior_valor, 190.0)
+        self.assertEqual(anom.ultimo_valor, 190.0)
+
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 2, 179.0, %s)", [dp_id, now_ms + 2000])
+
+        scada_reader.clear_caches()
+        ProductionStateService.process_scada_cycle()
+
+        anom.refresh_from_db()
+        self.assertIsNone(anom.fim)
+
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, 2, 177.0, %s)", [dp_id, now_ms + 3000])
+
+        scada_reader.clear_caches()
+        ProductionStateService.process_scada_cycle()
+
+        anom.refresh_from_db()
+        self.assertIsNotNone(anom.fim)
+        self.assertEqual(anom.ultimo_valor, 177.0)
+
+    def test_machine_detail_renders_anomalies_and_notice(self):
+        """Verifica se o template machine_detail.html renderiza anomalias ativas e o aviso de precisão temporal (60s)."""
+        ProductionParameterAnomalyEvent.objects.create(
+            parameter_config=self.param_temp,
+            machine_config=self.config,
+            inicio=timezone.now(),
+            menor_valor=185.0,
+            maior_valor=185.0,
+            ultimo_valor=185.0,
+            tipo_limite="MAXIMO"
+        )
+
+        self.client.force_login(self.user_leader)
+        res = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config.pk}))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Anomalias de Parâmetros de Processo")
+        self.assertContains(res, "Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)")
+        self.assertContains(res, "Temperatura de Cura")
+
+
+class Spec06FIntegrationAndPerformanceTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        scada_reader.clear_caches()
+        init_scada_test_tables()
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 06", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1,
+            produzindo_value="1",
+            xid_status_prensa="STATUS_P6"
+        )
+
+        self.cavity1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade Esquerda",
+            ordem=1,
+            xid_motivo_parada="MOTIVO_CAV6_1"
+        )
+
+        ProductionMachineState.objects.create(
+            machine_config=self.config,
+            estado_atual="PRODUZINDO",
+            sem_comunicacao=False,
+            dado_desatualizado=False,
+            ultimo_timestamp_scada=int(time.time() * 1000)
+        )
+
+        self.user_leader = User.objects.create_user("leader_06f", "lider06f@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+        self.user_tech = User.objects.create_user("tech_06f", "tech06f@test.com", "pass123")
+        group_tech, _ = Group.objects.get_or_create(name="Técnicos")
+        self.user_tech.groups.add(group_tech)
+
+    def test_cavity_detail_view_renders_all_13_attributes_for_leader(self):
+        """Testa se a view cavity_detail (HTTP 200) renderiza os 13 componentes para o perfil de Liderança de Produção."""
+        self.client.force_login(self.user_leader)
+        url = reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity1.id})
+        res = self.client.get(url)
+
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Detalhes da Cavidade: Cavidade Esquerda")
+        self.assertContains(res, "Prensa 06")
+        self.assertContains(res, "Especificação Operacional da Cavidade")
+        self.assertContains(res, "Estimativa de Perda de Produção")
+        self.assertContains(res, "Manutenção — Responsáveis e Notas de Progresso")
+        self.assertContains(res, "Anomalias de Parâmetros Relacionadas")
+        self.assertContains(res, "Histórico Recente de Paradas")
+        self.assertContains(res, "Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)")
+
+    def test_cavity_detail_view_blocks_unauthorized_profiles(self):
+        """Garante que usuários do perfil Técnicos (Manutenção) são bloqueados ao tentar acessar a view cavity_detail."""
+        self.client.force_login(self.user_tech)
+        url = reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity1.id})
+        res = self.client.get(url)
+        self.assertNotEqual(res.status_code, 200)
+
+    def test_dashboard_contains_link_to_cavity_detail(self):
+        """Testa se o dashboard contêm os links formatados para a nova rota cavity_detail."""
+        self.client.force_login(self.user_leader)
+        res = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res.status_code, 200)
+        expected_href = reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity1.id})
+        self.assertContains(res, expected_href)
+
+
+
+
+
+
 

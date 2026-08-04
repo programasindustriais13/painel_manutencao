@@ -15,7 +15,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup
+from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup, AllocationProgressUpdate
 from .forms import (
     SectorForm, MachineForm, TechnicianForm,
     StartServiceForm, PauseServiceForm, FinishServiceForm
@@ -514,6 +514,37 @@ def finish_allocation(request, allocation_id):
                     messages.error(request, f"Erro: {error}")
             return redirect(f'/management/?open_modal=finish_alloc&alloc_id={allocation_id}')
                     
+    return redirect('technician_management')
+
+
+# Action: Add Progress Update (adiciona nota de progresso parcial a uma alocação)
+@login_required
+def add_allocation_progress_update(request, allocation_id):
+    if request.method == 'POST':
+        alloc = get_object_or_404(Allocation, id=allocation_id)
+        technician = alloc.tecnico
+
+        # Verificação de permissão: apenas TECNICO comum tem restrição ao próprio card.
+        if not _user_is_lider_ou_operador(request.user):
+            tecnico_proprio = _get_technician_proprio(request.user)
+            if not tecnico_proprio or tecnico_proprio.id != technician.id:
+                messages.error(request, "Acesso negado. Você só pode registrar atualizações de progresso nas suas próprias alocações.")
+                return redirect('technician_management')
+
+        descricao = request.POST.get("descricao", "").strip()
+        if not descricao:
+            messages.error(request, "A descrição da atualização de progresso não pode ficar em branco.")
+            return redirect('technician_management')
+
+        AllocationProgressUpdate.objects.create(
+            allocation=alloc,
+            autor=request.user,
+            descricao=descricao
+        )
+
+        messages.success(request, f"Atualização de progresso registrada com sucesso na alocação #{alloc.id}.")
+        return redirect('technician_management')
+
     return redirect('technician_management')
 
 

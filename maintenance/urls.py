@@ -29,6 +29,7 @@ urlpatterns = [
     # Ações sobre alocações específicas (por allocation_id — suporte a múltiplas alocações)
     path('allocations/<int:allocation_id>/resume/', views.resume_paused_allocation, name='resume_paused_allocation'),
     path('allocations/<int:allocation_id>/finish/', views.finish_allocation, name='finish_allocation'),
+    path('allocations/<int:allocation_id>/update-progress/', views.add_allocation_progress_update, name='add_allocation_progress_update'),
     path('anexos/alocacoes/<int:allocation_id>/', views.serve_allocation_attachment, name='serve_allocation_attachment'),
     
     # CRUD central page

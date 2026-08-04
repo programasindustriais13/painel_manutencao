@@ -146,14 +146,19 @@ nssm set PainelManutencaoWSGI Start SERVICE_AUTO_START
 nssm start PainelManutencaoWSGI
 ```
 
-### 5.2 Serviço do Coletor Scada Background
+### 5.2 Serviço do Coletor Scada Background (Intervalo de 60s em Produção)
 ```powershell
-nssm install ScadaCollectorService "powershell.exe" "-ExecutionPolicy Bypass -File C:\Caminho\Do\Projeto\scripts\start_scada_collector.ps1"
+nssm install ScadaCollectorService "C:\Caminho\Do\Projeto\.venv\Scripts\python.exe" "manage.py collect_production_scada --interval 60"
 nssm set ScadaCollectorService AppDirectory "C:\Caminho\Do\Projeto"
 nssm set ScadaCollectorService Start SERVICE_AUTO_START
 nssm set ScadaCollectorService AppExit Default Restart
 nssm start ScadaCollectorService
 ```
+
+> [!NOTE]
+> **PARÂMETROS DO COLETOR EM PRODUÇÃO:**
+> - O intervalo recomendado e homologado em produção é `--interval 60` (60 segundos por ciclo).
+> - NENHUMA requisição web HTTP consulta a tabela `pointvalues` do Scada MySQL. Apenas o coletor background acessa a telemetria do Scada e salva agregados no banco `default`.
 
 ### Comandos de Gestão dos Serviços:
 - **Verificar status:** `nssm status ScadaCollectorService`

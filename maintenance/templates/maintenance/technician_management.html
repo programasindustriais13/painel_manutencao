@@ -301,10 +301,71 @@
                                     {{ alloc.atividade_observacao }}
                                 </p>
                             </div>
-                            <div class="d-flex justify-content-between align-items-center">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
                                 <span class="text-muted small">Tempo Decorrido:</span>
                                 <span class="badge bg-dark font-monospace px-2 py-1"><i class="bi bi-stopwatch me-1"></i>{{ alloc.tempo_decorrido_str }}</span>
                             </div>
+
+                            <!-- Histórico de Notas Parciais da Alocação Ativa -->
+                            {% if alloc.progress_updates.all %}
+                            <div class="mt-2 pt-2 border-top">
+                                <span class="text-muted small fw-bold d-block mb-1"><i class="bi bi-chat-left-text me-1"></i>Atualizações de Progresso:</span>
+                                {% for pu in alloc.progress_updates.all %}
+                                <div class="bg-white p-2 border rounded mb-1" style="font-size:.78rem;">
+                                    <div class="d-flex justify-content-between text-muted" style="font-size:.7rem;">
+                                        <strong>{{ pu.autor.get_full_name|default:pu.autor.username|default:"Sistema" }}</strong>
+                                        <span>{{ pu.criado_em|date:"d/m H:i" }}</span>
+                                    </div>
+                                    <div class="text-dark mt-1" style="word-break: break-word;">{{ pu.descricao }}</div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+
+                            {% if user_can_manage or tech.id == technician_proprio_id %}
+                            <div class="mt-2 text-end">
+                                <button type="button" class="btn btn-outline-info btn-sm rounded-pill py-1 px-3" data-bs-toggle="modal" data-bs-target="#progressUpdateModal-{{ alloc.id }}">
+                                    <i class="bi bi-plus-circle me-1"></i>Nota Parcial
+                                </button>
+                            </div>
+
+                            <!-- MODAL: REGISTRAR NOTA PARCIAL -->
+                            <div class="modal fade" id="progressUpdateModal-{{ alloc.id }}" tabindex="-1" aria-labelledby="progressUpdateModalLabel-{{ alloc.id }}" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content border-0 shadow-lg text-start" style="border-radius: 16px;">
+                                        <div class="modal-header bg-info text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                                            <h5 class="modal-title fw-bold" id="progressUpdateModalLabel-{{ alloc.id }}">Adicionar Nota Parcial</h5>
+                                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                        </div>
+                                        <form method="post" action="{% url 'add_allocation_progress_update' alloc.id %}">
+                                            {% csrf_token %}
+                                            <div class="modal-body p-4">
+                                                <div class="alert alert-info border-info-subtle mb-3 py-2" style="font-size:.875rem;">
+                                                    <i class="bi bi-info-circle-fill me-1"></i>
+                                                    <span>{{ alloc.maquina.nome }} — {{ tech.nome }}</span>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="id_pu_descricao-{{ alloc.id }}" class="form-label fw-semibold">Descrição da Atualização de Progresso <span class="text-danger">*</span></label>
+                                                    <textarea name="descricao" id="id_pu_descricao-{{ alloc.id }}" class="form-control" rows="3" placeholder="Ex: Substituição da junta de vedação concluída..." required></textarea>
+                                                    <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                                                        <button type="button" class="btn btn-outline-info btn-sm rounded-pill px-3 voice-dictation-btn" data-target-id="id_pu_descricao-{{ alloc.id }}">
+                                                            <i class="bi bi-mic-fill me-1"></i> Falar
+                                                        </button>
+                                                        <span class="text-muted small ms-1 me-1">Tags:</span>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_pu_descricao-{{ alloc.id }}" data-text="Aguardando Teste">Aguardando Teste</button>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_pu_descricao-{{ alloc.id }}" data-text="Ajuste Mecânico Concluído">Ajuste Mecânico Concluído</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="modal-footer bg-light border-0 py-3" style="border-radius: 0 0 16px 16px;">
+                                                <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                                                <button type="submit" class="btn btn-info text-white rounded-pill px-4 fw-semibold">Salvar Nota</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
                     {% elif tech.status == 'EM_PAUSA' and paused.count > 0 %}
                         <!-- Sem ativo, mas tem pausados -->
@@ -348,9 +409,9 @@
                                         {% if p_alloc.motivo_pausa %}
                                             <p class="mb-2 text-warning-emphasis" style="font-size:.75rem;"><i class="bi bi-info-circle-fill me-1"></i>{{ p_alloc.motivo_pausa|truncatechars:60 }}</p>
                                         {% endif %}
-                                        <!-- Botões de ação nas pausas: visíveis somente para quem pode gerenciar OU próprio técnico -->
+                                         <!-- Botões de ação nas pausas: visíveis somente para quem pode gerenciar OU próprio técnico -->
                                         {% if user_can_manage or tech.id == technician_proprio_id %}
-                                        <div class="d-flex gap-2">
+                                        <div class="d-flex gap-2 flex-wrap">
                                             <!-- Retomar esta alocação específica -->
                                             {% if tech.is_ausente %}
                                                 <button type="button" class="btn btn-secondary btn-paused-resume rounded-pill disabled" disabled title="Técnico ausente — retorne-o para Ocioso antes de retomar">
@@ -364,12 +425,55 @@
                                                 </button>
                                             </form>
                                             {% endif %}
+                                            <!-- Nota Parcial nesta alocação pausada -->
+                                            <button class="btn btn-outline-info btn-paused-resume rounded-pill"
+                                                    data-bs-toggle="modal"
+                                                    data-bs-target="#progressUpdateModal-{{ p_alloc.id }}">
+                                                <i class="bi bi-chat-left-text me-1"></i>+ Nota
+                                            </button>
                                             <!-- Finalizar esta alocação específica -->
                                             <button class="btn btn-outline-danger btn-paused-finish rounded-pill"
                                                     data-bs-toggle="modal"
                                                     data-bs-target="#finishAllocModal-{{ p_alloc.id }}">
                                                 <i class="bi bi-check-lg me-1"></i>Finalizar
                                             </button>
+                                        </div>
+
+                                        <!-- MODAL: NOTA PARCIAL EM ALOCAÇÃO PAUSADA -->
+                                        <div class="modal fade" id="progressUpdateModal-{{ p_alloc.id }}" tabindex="-1" aria-labelledby="progressUpdateModalLabel-{{ p_alloc.id }}" aria-hidden="true">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                                <div class="modal-content border-0 shadow-lg text-start" style="border-radius: 16px;">
+                                                    <div class="modal-header bg-info text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                                                        <h5 class="modal-title fw-bold" id="progressUpdateModalLabel-{{ p_alloc.id }}">Adicionar Nota Parcial</h5>
+                                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <form method="post" action="{% url 'add_allocation_progress_update' p_alloc.id %}">
+                                                        {% csrf_token %}
+                                                        <div class="modal-body p-4">
+                                                            <div class="alert alert-info border-info-subtle mb-3 py-2" style="font-size:.875rem;">
+                                                                <i class="bi bi-info-circle-fill me-1"></i>
+                                                                <span>{{ p_alloc.maquina.nome }} — {{ tech.nome }}</span>
+                                                            </div>
+                                                            <div class="mb-3">
+                                                                <label for="id_pu_descricao-{{ p_alloc.id }}" class="form-label fw-semibold">Descrição da Atualização de Progresso <span class="text-danger">*</span></label>
+                                                                <textarea name="descricao" id="id_pu_descricao-{{ p_alloc.id }}" class="form-control" rows="3" placeholder="Ex: Peça encomendada junto ao almoxarifado..." required></textarea>
+                                                                <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                                                                    <button type="button" class="btn btn-outline-info btn-sm rounded-pill px-3 voice-dictation-btn" data-target-id="id_pu_descricao-{{ p_alloc.id }}">
+                                                                        <i class="bi bi-mic-fill me-1"></i> Falar
+                                                                    </button>
+                                                                    <span class="text-muted small ms-1 me-1">Tags:</span>
+                                                                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_pu_descricao-{{ p_alloc.id }}" data-text="Aguardando Peça">Aguardando Peça</button>
+                                                                    <button type="button" class="btn btn-outline-secondary btn-sm rounded-pill quick-tag-btn" data-target-id="id_pu_descricao-{{ p_alloc.id }}" data-text="Liberado para Produção">Liberado para Produção</button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        <div class="modal-footer bg-light border-0 py-3" style="border-radius: 0 0 16px 16px;">
+                                                            <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
+                                                            <button type="submit" class="btn btn-info text-white rounded-pill px-4 fw-semibold">Salvar Nota</button>
+                                                        </div>
+                                                    </form>
+                                                </div>
+                                            </div>
                                         </div>
 
                                         <!-- MODAL: FINALIZAR ALOCAÇÃO ESPECÍFICA (Individualizado) -->
