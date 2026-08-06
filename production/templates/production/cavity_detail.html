@@ -86,6 +86,121 @@
         </div>
     </div>
 
+    <!-- Limites de Produção do Bladder (Scada) vs Meta do PCP (SPEC 07A / Phase 4) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-speedometer2 me-2 text-primary"></i>Ciclo de Vida do Bladder (Scada)</h5>
+        <div class="row g-3">
+            <div class="col-12 col-sm-6 col-md-6">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-shield-check me-1"></i>Limite Vida do Bladder (Scada)</span>
+                    <strong class="text-dark fs-5 d-block mt-1">{{ limite_bladder_str }}</strong>
+                    <span class="text-muted fs-8">Vida útil máxima do ciclo atual do bladder</span>
+                </div>
+            </div>
+            <div class="col-12 col-sm-6 col-md-6">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-arrow-repeat me-1"></i>Contador de Produção do Ciclo (Scada)</span>
+                    <strong class="text-primary fs-5 d-block mt-1">{{ contador_ciclo_scada }}</strong>
+                    <span class="text-muted fs-8">Produção física acumulada desde o último reset/troca</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- PLANO DE PRODUÇÃO DO TURNO (SPEC 07C / Phase 8) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+                <h5 class="fw-bold mb-0 text-dark"><i class="bi bi-calendar-check me-2 text-success"></i>Meta do Turno (PCP) — Plano de Produção</h5>
+                <span class="text-muted small">Progresso do modelo e distribuição da meta nesta cavidade</span>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'production:shift_plan' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3 fw-semibold">
+                    <i class="bi bi-box-arrow-up-right me-1"></i>Abrir plano do turno
+                </a>
+                {% if target_obj %}
+                <a href="{% url 'production:target_edit' pk=target_obj.id %}" class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm fw-semibold">
+                    <i class="bi bi-sliders me-1"></i>Ajustar distribuição
+                </a>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if not matrix_identified %}
+        <div class="alert alert-warning border-0 shadow-sm rounded-3 py-3 mb-0 d-flex align-items-center">
+            <i class="bi bi-exclamation-triangle-fill fs-4 me-3 text-warning"></i>
+            <div>
+                <strong class="d-block text-dark">Matriz Não Identificada</strong>
+                <span class="small text-muted">
+                    Não foi possível associar uma meta porque a matriz atual não foi identificada no Scada.
+                </span>
+            </div>
+        </div>
+        {% elif not target_obj %}
+        <div class="alert alert-info border-0 shadow-sm rounded-3 py-3 mb-0 d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <div class="d-flex align-items-center">
+                <i class="bi bi-info-circle-fill fs-4 me-3 text-info"></i>
+                <div>
+                    <strong class="d-block text-dark">Sem Meta no Turno</strong>
+                    <span class="small text-muted">
+                        Nenhuma meta associada a este modelo ({{ matriz }}) no turno atual.
+                    </span>
+                </div>
+            </div>
+            <a href="{% url 'production:shift_plan' %}?matriz={{ matriz }}" class="btn btn-primary btn-sm rounded-pill px-3 fw-semibold">
+                <i class="bi bi-plus-circle me-1"></i>Criar meta no plano do turno
+            </a>
+        </div>
+        {% else %}
+        <div class="row g-3">
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-tag me-1"></i>Modelo Atual (SCADA)</span>
+                    <strong class="text-primary fs-6 d-block mt-1">
+                        {% if matrix_catalog_obj %}
+                        [{{ matrix_catalog_obj.codigo_scada|default:matrix_catalog_obj.codigo }}] {{ matrix_catalog_obj.nome_exibicao }}
+                        {% else %}
+                        {{ matriz }}
+                        {% endif %}
+                    </strong>
+                    <span class="text-muted fs-8">Identidade canônica</span>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-bullseye me-1"></i>Meta do Turno (PCP)</span>
+                    <div class="mt-1">
+                        <strong class="text-dark fs-5">{{ meta_total_modelo }}</strong>
+                        <span class="text-muted small"> (Cav: {{ meta_turno }})</span>
+                    </div>
+                    <span class="text-muted fs-8">Total planejado no turno</span>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-check2-all me-1"></i>Produção Modelo / Cavidade</span>
+                    <div class="mt-1">
+                        <strong class="text-success fs-5">{{ producao_total_modelo }}</strong>
+                        <span class="text-muted small"> (Cav: {{ producao_acumulada_turno }})</span>
+                    </div>
+                    <span class="text-muted fs-8">Acumulado real no turno</span>
+                </div>
+            </div>
+            <div class="col-12 col-md-3">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-pie-chart me-1"></i>Restante / Cumprimento</span>
+                    <div class="mt-1">
+                        <strong class="text-warning fs-5">{{ restante_cavidade }}</strong>
+                        <span class="badge bg-primary rounded-pill ms-1">{{ percentual_realizado }}%</span>
+                    </div>
+                    <span class="text-muted fs-8">Saldo restante na cavidade</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+
     <!-- Estimativa de Perda de Produção (Atributo 12) -->
     <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
         <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-graph-down-arrow me-2 text-warning"></i>Estimativa de Perda de Produção</h5>

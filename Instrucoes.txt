@@ -2399,38 +2399,90 @@ Resumo das Implementações:
 
 
 ================================================================================
-EXECUÇÃO DA SPEC_PRODUCAO_06E_PARAMETROS_E_ANOMALIAS_PROCESSO.md (04/08/2026)
+EXECUÇÃO DA CORREÇÃO DO SCHEMA, CATÁLOGO DE MATRIZES E PLANO PCP (06/08/2026)
 ================================================================================
 
 Objetivo:
-Implementar a parametrização de faixas permitidas de processo (temperatura, pressão, vácuo, etc.), tolerância a desvios, histerese de normalização e rastreamento de anomalias no app `production`, criando os modelos `ProductionParameterConfig` e `ProductionParameterAnomalyEvent` no banco `default`, máquina de anomalias no coletor background, aviso de precisão temporal e renderização nas telas da Produção.
+Corrigir os erros de OperationalError em tabelas inexistentes via reconciliação DDL do Django ORM sem a realização de --fake, deleção do banco ou SQL direto; cadastrar o catálogo canônico idempotente dos 43 modelos de matriz/produto do SCADA; separar conceitual e visualmente os limites do ciclo do bladder da meta planejada pelo PCP; implementar a rota e tela dedicada /producao/plano-turno/; exibir o resumo do plano no dashboard /producao/; prover atalhos contextuais na tela da cavidade /producao/maquinas/<id>/cavidades/<id>/ e garantir a soma acumulada por código canônico.
 
 Arquivos criados:
-- production/migrations/0011_productionparameterconfig_and_more.py
+- production/management/commands/seed_matrix_catalog.py
+- regras_programacao/SPEC_CORRECAO_SCHEMA_CICLOS_E_ACUMULADOS.md
+- regras_programacao/SPEC_CATALOGO_CANONICO_MATRIZES_SCADA.md
+- regras_programacao/SPEC_PLANO_PRODUCAO_TURNO_PCP.md
+- regras_programacao/SPEC_UX_PLANO_PCP_DASHBOARD_E_CAVIDADE.md
+- regras_programacao/SPEC_PRODUCAO_AGRUPADA_POR_MODELO_MATRIZ.md
+- production/migrations/0015_alter_productionmatrixcatalog_options_and_more.py
 
 Arquivos modificados:
-- production/models.py (Criados os modelos ProductionParameterConfig e ProductionParameterAnomalyEvent com faixas, tolerância, histerese, snapshots e tipos MINIMO/MAXIMO)
-- production/routers.py (Adicionados "productionparameterconfig" e "productionparameteranomalyevent" em LOCAL_MANAGED_MODELS no ScadaRouter)
-- production/admin.py (Registrados ProductionParameterConfigAdmin e ProductionParameterAnomalyEventAdmin no Django Admin)
-- production/services.py (Implementada a máquina de anomalias com verificação de limites, tolerância, manutenção de min/max/ultimo, fechamento com histerese e congelamento em dado stale/sem comunicação)
-- production/templates/production/machine_detail.html (Exibido o card "Anomalias de Parâmetros de Processo" com o aviso obrigatório de precisão temporal de 60s do coletor)
-- production/tests.py (Adicionada a classe Spec06EParameterAnomaliesTestCase)
+- production/models.py (Atualizado com campos codigo_scada, nome_scada, nome_exibicao em ProductionMatrixCatalog, e prioridade, motivo_alteracao e status em ProductionTarget)
+- production/forms.py (Atualizado com validações de prioridade, justificativa pós-início do turno e prevenção de duplicidade canônica)
+- production/urls.py (Registrada a rota explícita /producao/plano-turno/ sob o name 'shift_plan')
+- production/services.py (Implementado o método get_pcp_plan_summary, incorporação em get_dashboard_state e metadados contextuais de modelo e meta em get_cavity_detail)
+- production/templates/production/dashboard.html (Inserido card e tabela resumida do PLANO DO TURNO — PCP)
+- production/templates/production/target_list.html (Evoluída a interface de gestão do Plano de Produção do Turno com prioridades e novos badges)
+- production/templates/production/cavity_detail.html (Card dedicado PLANO DE PRODUÇÃO DO TURNO com atalho "Ajustar distribuição" e avisos de matriz/meta)
+- production/tests.py (Adicionadas as classes SpecCanonicalMatrixCatalogTestCase, SpecPCPShiftPlanAndUXTestCase e SpecGroupedProductionByMatrixTestCase)
 - Instrucoes.txt
 
 Resumo das Implementações:
-1. Modelagem e Roteamento:
-   - `ProductionParameterConfig` e `ProductionParameterAnomalyEvent` gerenciados no banco `default`.
-   - Migration aditiva `0011` gerada e aplicada com sucesso.
-2. Máquina de Anomalias com Histerese:
-   - Exige desvio contínuo por `tolerancia_segundos` antes de abrir o evento em `ProductionParameterAnomalyEvent`.
-   - Evento aberto atualiza `menor_valor`, `maior_valor` e `ultimo_valor` sem duplicar linhas no banco a cada ciclo do coletor.
-   - Fechamento exige retorno do parâmetro dentro dos limites com margem de `histerese` (`limite_minimo + histerese` ou `limite_maximo - histerese`).
-   - Estado congelado durante leitura `stale` ou sem comunicação.
-3. Transparência na Interface Web:
-   - Renderização das anomalias ativas no detalhe da máquina em `/producao/maquinas/<id>/`.
-   - Exibido o aviso obrigatório: *"Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)"*.
-4. Testes Automatizados:
-   - Suíte global ampliada para 132 testes executados e aprovados com 100% de sucesso.
+1. Reconciliação do Schema (Fase 1):
+   - Tabelas físicas `production_productioncycle` e `production_productionshiftaccumulated` criadas no banco local `default` via `SchemaEditor` do ORM sem apagar dados ou violar regras de parada.
+   - Ambas as visões do Django Admin respondem com HTTP 200 OK.
+2. Catálogo Canônico (Fase 3):
+   - Carga inicial idempotente executada com sucesso via `python manage.py seed_matrix_catalog`, registrando exatamente os 43 modelos oficiais.
+   - Identidade orientada por `codigo_scada` numérico único. Códigos `S/C` (Sem Câmara) mantidos como entidades distintas.
+3. Separação Bladder vs Meta PCP (Fase 4):
+   - Metadados e labels ajustados para deixar claro que o valor vindo do SCADA trata-se do limite de ciclo do bladder, enquanto a meta de produção é gerenciada pelo PCP no banco `default`.
+4. Módulo e Interface do Plano PCP (Fases 5, 6, 7 e 8):
+   - Rota `/producao/plano-turno/` operando com permissões backend (`lider_ou_pcp_required`), CSRF, POST-Redirect-GET e auditoria de justificativas.
+   - Card sintético e tabela resumida renderizados em `/producao/`.
+   - Card contextual e atalho "Ajustar distribuição" na rota da cavidade com tratamento para matriz não identificada ou sem meta.
+5. Produção Acumulada por Código (Fase 9):
+   - Agrupamento analítico feito exclusivamente pelo `codigo_scada`, imune a resets de contadores e trocas de matriz.
+
+
+
+================================================================================
+EXECUÇÃO DO HISTÓRICO DE PARADAS POR CAVIDADE, FILTRO DATETIME E PAGINAÇÃO (06/08/2026)
+================================================================================
+
+Objetivo:
+Evoluir a seção "Histórico de Eventos de Parada" na página de detalhes da máquina (/producao/maquinas/<id>/), removendo a coluna "Status", substituindo a exibição crua de motivo 0 por "Sem parada geral", apresentando os motivos de parada por cavidade com histórico real do banco default, incluindo filtro por data e horário (<input type="datetime-local">) com sobreposição temporal ORM, recortando o cálculo de duração ao período filtrado, aplicando paginação no backend de 10 itens por página e preservando a query string ao navegar.
+
+SPEC Criada:
+- regras_programacao/SPEC_PRODUCAO_HISTORICO_PARADAS_CAVIDADES_FILTRO_DATETIME_PAGINACAO.md
+
+Migrations Criadas e Aplicadas:
+- production/migrations/0016_productiondowntimeevent_production__machine_a36744_idx_and_more.py (Índices em ProductionDowntimeEvent no banco default)
+
+Arquivos Modificados:
+- production/models.py (Adicionado Meta.indexes para otimização de buscas em ProductionDowntimeEvent)
+- production/views.py (Captura de parametros inicio, fim, page na view machine_detail)
+- production/services.py (Implementados format_general_downtime_reason, format_cavity_downtime_reason, get_machine_detail evoluído com sobreposição temporal ORM, recorte de duração, prefetch de cavity downtime events e Paginator)
+- production/templates/production/machine_detail.html (Remoção da coluna Status, inserção de datetime-local no filtro com botões Aplicar e Limpar, exibição da coluna Motivos por Cavidade e controles de paginação mantendo a query string)
+- production/tests.py (Adicionada a classe ProductionDowntimeHistoryEnhancementTests com 8 testes novos, totalizando 126 testes 100% OK na suíte do app production)
+- Instrucoes.txt
+
+Resumo dos Recursos Implementados:
+1. Remoção da Coluna Status (Fase 3):
+   - Cabeçalho "Status" e badges exclusivas removidos da interface. Eventos abertos mostram "Em andamento" na coluna "Fim da Parada".
+2. Motivo Geral Amigável (Fase 4):
+   - Código 0, nulo ou "normal" formatado como "Sem parada geral". Códigos conhecidos mapeados e desconhecidos exibidos com fallback seguro "Motivo desconhecido (código X)".
+3. Motivos por Cavidade Históricos (Fase 5):
+   - Coluna "Motivos por Cavidade" apresenta histórico real sobreposto do model `ProductionCavityDowntimeEvent`. Cavidades com estado normal são omitidas; quando não há paradas de cavidade, exibe "Nenhuma parada por cavidade".
+4. Filtro Temporal datetime-local (Fase 6):
+   - Inputs tipo `<input type="datetime-local">` nos campos "Início do período" e "Fim do período" via GET (`inicio` e `fim`).
+   - Regra de sobreposição temporal ORM: `inicio <= end_dt AND (fim >= start_dt OR fim IS NULL)`.
+   - Trata dados e horários inválidos com mensagem amigável sem erro 500.
+5. Recorte da Duração no Período (Fase 7):
+   - Duração calculada estritamente dentro do intervalo filtrado `[inicio_efetivo, fim_efetivo]`.
+6. Paginação Backend (Fase 8):
+   - `django.core.paginator.Paginator` com 10 itens por página ordenados por `-inicio`.
+   - Links de navegação preservam a query string (`inicio`, `fim`, etc.).
+
+
+
 
 
 

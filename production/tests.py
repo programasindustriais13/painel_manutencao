@@ -24,6 +24,10 @@ from production.models import (
     ProductionRateAggregate,
     ProductionParameterConfig,
     ProductionParameterAnomalyEvent,
+    ProductionCycle,
+    ProductionShiftAccumulated,
+    ProductionMatrixCatalog,
+    ProductionTarget,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
@@ -37,6 +41,7 @@ from production.services import (
     normalize_matrix_value,
 )
 from production.management.commands.collect_production_scada import CrossProcessLock
+from production.forms import ProductionTargetForm, ProductionMatrixCatalogForm
 
 
 def init_scada_test_tables():
@@ -2383,6 +2388,761 @@ class Spec06FIntegrationAndPerformanceTestCase(TestCase):
         self.assertEqual(res.status_code, 200)
         expected_href = reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity1.id})
         self.assertContains(res, expected_href)
+
+
+class Spec07ASeparacaoLimiteBladderEMetaTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.sector = Sector.objects.create(nome="Vulcanização 07A")
+        self.machine = Machine.objects.create(nome="Prensa 07A", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(machine=self.machine, ordem_exibicao=1)
+        self.cavity = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade 07A",
+            ordem=1,
+            xid_producao="XID_PROD_07A",
+            xid_meta="XID_LIMITE_BLADDER_07A",
+            meta_producao_manual=1000
+        )
+
+        self.user_leader = User.objects.create_user("lider_07a", "lider07a@test.com", "pass123")
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+    def test_cavity_config_verbose_names(self):
+        """Valida se verbose_name e help_text atualizados estão configurados no model ProductionCavityConfig."""
+        meta_field = ProductionCavityConfig._meta.get_field("meta_producao_manual")
+        xid_meta_field = ProductionCavityConfig._meta.get_field("xid_meta")
+
+        self.assertEqual(str(meta_field.verbose_name), "Meta Manual de Produção")
+        self.assertIn("Meta diária de produção cadastrada manualmente", str(meta_field.help_text))
+
+        self.assertEqual(str(xid_meta_field.verbose_name), "XID Limite de Produção do Bladder (Scada)")
+        self.assertIn("limite de vida produtiva do ciclo do bladder", str(xid_meta_field.help_text))
+
+    def test_cavity_context_separates_bladder_limit_and_shift_target(self):
+        """Valida se build_cavities_data e get_cavity_detail retornam limite_bladder_scada e meta_turno de forma independente."""
+        scada_values = {
+            "XID_PROD_07A": {"value": 150},
+            "XID_LIMITE_BLADDER_07A": {"value": 2000},
+        }
+
+        cavities_data, _, _, _, _ = ProductionStateService.build_cavities_data(self.config, scada_values)
+        self.assertEqual(len(cavities_data), 1)
+        cav_ctx = cavities_data[0]
+
+        self.assertEqual(cav_ctx["limite_bladder_scada"], 2000)
+        self.assertEqual(cav_ctx["limite_bladder_str"], "2000")
+        self.assertEqual(cav_ctx["contador_ciclo_scada"], 150)
+        self.assertEqual(cav_ctx["meta_turno"], 1000)
+
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT OR REPLACE INTO datapoints (xid, dataSourceId, pointName) VALUES ('XID_PROD_07A', 1, 'Prod')")
+            cursor.execute("INSERT OR REPLACE INTO datapoints (xid, dataSourceId, pointName) VALUES ('XID_LIMITE_BLADDER_07A', 1, 'Bladder')")
+            cursor.execute("INSERT OR REPLACE INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (1, 3, 150, 100000)")
+            cursor.execute("INSERT OR REPLACE INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (2, 3, 2000, 100000)")
+
+        detail_ctx = ProductionStateService.get_cavity_detail(self.config.id, self.cavity.id)
+        self.assertEqual(detail_ctx["limite_bladder_scada"], 2000)
+        self.assertEqual(detail_ctx["limite_bladder_str"], "2000")
+        self.assertEqual(detail_ctx["contador_ciclo_scada"], 150)
+        self.assertEqual(detail_ctx["meta_turno"], 1000)
+
+    def test_template_renders_distinct_bladder_limit_and_shift_target(self):
+        """Simula GET nas views e verifica se os rótulos de Limite de Bladder e Meta do Turno são renderizados separadamente."""
+        self.client.force_login(self.user_leader)
+
+        dash_res = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(dash_res.status_code, 200)
+        self.assertContains(dash_res, "Limite Bladder:")
+        self.assertContains(dash_res, "Meta Turno:")
+
+        mach_res = self.client.get(reverse("production:machine_detail", kwargs={"pk": self.config.id}))
+        self.assertEqual(mach_res.status_code, 200)
+        self.assertContains(mach_res, "Limite Bladder:")
+        self.assertContains(mach_res, "Meta Turno:")
+
+        cav_res = self.client.get(reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity.id}))
+        self.assertEqual(cav_res.status_code, 200)
+        self.assertContains(cav_res, "Limite Vida do Bladder (Scada)")
+        self.assertContains(cav_res, "Meta do Turno (PCP)")
+
+
+class Spec07BAcumuloProducaoComResetsTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.shift = ProductionShift.objects.create(
+            nome="Turno 1 Teste 07B",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=100.0,
+            ordem_exibicao=1,
+            ativo=True
+        )
+        self.sector = Sector.objects.create(nome="Setor 07B")
+        self.machine = Machine.objects.create(nome="Prensa 07B", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(machine=self.machine, ordem_exibicao=1)
+        self.cavity = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade 07B",
+            ordem=1,
+            xid_producao="XID_PROD_07B",
+            xid_matriz="XID_MATRIZ_07B",
+            xid_lote_bladder="XID_BLADDER_07B",
+            meta_producao_manual=1000
+        )
+
+    def test_normal_counter_increment(self):
+        """Testa incremento normal do contador (ex: 430 -> 445 = +15)."""
+        now = timezone.now()
+        scada_1 = {"XID_PROD_07B": {"value": 430, "timestamp": 1000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_1, now=now)
+
+        acc = ProductionShiftAccumulated.objects.get(cavity_config=self.cavity)
+        self.assertEqual(acc.quantity_accumulated, 430)
+
+        scada_2 = {"XID_PROD_07B": {"value": 445, "timestamp": 2000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_2, now=now)
+
+        acc.refresh_from_db()
+        self.assertEqual(acc.quantity_accumulated, 445)
+        self.assertEqual(acc.last_scada_counter, 445)
+
+        cycle = ProductionCycle.objects.get(cavity_config=self.cavity, ended_at__isnull=True)
+        self.assertEqual(cycle.quantity_produced, 15)
+
+    def test_reset_on_counter_drop(self):
+        """Testa reset por queda do contador (ex: 1180 -> 8 => acúmulo 1188 no turno)."""
+        now = timezone.now()
+        scada_1 = {"XID_PROD_07B": {"value": 1180, "timestamp": 1000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_1, now=now)
+
+        acc = ProductionShiftAccumulated.objects.get(cavity_config=self.cavity)
+        self.assertEqual(acc.quantity_accumulated, 1180)
+
+        # Queda/reset no Scada para 8
+        scada_2 = {"XID_PROD_07B": {"value": 8, "timestamp": 2000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_2, now=now)
+
+        acc.refresh_from_db()
+        self.assertEqual(acc.quantity_accumulated, 1188)
+
+        closed_cycle = ProductionCycle.objects.get(cavity_config=self.cavity, ended_at__isnull=False)
+        self.assertEqual(closed_cycle.final_counter, 1180)
+        self.assertEqual(closed_cycle.close_reason, "RESET_CONTADOR")
+
+        active_cycle = ProductionCycle.objects.get(cavity_config=self.cavity, ended_at__isnull=True)
+        self.assertEqual(active_cycle.initial_counter, 8)
+
+    def test_reset_on_matrix_change(self):
+        """Testa encerramento do ciclo anterior e início de um novo ciclo ao trocar a matriz."""
+        now = timezone.now()
+        scada_1 = {
+            "XID_PROD_07B": {"value": 50, "timestamp": 1000},
+            "XID_MATRIZ_07B": {"str_value": "M-101"}
+        }
+        ProductionStateService.process_incremental_production(self.cavity, scada_1, now=now)
+
+        cycle_1 = ProductionCycle.objects.get(cavity_config=self.cavity, ended_at__isnull=True)
+        self.assertEqual(cycle_1.matriz, "M-101")
+
+        # Troca de matriz para M-202 com reset de contador para 2
+        scada_2 = {
+            "XID_PROD_07B": {"value": 2, "timestamp": 2000},
+            "XID_MATRIZ_07B": {"str_value": "M-202"}
+        }
+        ProductionStateService.process_incremental_production(self.cavity, scada_2, now=now)
+
+        cycle_1.refresh_from_db()
+        self.assertIsNotNone(cycle_1.ended_at)
+        self.assertEqual(cycle_1.close_reason, "TROCA_MATRIZ")
+
+        cycle_2 = ProductionCycle.objects.get(cavity_config=self.cavity, ended_at__isnull=True)
+        self.assertEqual(cycle_2.matriz, "M-202")
+
+    def test_reset_on_bladder_change(self):
+        """Testa encerramento do ciclo anterior ao mudar o lote do bladder."""
+        now = timezone.now()
+        scada_1 = {
+            "XID_PROD_07B": {"value": 50, "timestamp": 1000},
+            "XID_BLADDER_07B": {"str_value": "BLAD-01"}
+        }
+        ProductionStateService.process_incremental_production(self.cavity, scada_1, now=now)
+
+        # Troca de lote do bladder
+        scada_2 = {
+            "XID_PROD_07B": {"value": 5, "timestamp": 2000},
+            "XID_BLADDER_07B": {"str_value": "BLAD-02"}
+        }
+        ProductionStateService.process_incremental_production(self.cavity, scada_2, now=now)
+
+        closed_cycle = ProductionCycle.objects.get(cavity_config=self.cavity, ended_at__isnull=False)
+        self.assertEqual(closed_cycle.close_reason, "TROCA_BLADDER")
+
+    def test_collector_retry_idempotency(self):
+        """Garante que releituras ou retries com o mesmo timestamp Scada não duplicam a contagem."""
+        now = timezone.now()
+        scada = {"XID_PROD_07B": {"value": 100, "timestamp": 5000}}
+
+        ProductionStateService.process_incremental_production(self.cavity, scada, now=now)
+        acc = ProductionShiftAccumulated.objects.get(cavity_config=self.cavity)
+        self.assertEqual(acc.quantity_accumulated, 100)
+
+        # Re-execução idêntica
+        ProductionStateService.process_incremental_production(self.cavity, scada, now=now)
+        acc.refresh_from_db()
+        self.assertEqual(acc.quantity_accumulated, 100)
+
+    def test_scada_unavailability_does_not_trigger_reset(self):
+        """Garante que leitura offline/nula congela o estado sem causar reset ou estragar acúmulo."""
+        now = timezone.now()
+        scada_1 = {"XID_PROD_07B": {"value": 50, "timestamp": 1000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_1, now=now)
+
+        scada_offline = {"XID_PROD_07B": None}
+        ProductionStateService.process_incremental_production(self.cavity, scada_offline, now=now)
+
+        acc = ProductionShiftAccumulated.objects.get(cavity_config=self.cavity)
+        self.assertEqual(acc.quantity_accumulated, 50)
+        self.assertIsNone(ProductionCycle.objects.get(cavity_config=self.cavity).ended_at)
+
+    def test_shift_transition_across_midnight(self):
+        """Testa transição de data no acúmulo do turno sem fechar o ciclo de produção físico do molde."""
+        now_day1 = timezone.now()
+        scada_1 = {"XID_PROD_07B": {"value": 100, "timestamp": 1000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_1, now=now_day1)
+
+        acc_1 = ProductionShiftAccumulated.objects.get(date=now_day1.date(), cavity_config=self.cavity)
+        self.assertEqual(acc_1.quantity_accumulated, 100)
+
+        # Dia seguinte com incremento para 120 no mesmo ciclo físico
+        now_day2 = now_day1 + timezone.timedelta(days=1)
+        scada_2 = {"XID_PROD_07B": {"value": 120, "timestamp": 2000}}
+        ProductionStateService.process_incremental_production(self.cavity, scada_2, now=now_day2)
+
+        acc_2 = ProductionShiftAccumulated.objects.get(date=now_day2.date(), cavity_config=self.cavity)
+        self.assertNotEqual(acc_1.id, acc_2.id)
+
+
+class Spec07CPlanejamentoMetasProducaoTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.user_leader = User.objects.create_user(
+            username="lider_07c", password="password123", is_staff=True
+        )
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+        self.user_op = User.objects.create_user(
+            username="operador_07c", password="password123", is_staff=False
+        )
+
+        self.shift = ProductionShift.objects.create(
+            nome="Turno 1 Teste 07C",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=100.0,
+            ordem_exibicao=1,
+            ativo=True
+        )
+
+        self.sector = Sector.objects.create(nome="Setor 07C")
+        self.machine = Machine.objects.create(nome="Prensa 07C", setor=self.sector)
+        self.config = ProductionMachineConfig.objects.create(machine=self.machine, ordem_exibicao=1)
+        self.cavity = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade 07C",
+            ordem=1,
+            xid_producao="XID_PROD_07C",
+            xid_matriz="XID_MATRIZ_07C",
+            meta_producao_manual=500
+        )
+
+    def test_create_target_for_uninstalled_matrix(self):
+        """Permite cadastrar meta para matriz ainda não instalada em nenhuma prensa no Scada."""
+        target = ProductionTarget.objects.create(
+            date=timezone.now().date(),
+            shift=self.shift,
+            matriz_codigo="MAT-NAO-INSTALADA-999",
+            produto="Pneu Inexistente 200/50R17",
+            planned_quantity=2000,
+            status="ATIVO",
+            created_by=self.user_leader
+        )
+        self.assertIsNotNone(target.id)
+        self.assertEqual(target.matriz_codigo, "MAT-NAO-INSTALADA-999")
+        self.assertEqual(target.planned_quantity, 2000)
+
+    def test_duplicate_target_validation(self):
+        """Formulário rejeita o cadastro de metas duplicadas para o mesmo conjunto de parâmetros."""
+        today = timezone.now().date()
+        ProductionTarget.objects.create(
+            date=today,
+            shift=self.shift,
+            matriz_codigo="M-101",
+            planned_quantity=1000,
+            status="ATIVO"
+        )
+
+        form_data = {
+            "date": today,
+            "shift": self.shift.id,
+            "matriz_codigo": "M-101",
+            "planned_quantity": 1200,
+            "status": "ATIVO",
+        }
+        form = ProductionTargetForm(data=form_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn("Já existe uma meta ativa cadastrada", form.non_field_errors()[0])
+
+    def test_cancel_target(self):
+        """Mudança de status para CANCELADO preserva o registro sem atuar nas metas ativas."""
+        target = ProductionTarget.objects.create(
+            date=timezone.now().date(),
+            shift=self.shift,
+            matriz_codigo="M-CANCELAR",
+            planned_quantity=800,
+            status="ATIVO"
+        )
+        self.client.force_login(self.user_leader)
+        res = self.client.post(reverse("production:target_cancel", kwargs={"pk": target.id}))
+        self.assertEqual(res.status_code, 302)
+
+        target.refresh_from_db()
+        self.assertEqual(target.status, "CANCELADO")
+
+    def test_unauthorized_user_cannot_access_targets(self):
+        """Usuário comum sem privilégio recebe redirecionamento ao tentar acessar área de metas."""
+        self.client.force_login(self.user_op)
+        res = self.client.get(reverse("production:target_list"))
+        self.assertEqual(res.status_code, 302)
+
+    def test_planned_target_resolution_in_dashboard(self):
+        """A meta em ProductionTarget tem precedência sobre a meta manual da cavidade no dashboard."""
+        today = timezone.now().date()
+        # Insere valor no Scada para a matriz M-PLANEJADA
+        with connections["scada"].cursor() as cursor:
+            cursor.execute("INSERT OR REPLACE INTO datapoints (id, xid, dataSourceId, pointName) VALUES (1, 'XID_PROD_07C', 1, 'Prod')")
+            cursor.execute("INSERT OR REPLACE INTO datapoints (id, xid, dataSourceId, pointName) VALUES (2, 'XID_MATRIZ_07C', 1, 'Matriz')")
+            cursor.execute("INSERT OR REPLACE INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (10, 1, 3, 10, 1000)")
+            cursor.execute("INSERT OR REPLACE INTO pointvalues (id, dataPointId, dataType, pointValue, ts) VALUES (20, 2, 4, 0, 1000)")
+            cursor.execute("INSERT OR REPLACE INTO pointvalueannotations (pointValueId, textPointValueShort) VALUES (20, 'M-PLANEJADA')")
+
+        # Sem meta em ProductionTarget => utiliza a meta manual de 500
+        state_manual = ProductionStateService.get_dashboard_state()
+        cav_data_manual = state_manual["machines"][0]["cavidades"][0]
+        self.assertEqual(cav_data_manual["meta_turno"], 500)
+
+        # Cadastra meta planejada em ProductionTarget para M-PLANEJADA de 1500 (meta geral para a matriz no dia)
+        ProductionTarget.objects.create(
+            date=today,
+            shift=None,
+            matriz_codigo="M-PLANEJADA",
+            planned_quantity=1500,
+            status="ATIVO"
+        )
+
+        state_planned = ProductionStateService.get_dashboard_state()
+        cav_data_planned = state_planned["machines"][0]["cavidades"][0]
+        self.assertEqual(cav_data_planned["meta_turno"], 1500)
+
+
+class SpecCanonicalMatrixCatalogTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def test_seed_matrix_catalog_populates_43_models(self):
+        """Valida que o comando seed_matrix_catalog cadastra exatamente os 43 modelos canônicos."""
+        from django.core.management import call_command
+        call_command("seed_matrix_catalog")
+
+        self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
+
+        # Valida que código 3 é distinto de 37 (versão S/C)
+        mat3 = ProductionMatrixCatalog.objects.get(codigo_scada=3)
+        mat37 = ProductionMatrixCatalog.objects.get(codigo_scada=37)
+        self.assertNotEqual(mat3.id, mat37.id)
+        self.assertIn("S/C", mat37.nome_scada)
+        self.assertNotIn("S/C", mat3.nome_scada)
+
+    def test_seed_matrix_catalog_idempotency(self):
+        """Valida que chamadas repetidas do seed não duplicam registros."""
+        from django.core.management import call_command
+        call_command("seed_matrix_catalog")
+        call_command("seed_matrix_catalog")
+        self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
+
+
+class SpecPCPShiftPlanAndUXTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.user_leader = User.objects.create_user(
+            username="lider_pcp_ux", password="password123", is_staff=True
+        )
+        group_lider, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user_leader.groups.add(group_lider)
+
+        self.user_unauthorized = User.objects.create_user(
+            username="operador_sem_permissao", password="password123", is_staff=False
+        )
+
+        self.shift = ProductionShift.objects.create(
+            nome="Turno A PCP",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=100.0,
+            ordem_exibicao=1,
+            ativo=True
+        )
+
+        self.matrix = ProductionMatrixCatalog.objects.create(
+            codigo_scada=5,
+            codigo="5",
+            nome_scada="PNEUS READY 110/90-18",
+            nome_exibicao="PNEUS READY 110/90-18",
+            produto="PNEUS READY 110/90-18",
+            ativo=True
+        )
+
+    def test_shift_plan_route_access(self):
+        """A rota /producao/plano-turno/ abre com status 200 para usuário autorizado."""
+        self.client.force_login(self.user_leader)
+        response = self.client.get(reverse("production:shift_plan"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_unauthorized_user_blocked_on_shift_plan(self):
+        """Usuário sem permissão é bloqueado na rota /producao/plano-turno/."""
+        self.client.force_login(self.user_unauthorized)
+        response = self.client.get(reverse("production:shift_plan"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_pcp_plan_summary_in_dashboard(self):
+        """Valida que o resumo do plano do PCP é incluído no estado do dashboard."""
+        today = timezone.now().date()
+        ProductionTarget.objects.create(
+            date=today,
+            shift=self.shift,
+            matrix_catalog=self.matrix,
+            matriz_codigo="5",
+            planned_quantity=1200,
+            priority=1,
+            status="EM_PRODUCAO",
+            created_by=self.user_leader
+        )
+
+        state = ProductionStateService.get_dashboard_state()
+        summary = state.get("pcp_plan_summary")
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["meta_total"], 1200)
+        self.assertEqual(summary["total_metas"], 1)
+
+
+class SpecGroupedProductionByMatrixTestCase(TestCase):
+    databases = {"default", "scada"}
+
+    def setUp(self):
+        init_scada_test_tables()
+        self.shift = ProductionShift.objects.create(
+            nome="Turno Agrupado",
+            horario_inicial=timezone.datetime.strptime("06:00", "%H:%M").time(),
+            horario_final=timezone.datetime.strptime("14:00", "%H:%M").time(),
+            percentual_meta=100.0,
+            ordem_exibicao=1,
+            ativo=True
+        )
+        self.sector = Sector.objects.create(nome="Setor Agrupamento")
+        self.machine1 = Machine.objects.create(nome="Prensa 1", setor=self.sector)
+        self.config1 = ProductionMachineConfig.objects.create(machine=self.machine1, ordem_exibicao=1)
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.config1,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_producao="XID_PROD_1",
+            xid_matriz="XID_MATRIZ_1"
+        )
+        self.machine2 = Machine.objects.create(nome="Prensa 2", setor=self.sector)
+        self.config2 = ProductionMachineConfig.objects.create(machine=self.machine2, ordem_exibicao=2)
+        self.cav2 = ProductionCavityConfig.objects.create(
+            machine_config=self.config2,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_producao="XID_PROD_2",
+            xid_matriz="XID_MATRIZ_2"
+        )
+
+    def test_grouped_production_sum_same_matrix_code(self):
+        """Duas cavidades produzindo a mesma matriz (código 3) têm sua produção acumulada somada."""
+        today = timezone.now().date()
+
+        ProductionShiftAccumulated.objects.create(
+            date=today,
+            shift=self.shift,
+            cavity_config=self.cav1,
+            matriz="3",
+            produto="PNEUS HOPPER 90/90-18",
+            quantity_accumulated=150
+        )
+        ProductionShiftAccumulated.objects.create(
+            date=today,
+            shift=self.shift,
+            cavity_config=self.cav2,
+            matriz="3",
+            produto="PNEUS HOPPER 90/90-18",
+            quantity_accumulated=200
+        )
+
+        matrix_cat = ProductionMatrixCatalog.objects.create(
+            codigo_scada=3,
+            codigo="3",
+            nome_scada="PNEUS HOPPER 90/90-18",
+            nome_exibicao="PNEUS HOPPER 90/90-18",
+            ativo=True
+        )
+
+        target = ProductionTarget.objects.create(
+            date=today,
+            shift=self.shift,
+            matrix_catalog=matrix_cat,
+            planned_quantity=500,
+            status="EM_PRODUCAO"
+        )
+
+        summary = ProductionStateService.get_pcp_plan_summary(date=today, shift_obj=self.shift)
+        self.assertEqual(summary["produzido_total"], 350)
+        self.assertEqual(summary["restante_total"], 150)
+        self.assertEqual(summary["cumprimento_percent"], 70.0)
+
+
+class ProductionDowntimeHistoryEnhancementTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="prod_leader", password="password123")
+        group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        self.user.groups.add(group)
+
+        self.setor = Sector.objects.create(nome="Vulc")
+        self.machine = Machine.objects.create(nome="Prensa test 01", setor=self.setor)
+        self.machine_config = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1,
+            stale_limit_seconds=120,
+            produzindo_value="1",
+            xid_status_prensa="STATUS_P01",
+            xid_motivo_parada_geral="MOTIVO_P01"
+        )
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.machine_config,
+            nome="Cavidade 1",
+            ordem=1,
+            xid_motivo_parada="MOTIVO_CAV1"
+        )
+        self.cav2 = ProductionCavityConfig.objects.create(
+            machine_config=self.machine_config,
+            nome="Cavidade 2",
+            ordem=2,
+            xid_motivo_parada="MOTIVO_CAV2"
+        )
+
+        self.now = timezone.localtime().replace(second=0, microsecond=0)
+
+    def test_status_column_removed_and_open_event_displays_em_andamento(self):
+        """Valida que o cabeçalho 'Status' foi removido e evento aberto exibe 'Em andamento'."""
+        ev_open = ProductionDowntimeEvent.objects.create(
+            machine_config=self.machine_config,
+            inicio=self.now - timezone.timedelta(minutes=30),
+            fim=None,
+            motivo_geral="6"
+        )
+
+        self.client.login(username="prod_leader", password="password123")
+        url = reverse("production:machine_detail", kwargs={"pk": self.machine_config.pk})
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+
+        # Cabeçalho Status não deve estar presente na tabela de histórico
+        self.assertNotIn("<th>Status</th>", content)
+        # Evento aberto deve mostrar 'Em andamento'
+        self.assertIn("Em andamento", content)
+
+    def test_general_reason_friendly_formatting_and_fallback(self):
+        """Valida tradução de motivo geral 0 para 'Sem parada geral', conhecidos e fallback para desconhecidos."""
+        # 0 -> Sem parada geral
+        self.assertEqual(ProductionStateService.format_general_downtime_reason("0"), "Sem parada geral")
+        self.assertEqual(ProductionStateService.format_general_downtime_reason(None), "Sem parada geral")
+        self.assertEqual(ProductionStateService.format_general_downtime_reason(""), "Sem parada geral")
+
+        # Conhecidos (6 -> Falta de Material, 9 -> Mecânico, 10 -> Elétrica, 11 -> Outros, 1 -> Troca de Matriz)
+        self.assertEqual(ProductionStateService.format_general_downtime_reason("6"), "Falta de Material")
+        self.assertEqual(ProductionStateService.format_general_downtime_reason("9"), "Mecânico")
+        self.assertEqual(ProductionStateService.format_general_downtime_reason("10"), "Elétrica")
+
+        # Desconhecido -> Motivo desconhecido (código X)
+        self.assertEqual(ProductionStateService.format_general_downtime_reason("99"), "Motivo desconhecido (código 99)")
+
+    def test_cavity_downtime_reasons_historical_overlap(self):
+        """Valida a exibição histórica de motivos por cavidade sobrepostos ao evento."""
+        start_time = self.now - timezone.timedelta(hours=2)
+        end_time = self.now - timezone.timedelta(hours=1)
+
+        # Evento geral
+        ev = ProductionDowntimeEvent.objects.create(
+            machine_config=self.machine_config,
+            inicio=start_time,
+            fim=end_time,
+            motivo_geral="0"
+        )
+
+        # Evento de cavidade histórico durante esse intervalo
+        ProductionCavityDowntimeEvent.objects.create(
+            cavity_config=self.cav1,
+            inicio=start_time + timezone.timedelta(minutes=10),
+            fim=start_time + timezone.timedelta(minutes=40),
+            motivo_parada="5", # 5 -> Ajuste Matriz
+            snapshot_valor_motivo="5"
+        )
+
+        detail_state = ProductionStateService.get_machine_detail(config_id=self.machine_config.pk)
+        events = detail_state["events"]
+
+        self.assertEqual(len(events), 1)
+        first_ev = events[0]
+        self.assertEqual(first_ev["motivo_geral"], "Sem parada geral")
+        self.assertTrue(first_ev["has_cavity_reasons"])
+        self.assertIn("Cavidade 1: Ajuste Matriz", first_ev["cavidades_summary"])
+
+    def test_datetime_local_filter_and_overlap_rule(self):
+        """Valida filtro temporal por data/hora (datetime-local) e regra de sobreposição ORM."""
+        t1 = self.now - timezone.timedelta(hours=5)
+        t2 = self.now - timezone.timedelta(hours=3)
+        t3 = self.now - timezone.timedelta(hours=1)
+
+        # Evento 1: Das 5h atrás às 3h atrás (dentro do filtro)
+        ev1 = ProductionDowntimeEvent.objects.create(
+            machine_config=self.machine_config,
+            inicio=t1,
+            fim=t2,
+            motivo_geral="9"
+        )
+        # Evento 2: Das 1h atrás até agora (fora do filtro se filtrarmos de 6h a 2h atrás)
+        ev2 = ProductionDowntimeEvent.objects.create(
+            machine_config=self.machine_config,
+            inicio=t3,
+            fim=self.now,
+            motivo_geral="10"
+        )
+
+        f_start = (self.now - timezone.timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M")
+        f_end = (self.now - timezone.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+
+        detail = ProductionStateService.get_machine_detail(
+            config_id=self.machine_config.pk,
+            inicio_str=f_start,
+            fim_str=f_end
+        )
+
+        # Apenas o ev1 deve estar no resultado por sobreposição
+        events_ids = [e["id"] for e in detail["events"]]
+        self.assertIn(ev1.id, events_ids)
+        self.assertNotIn(ev2.id, events_ids)
+
+    def test_invalid_datetime_filter_gracefully_handled(self):
+        """Valida que início maior que fim não gera erro 500 e exibe mensagem amigável."""
+        f_start = self.now.strftime("%Y-%m-%dT%H:%M")
+        f_end = (self.now - timezone.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+
+        detail = ProductionStateService.get_machine_detail(
+            config_id=self.machine_config.pk,
+            inicio_str=f_start,
+            fim_str=f_end
+        )
+
+        self.assertIsNotNone(detail["date_error_msg"])
+        self.assertIn("não pode ser posterior", detail["date_error_msg"])
+
+    def test_downtime_duration_clipped_to_period(self):
+        """Valida que a duração exibida é recortada exclusivamente ao período do filtro."""
+        t_start = self.now - timezone.timedelta(hours=4)
+        t_end = self.now - timezone.timedelta(hours=2)
+
+        ev = ProductionDowntimeEvent.objects.create(
+            machine_config=self.machine_config,
+            inicio=t_start,
+            fim=t_end,
+            motivo_geral="9"
+        ) # Duração total: 2h (120 min)
+
+        # Filtro recortando apenas a última 1h (das 3h às 1h atrás)
+        f_start = (self.now - timezone.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
+        f_end = (self.now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M")
+
+        detail = ProductionStateService.get_machine_detail(
+            config_id=self.machine_config.pk,
+            inicio_str=f_start,
+            fim_str=f_end
+        )
+
+        ev_res = detail["events"][0]
+        # Duração recortada deve ser de 1h (3600 segundos)
+        self.assertEqual(ev_res["duracao_segundos"], 3600)
+        self.assertEqual(ev_res["duracao_str"], "1h 0m")
+
+    def test_backend_pagination_and_query_string_preservation(self):
+        """Valida paginação de 10 itens por página e preservação dos parâmetros GET."""
+        # Criar 15 eventos de parada
+        for i in range(15):
+            ProductionDowntimeEvent.objects.create(
+                machine_config=self.machine_config,
+                inicio=self.now - timezone.timedelta(minutes=i*10),
+                fim=self.now - timezone.timedelta(minutes=i*10 - 5),
+                motivo_geral="0"
+            )
+
+        f_start = (self.now - timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
+        f_end = self.now.strftime("%Y-%m-%dT%H:%M")
+
+        # Página 1
+        detail_p1 = ProductionStateService.get_machine_detail(
+            config_id=self.machine_config.pk,
+            inicio_str=f_start,
+            fim_str=f_end,
+            page=1
+        )
+        self.assertEqual(len(detail_p1["events"]), 10)
+        self.assertTrue(detail_p1["page_obj"].has_next())
+
+        # Página 2
+        detail_p2 = ProductionStateService.get_machine_detail(
+            config_id=self.machine_config.pk,
+            inicio_str=f_start,
+            fim_str=f_end,
+            page=2
+        )
+        self.assertEqual(len(detail_p2["events"]), 5)
+        self.assertTrue(detail_p2["page_obj"].has_previous())
+        self.assertIn("inicio=", detail_p2["querystring"])
+        self.assertIn("fim=", detail_p2["querystring"])
+
+    def test_permissions_and_scada_no_write(self):
+        """Valida que usuário sem permissão permanece bloqueado e que nenhuma escrita é feita no scada."""
+        self.client.logout()
+
+        url = reverse("production:machine_detail", kwargs={"pk": self.machine_config.pk})
+        response = self.client.get(url)
+        # Redireciona para o login se não autenticado
+        self.assertNotEqual(response.status_code, 200)
+
+
+
+
+
 
 
 

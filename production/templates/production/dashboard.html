@@ -210,8 +210,98 @@
         </div>
     </div>
 
+    <!-- PCP Turn Production Plan Summary Card (SPEC 07C / Phase 7) -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+                <h5 class="fw-bold mb-0 text-dark">
+                    <i class="bi bi-calendar-check text-primary me-2"></i>PLANO DO TURNO — PCP
+                </h5>
+                <span class="text-muted small">
+                    {{ pcp_plan_summary.total_metas }} meta(s) cadastrada(s) | {{ pcp_plan_summary.em_producao_count }} em produção | {{ pcp_plan_summary.aguardando_count }} aguardando instalação
+                </span>
+            </div>
+            <div>
+                <a href="{% url 'production:shift_plan' %}" class="btn btn-outline-primary btn-sm rounded-pill px-3 shadow-sm fw-semibold">
+                    <i class="bi bi-gear me-1"></i>Gerenciar plano do turno
+                </a>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="p-3 border rounded-3 bg-light text-center">
+                    <span class="d-block text-muted small"><i class="bi bi-bullseye me-1"></i>Meta Total</span>
+                    <strong class="fs-4 text-dark d-block mt-1">{{ pcp_plan_summary.meta_total }} pneus</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="p-3 border rounded-3 bg-light text-center">
+                    <span class="d-block text-muted small"><i class="bi bi-check-circle me-1"></i>Produzido</span>
+                    <strong class="fs-4 text-success d-block mt-1">{{ pcp_plan_summary.produzido_total }} pneus</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="p-3 border rounded-3 bg-light text-center">
+                    <span class="d-block text-muted small"><i class="bi bi-hourglass-split me-1"></i>Restante</span>
+                    <strong class="fs-4 text-warning d-block mt-1">{{ pcp_plan_summary.restante_total }} pneus</strong>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="p-3 border rounded-3 bg-light text-center">
+                    <span class="d-block text-muted small"><i class="bi bi-pie-chart me-1"></i>Cumprimento</span>
+                    <strong class="fs-4 text-primary d-block mt-1">{{ pcp_plan_summary.cumprimento_percent }}%</strong>
+                </div>
+            </div>
+        </div>
+
+        {% if pcp_plan_summary.metas_resumidas %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 fs-8">
+                <thead class="table-light">
+                    <tr>
+                        <th>Prioridade</th>
+                        <th>Modelo (SCADA)</th>
+                        <th>Destino</th>
+                        <th>Meta</th>
+                        <th>Produzido</th>
+                        <th>Restante</th>
+                        <th>Situação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in pcp_plan_summary.metas_resumidas %}
+                    <tr>
+                        <td><span class="badge bg-light text-dark border">P{{ m.priority }}</span></td>
+                        <td><strong class="text-dark">{{ m.modelo }}</strong> <small class="text-muted">[{{ m.codigo_scada }}]</small></td>
+                        <td>{{ m.destino }}</td>
+                        <td class="fw-bold">{{ m.meta }}</td>
+                        <td class="text-success fw-bold">{{ m.produzido }}</td>
+                        <td class="text-warning fw-bold">{{ m.restante }}</td>
+                        <td>
+                            {% if m.status_code == 'EM_PRODUCAO' or m.status_code == 'ATIVO' %}
+                            <span class="badge bg-primary rounded-pill">Em Produção</span>
+                            {% elif m.status_code == 'PLANEJADA' or m.status_code == 'AGUARDANDO_INSTALACAO' %}
+                            <span class="badge bg-warning text-dark rounded-pill">Aguardando Instalação</span>
+                            {% else %}
+                            <span class="badge bg-success rounded-pill">{{ m.situacao }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-3 border rounded text-center text-muted fs-8">
+            <i class="bi bi-info-circle me-1"></i>Nenhuma meta de produção cadastrada para o turno corrente.
+        </div>
+        {% endif %}
+    </div>
+
     <!-- Global Parameters & Alarms Row -->
     <div class="row g-3 mb-4">
+
         <!-- Parâmetros Globais -->
         <div class="col-12 col-lg-8">
             <div class="card border-0 shadow-sm rounded-3 p-3 bg-white h-100">
@@ -490,7 +580,10 @@
                                     <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
                                 </div>
                                 <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
+                                    <span><i class="bi bi-shield-check me-1" title="Limite de Vida do Bladder (Scada)"></i>Limite Bladder: <strong class="text-dark">{{ cav.limite_bladder_str }}</strong></span>
                                     <span><i class="bi bi-bullseye me-1"></i>Meta Turno: <strong class="text-dark">{{ cav.meta_turno }}</strong></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
                                     <span><i class="bi bi-check2-circle me-1"></i>Realiz. Turno: <strong class="text-dark">{{ cav.producao_turno }}</strong> (<span class="{% if cav.diferenca_meta_turno >= 0 %}text-success{% else %}text-danger{% endif %}">{{ cav.diferenca_meta_turno_str }}</span>)</span>
                                 </div>
                                 <div class="cavity-bar">

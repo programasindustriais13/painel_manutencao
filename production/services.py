@@ -20,6 +20,10 @@ from .models import (
     ProductionRateAggregate,
     ProductionParameterConfig,
     ProductionParameterAnomalyEvent,
+    ProductionCycle,
+    ProductionShiftAccumulated,
+    ProductionMatrixCatalog,
+    ProductionTarget,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
@@ -611,25 +615,15 @@ class ProductionStateService:
             c_prod_entry = scada_values.get(cav.xid_producao) if cav.xid_producao else None
             c_prod = int(c_prod_entry["value"]) if c_prod_entry and isinstance(c_prod_entry.get("value"), (int, float)) else 0
 
-            # Meta manual de produção (fonte do dashboard, considerada Meta Diária)
-            c_meta_diaria = cav.meta_producao_manual or 0
-            if has_shifts:
-                c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
-            else:
-                c_meta_turno = c_meta_diaria
+            # Limite de Produção do Bladder (Scada - xid_meta)
+            limite_entry = scada_values.get(cav.xid_meta) if cav.xid_meta else None
+            limite_bladder_scada = None
+            if limite_entry and isinstance(limite_entry.get("value"), (int, float)):
+                limite_bladder_scada = int(limite_entry["value"])
+            elif limite_entry and limite_entry.get("str_value") and str(limite_entry["str_value"]).isdigit():
+                limite_bladder_scada = int(limite_entry["str_value"])
 
-            c_prod_turno = c_prod
-            diferenca_meta_turno = c_prod_turno - c_meta_turno
-            diferenca_meta_turno_str = f"+{diferenca_meta_turno}" if diferenca_meta_turno > 0 else str(diferenca_meta_turno)
-
-            total_prod += c_prod
-            total_meta += c_meta_diaria
-
-            percent = round((c_prod / c_meta_diaria) * 100) if c_meta_diaria > 0 else 0
-            percent_bar = min(100, max(0, percent)) if c_meta_diaria > 0 else 0
-
-            percent_turno = round((c_prod_turno / c_meta_turno) * 100) if c_meta_turno > 0 else 0
-            percent_turno_bar = min(100, max(0, percent_turno)) if c_meta_turno > 0 else 0
+            limite_bladder_str = str(limite_bladder_scada) if limite_bladder_scada is not None else "N/A"
 
             # Matriz
             matriz_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
@@ -641,6 +635,50 @@ class ProductionStateService:
 
             lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
             lote_val = str(lote_entry.get("str_value", "")).strip() if lote_entry else ""
+
+            # Resolução de Meta (SPEC 07C: Meta Planejada vs Fallback Meta Manual)
+            s_obj = shift_info.get("shift_obj") if shift_info else None
+            target_obj = None
+            if matriz_val:
+                target_obj = ProductionTarget.objects.filter(
+                    date=timezone.now().date(),
+                    status="ATIVO",
+                    matriz_codigo__iexact=matriz_val
+                ).filter(
+                    Q(shift=s_obj) | Q(shift__isnull=True)
+                ).order_by("-shift_id").first()
+
+            if target_obj:
+                c_meta_turno = target_obj.planned_quantity
+                c_meta_diaria = target_obj.planned_quantity
+            else:
+                c_meta_diaria = cav.meta_producao_manual or 0
+                if has_shifts:
+                    c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+                else:
+                    c_meta_turno = c_meta_diaria
+
+            if has_shifts and s_obj:
+                acc_rec = ProductionShiftAccumulated.objects.filter(
+                    date=timezone.now().date(),
+                    shift=s_obj,
+                    cavity_config=cav
+                ).first()
+                c_prod_turno = acc_rec.quantity_accumulated if acc_rec else c_prod
+            else:
+                c_prod_turno = c_prod
+
+            diferenca_meta_turno = c_prod_turno - c_meta_turno
+            diferenca_meta_turno_str = f"+{diferenca_meta_turno}" if diferenca_meta_turno > 0 else str(diferenca_meta_turno)
+
+            total_prod += c_prod
+            total_meta += c_meta_diaria
+
+            percent = round((c_prod / c_meta_diaria) * 100) if c_meta_diaria > 0 else 0
+            percent_bar = min(100, max(0, percent)) if c_meta_diaria > 0 else 0
+
+            percent_turno = round((c_prod_turno / c_meta_turno) * 100) if c_meta_turno > 0 else 0
+            percent_turno_bar = min(100, max(0, percent_turno)) if c_meta_turno > 0 else 0
 
             # Regras de fallback para produto e lote:
             if prod_val and lote_val:
@@ -684,6 +722,10 @@ class ProductionStateService:
                 "percentual_bar": percent_bar,
                 "percentual_turno": percent_turno,
                 "percentual_turno_bar": percent_turno_bar,
+                "limite_bladder_scada": limite_bladder_scada,
+                "limite_bladder_str": limite_bladder_str,
+                "contador_ciclo_scada": c_prod,
+                "producao_acumulada_turno": c_prod_turno,
                 "motivo_parada": c_motivo_exibido,
                 "perda_estimada": perda_est,
             })
@@ -692,6 +734,124 @@ class ProductionStateService:
         total_percent_bar = min(100, max(0, total_percent)) if total_meta > 0 else 0
 
         return cavities_list, total_prod, total_meta, total_percent, total_percent_bar
+
+    @classmethod
+    def process_incremental_production(cls, cav: ProductionCavityConfig, scada_values: Dict[str, Any], now=None):
+        """
+        Processa o acúmulo incremental de produção por cavidade e turno com suporte a resets e trocas de matriz/bladder.
+        Garante idempotência contra timestamp duplicado/releitura.
+        """
+        if now is None:
+            now = timezone.now()
+
+        if not cav.xid_producao:
+            return
+
+        prod_entry = scada_values.get(cav.xid_producao)
+        if not prod_entry:
+            return
+
+        raw_val = prod_entry.get("value")
+        if raw_val is None or not isinstance(raw_val, (int, float)):
+            return
+
+        c_prod = int(raw_val)
+        ts_ms = prod_entry.get("timestamp") or int(now.timestamp() * 1000)
+
+        mat_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
+        mat_val = str(mat_entry.get("str_value", mat_entry.get("value", ""))).strip() if mat_entry else ""
+
+        prod_spec_entry = scada_values.get(cav.xid_produto) if cav.xid_produto else None
+        prod_val = str(prod_spec_entry.get("str_value", prod_spec_entry.get("value", ""))).strip() if prod_spec_entry else ""
+
+        lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
+        lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else ""
+
+        shift_info = get_active_shift(now)
+        shift_obj = shift_info.get("shift_obj") if shift_info else None
+        if not shift_obj:
+            shift_obj = ProductionShift.objects.filter(ativo=True).order_by("ordem_exibicao").first()
+        if not shift_obj:
+            return
+
+        today_date = now.date()
+
+        accumulated, _ = ProductionShiftAccumulated.objects.get_or_create(
+            date=today_date,
+            shift=shift_obj,
+            cavity_config=cav,
+            defaults={
+                "matriz": mat_val,
+                "produto": prod_val,
+                "quantity_accumulated": 0,
+                "last_scada_counter": c_prod,
+                "last_scada_ts": ts_ms,
+            }
+        )
+
+        # Checagem de idempotência: se o timestamp Scada já foi processado ou for antigo, ignora incremento
+        if accumulated.last_scada_ts and ts_ms <= accumulated.last_scada_ts and accumulated.quantity_accumulated > 0:
+            return
+
+        active_cycle = ProductionCycle.objects.filter(
+            cavity_config=cav, ended_at__isnull=True
+        ).order_by("-started_at").first()
+
+        last_counter = accumulated.last_scada_counter
+
+        # Detecção de Reset ou Troca de Insumos (Matriz / Bladder)
+        is_counter_reset = (c_prod < last_counter)
+        is_matrix_changed = bool(active_cycle and active_cycle.matriz and mat_val and mat_val != active_cycle.matriz)
+        is_bladder_changed = bool(active_cycle and active_cycle.lote_bladder and lote_val and lote_val != active_cycle.lote_bladder)
+
+        if is_counter_reset or is_matrix_changed or is_bladder_changed:
+            close_reason = "TROCA_MATRIZ" if is_matrix_changed else ("TROCA_BLADDER" if is_bladder_changed else "RESET_CONTADOR")
+            if active_cycle:
+                active_cycle.ended_at = now
+                active_cycle.final_counter = last_counter
+                active_cycle.close_reason = close_reason
+                active_cycle.save()
+
+            active_cycle = ProductionCycle.objects.create(
+                cavity_config=cav,
+                matriz=mat_val,
+                produto=prod_val,
+                lote_bladder=lote_val,
+                started_at=now,
+                initial_counter=c_prod,
+                quantity_produced=0,
+                last_scada_ts=ts_ms
+            )
+
+            # Acumulado no turno: preserva o valor acumulado anterior no turno e adiciona os pneus pós-reset
+            accumulated.quantity_accumulated += c_prod
+        else:
+            if not active_cycle:
+                active_cycle = ProductionCycle.objects.create(
+                    cavity_config=cav,
+                    matriz=mat_val,
+                    produto=prod_val,
+                    lote_bladder=lote_val,
+                    started_at=now,
+                    initial_counter=c_prod,
+                    quantity_produced=0,
+                    last_scada_ts=ts_ms
+                )
+                accumulated.quantity_accumulated += c_prod
+            else:
+                increment = c_prod - last_counter
+                if increment > 0:
+                    active_cycle.quantity_produced += increment
+                    active_cycle.last_scada_ts = ts_ms
+                    active_cycle.save(update_fields=["quantity_produced", "last_scada_ts", "updated_at"])
+
+                    accumulated.quantity_accumulated += increment
+
+        accumulated.matriz = mat_val
+        accumulated.produto = prod_val
+        accumulated.last_scada_counter = c_prod
+        accumulated.last_scada_ts = ts_ms
+        accumulated.save()
 
     @classmethod
     @transaction.atomic
@@ -935,6 +1095,9 @@ class ProductionStateService:
                             matrix_value=norm_mat,
                             started_at=now
                         )
+
+                # Processar acúmulo incremental e detecção de resets conforme SPEC 07B
+                cls.process_incremental_production(cav, scada_values, now=now)
 
         # Avaliação de anomalias de parâmetros de processo (ProductionParameterConfig / ProductionParameterAnomalyEvent)
         for p_cfg in ProductionParameterConfig.objects.filter(ativo=True).select_related("machine_config", "cavity_config"):
@@ -1317,6 +1480,7 @@ class ProductionStateService:
                 })
 
         cavidades_paradas_count = sum(1 for m in machines_data for c in m["cavidades"] if c["status_code"] == "PARADA")
+        pcp_plan_summary = cls.get_pcp_plan_summary(date=timezone.now().date(), shift_obj=active_shift_info.get("shift_obj") if active_shift_info else None)
 
         return {
             "active_shift": active_shift_info,
@@ -1331,7 +1495,8 @@ class ProductionStateService:
             "matrix_summary": matrix_summary,
             "matrix_history": matrix_history,
             "matrix_history_error": matrix_history_error,
-            "matrix_filters": {
+            "pcp_plan_summary": pcp_plan_summary,
+"matrix_filters": {
                 "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
                 "data_final_str": end_dt.strftime("%Y-%m-%d"),
                 "periodo_ativo": periodo_ativo,
@@ -1341,16 +1506,56 @@ class ProductionStateService:
         }
 
     @classmethod
+    def format_general_downtime_reason(cls, raw_val: Any) -> str:
+        if raw_val is None:
+            return "Sem parada geral"
+        raw_str = str(raw_val).strip()
+        if not raw_str or raw_str.lower() in ("0", "none", "null", "normal", "sem parada", "sem parada geral"):
+            return "Sem parada geral"
+        try:
+            code = int(float(raw_str))
+            if code == 0:
+                return "Sem parada geral"
+            if code in PRESS_REASON_MAP:
+                return PRESS_REASON_MAP[code]
+            if code in CAVITY_REASON_MAP:
+                return CAVITY_REASON_MAP[code]
+            return f"Motivo desconhecido (código {code})"
+        except (ValueError, TypeError):
+            return raw_str
+
+    @classmethod
+    def format_cavity_downtime_reason(cls, raw_val: Any) -> str:
+        if raw_val is None:
+            return "Sem parada"
+        raw_str = str(raw_val).strip()
+        if not raw_str or raw_str.lower() in ("0", "none", "null", "normal", "sem parada"):
+            return "Sem parada"
+        try:
+            code = int(float(raw_str))
+            if code == 0:
+                return "Sem parada"
+            if code in CAVITY_REASON_MAP:
+                return CAVITY_REASON_MAP[code]
+            return f"Motivo desconhecido (código {code})"
+        except (ValueError, TypeError):
+            return raw_str
+
+    @classmethod
     def get_machine_detail(
         cls,
         config_id: int,
+        inicio_str: Optional[str] = None,
+        fim_str: Optional[str] = None,
         data_inicio_str: Optional[str] = None,
         data_final_str: Optional[str] = None,
-        periodo: Optional[str] = None
+        periodo: Optional[str] = None,
+        page: Any = 1
     ) -> Dict[str, Any]:
         """
         Retorna o contexto detalhado de uma máquina específica para a view /producao/maquinas/<id>/,
-        incluindo estado atual, cavidades, histórico de paradas filtrado, linha do tempo operacional e KPIs do período.
+        incluindo estado atual, cavidades, histórico de paradas filtrado por data/hora (datetime-local),
+        sobreposição temporal, motivos de parada por cavidade históricos, paginação backend e KPIs do período.
         """
         cfg = (
             ProductionMachineConfig.objects.select_related("machine", "machine__setor")
@@ -1361,7 +1566,48 @@ class ProductionStateService:
         now = timezone.now()
         date_error_msg = None
 
-        if periodo == "hoje":
+        def parse_dt_param(val_str: Optional[str]) -> Optional[timezone.datetime]:
+            if not val_str or not str(val_str).strip():
+                return None
+            v = str(val_str).strip()
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+                try:
+                    dt = timezone.datetime.strptime(v, fmt)
+                    if timezone.is_naive(dt):
+                        dt = timezone.make_aware(dt)
+                    return dt
+                except ValueError:
+                    continue
+            return None
+
+        dt_inicio = parse_dt_param(inicio_str)
+        dt_fim = parse_dt_param(fim_str)
+
+        if inicio_str or fim_str:
+            if dt_inicio and dt_fim:
+                if dt_inicio > dt_fim:
+                    date_error_msg = "O início do período não pode ser posterior ao fim."
+                    start_dt = (now - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    end_dt = now
+                    periodo_ativo = "custom"
+                else:
+                    start_dt = dt_inicio
+                    end_dt = dt_fim
+                    periodo_ativo = "custom"
+            elif dt_inicio:
+                start_dt = dt_inicio
+                end_dt = now
+                periodo_ativo = "custom"
+            elif dt_fim:
+                start_dt = (dt_fim - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+                end_dt = dt_fim
+                periodo_ativo = "custom"
+            else:
+                date_error_msg = "Formato de data e horário inválido."
+                start_dt = (now - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+                end_dt = now
+                periodo_ativo = "7d"
+        elif periodo == "hoje":
             start_dt = now.replace(hour=0, minute=0, second=0, microsecond=0)
             end_dt = now.replace(hour=23, minute=59, second=59, microsecond=999999)
             periodo_ativo = "hoje"
@@ -1378,7 +1624,7 @@ class ProductionStateService:
                 d_start = timezone.datetime.strptime(data_inicio_str, "%Y-%m-%d").date()
                 d_end = timezone.datetime.strptime(data_final_str, "%Y-%m-%d").date()
                 if d_start > d_end:
-                    date_error_msg = "Data inicial não pode ser maior que a data final."
+                    date_error_msg = "O início do período não pode ser posterior ao fim."
                     start_dt = (now - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
                     end_dt = now
                     periodo_ativo = "custom"
@@ -1387,6 +1633,7 @@ class ProductionStateService:
                     end_dt = timezone.make_aware(timezone.datetime.combine(d_end, timezone.datetime.max.time()))
                     periodo_ativo = "custom"
             except ValueError:
+                date_error_msg = "Formato de data inválido."
                 end_dt = now
                 start_dt = (end_dt - timezone.timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
                 periodo_ativo = "7d"
@@ -1479,21 +1726,20 @@ class ProductionStateService:
             cfg, scada_values, shift_info=active_shift_info
         )
 
-        # Filtro de eventos de parada (ProductionDowntimeEvent)
+        # Query de eventos de parada gerais com regra de sobreposição temporal (Django ORM)
         events_qs = ProductionDowntimeEvent.objects.filter(
             machine_config=cfg
         ).filter(
             Q(inicio__lte=end_dt) & (Q(fim__isnull=True) | Q(fim__gte=start_dt))
         ).order_by("-inicio")
 
-        events_data = []
         total_downtime_seconds = 0
         maior_parada_seconds = 0
         qtd_paradas = 0
 
-        for ev in events_qs:
-            eff_start = max(ev.inicio, start_dt)
-            eff_end = min(ev.fim or now, end_dt)
+        for ev_id, ev_inicio, ev_fim in events_qs.values_list("id", "inicio", "fim"):
+            eff_start = max(ev_inicio, start_dt)
+            eff_end = min(ev_fim or now, end_dt)
             eff_dur = max(0, int((eff_end - eff_start).total_seconds()))
 
             total_downtime_seconds += eff_dur
@@ -1501,19 +1747,95 @@ class ProductionStateService:
             if eff_dur > maior_parada_seconds:
                 maior_parada_seconds = eff_dur
 
+        duracao_media_seconds = round(total_downtime_seconds / qtd_paradas) if qtd_paradas > 0 else 0
+
+        # Paginação no Backend (10 eventos por página)
+        from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+        paginator = Paginator(events_qs, 10)
+        try:
+            page_obj = paginator.page(page)
+        except PageNotAnInteger:
+            page_obj = paginator.page(1)
+        except EmptyPage:
+            page_obj = paginator.page(paginator.num_pages)
+
+        # Buscar eventos de parada por cavidade (historico real) sobrepostos ao periodo
+        cavity_ids = list(cfg.cavities.values_list("id", flat=True))
+        cavity_events_qs = ProductionCavityDowntimeEvent.objects.filter(
+            cavity_config_id__in=cavity_ids
+        ).filter(
+            Q(inicio__lte=end_dt) & (Q(fim__isnull=True) | Q(fim__gte=start_dt))
+        ).select_related("cavity_config").order_by("inicio")
+        cavity_events_list = list(cavity_events_qs)
+
+        events_data = []
+        for ev in page_obj:
+            ev_start = ev.inicio
+            ev_end = ev.fim or now
+            eff_start = max(ev_start, start_dt)
+            eff_end = min(ev_end, end_dt)
+            eff_dur = max(0, int((eff_end - eff_start).total_seconds()))
+
             is_open = (ev.fim is None)
+            motivo_geral_friendly = cls.format_general_downtime_reason(ev.motivo_geral)
+
+            # Encontrar eventos por cavidade sobrepostos a este evento geral
+            overlapping_cavities = []
+            seen_cavity_motivos = set()
+
+            for cav_ev in cavity_events_list:
+                c_start = cav_ev.inicio
+                c_end = cav_ev.fim or now
+
+                # Checar sobreposição com o intervalo do evento geral
+                if c_start <= eff_end and c_end >= eff_start:
+                    c_reason_raw = cav_ev.motivo_parada or cav_ev.snapshot_valor_motivo or ""
+                    c_reason_clean = str(c_reason_raw).strip()
+
+                    if not c_reason_clean or c_reason_clean.lower() in ("0", "normal", "sem parada", "sem parada de cavidade", "none", "null"):
+                        continue
+
+                    c_reason_friendly = cls.format_cavity_downtime_reason(c_reason_raw)
+
+                    c_eff_start = max(c_start, eff_start)
+                    c_eff_end = min(c_end, eff_end)
+                    c_eff_dur = max(0, int((c_eff_end - c_eff_start).total_seconds()))
+
+                    dedup_key = (cav_ev.cavity_config.nome, c_reason_friendly, c_eff_start, c_eff_end)
+                    if dedup_key in seen_cavity_motivos:
+                        continue
+                    seen_cavity_motivos.add(dedup_key)
+
+                    overlapping_cavities.append({
+                        "cavity_name": cav_ev.cavity_config.nome,
+                        "reason": c_reason_friendly,
+                        "start": c_eff_start,
+                        "end": c_eff_end if cav_ev.fim else None,
+                        "is_open": cav_ev.fim is None,
+                        "duracao_str": cls.format_elapsed_seconds(c_eff_dur),
+                        "text_compact": f"{cav_ev.cavity_config.nome}: {c_reason_friendly}",
+                        "text_detailed": f"{cav_ev.cavity_config.nome} ({c_eff_start.strftime('%H:%M:%S')}–{c_eff_end.strftime('%H:%M:%S') if cav_ev.fim else 'em andamento'}): {c_reason_friendly}",
+                    })
+
+            if overlapping_cavities:
+                cavities_summary = "; ".join(c["text_compact"] for c in overlapping_cavities)
+            else:
+                cavities_summary = "Nenhuma parada por cavidade"
+
             events_data.append({
                 "id": ev.id,
                 "inicio": ev.inicio,
                 "fim": ev.fim,
                 "duracao_segundos": eff_dur,
                 "duracao_str": cls.format_elapsed_seconds(eff_dur),
-                "motivo_geral": ev.motivo_geral or "Não informado",
+                "motivo_geral": motivo_geral_friendly,
+                "raw_motivo_geral": ev.motivo_geral,
                 "is_open": is_open,
                 "status_label": "Em andamento" if is_open else "Fechado",
+                "cavidades_motivos": overlapping_cavities,
+                "cavidades_summary": cavities_summary,
+                "has_cavity_reasons": len(overlapping_cavities) > 0,
             })
-
-        duracao_media_seconds = round(total_downtime_seconds / qtd_paradas) if qtd_paradas > 0 else 0
 
         # ==============================================================================
         # LINHA DO TEMPO OPERACIONAL E KPIS COMPLEMENTARES DA MÁQUINA
@@ -1633,6 +1955,21 @@ class ProductionStateService:
             for a in active_anomalies_qs
         ]
 
+        # Construir query string para os botões de paginação
+        query_params = []
+        if inicio_str:
+            query_params.append(f"inicio={inicio_str}")
+        if fim_str:
+            query_params.append(f"fim={fim_str}")
+        if data_inicio_str and not inicio_str:
+            query_params.append(f"data_inicio={data_inicio_str}")
+        if data_final_str and not fim_str:
+            query_params.append(f"data_final={data_final_str}")
+        if periodo and not (inicio_str or fim_str or data_inicio_str):
+            query_params.append(f"periodo={periodo}")
+
+        querystring = "&".join(query_params)
+
         return {
             "config": cfg,
             "machine": cfg.machine,
@@ -1655,6 +1992,9 @@ class ProductionStateService:
             "percentual_total": total_percent,
             "percentual_total_bar": total_percent_bar,
             "events": events_data,
+            "page_obj": page_obj,
+            "paginator": paginator,
+            "querystring": querystring,
             "timeline_segments": timeline_segments,
             "total_period_seconds": total_period_seconds,
             "date_error_msg": date_error_msg,
@@ -1678,6 +2018,8 @@ class ProductionStateService:
                 "qtd_paradas_linha_tempo": qtd_paradas_linha_tempo,
             },
             "filters": {
+                "inicio_str": start_dt.strftime("%Y-%m-%dT%H:%M"),
+                "fim_str": end_dt.strftime("%Y-%m-%dT%H:%M"),
                 "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
                 "data_final_str": end_dt.strftime("%Y-%m-%d"),
                 "periodo_ativo": periodo_ativo,
@@ -1685,10 +2027,100 @@ class ProductionStateService:
         }
 
     @classmethod
+    def get_pcp_plan_summary(cls, date=None, shift_obj=None) -> Dict[str, Any]:
+        """
+        Retorna o resumo consolidado do plano do turno do PCP (Fase 7 e 9).
+        """
+        if date is None:
+            date = timezone.now().date()
+
+        if shift_obj is None:
+            active_info = get_active_shift()
+            shift_obj = active_info.get("shift_obj") if active_info else None
+
+        targets_qs = ProductionTarget.objects.select_related(
+            "shift", "matrix_catalog", "predicted_machine", "predicted_cavity"
+        ).filter(
+            date=date,
+            status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
+        )
+
+        if shift_obj:
+            targets_qs = targets_qs.filter(Q(shift=shift_obj) | Q(shift__isnull=True))
+
+        targets_list = []
+        meta_total = 0
+        produzido_total = 0
+        em_producao_count = 0
+        aguardando_count = 0
+
+        acc_qs = ProductionShiftAccumulated.objects.filter(
+            date=date,
+            shift=shift_obj
+        ) if shift_obj else []
+
+        acc_by_matrix = {}
+        for acc in acc_qs:
+            mat = (acc.matriz or "").strip()
+            if mat:
+                acc_by_matrix[mat] = acc_by_matrix.get(mat, 0) + acc.quantity_accumulated
+
+        for t in targets_qs.order_by("priority", "-date"):
+            meta_total += t.planned_quantity
+
+            cat = t.matrix_catalog
+            prod_target = 0
+            code_scada = str(cat.codigo_scada) if cat and cat.codigo_scada else (t.matriz_codigo or "")
+
+            for mat_key, qty in acc_by_matrix.items():
+                if code_scada and (code_scada == mat_key or code_scada in mat_key):
+                    prod_target += qty
+
+            produzido_total += prod_target
+            restante_t = max(0, t.planned_quantity - prod_target)
+            pct_t = round((prod_target / t.planned_quantity * 100), 1) if t.planned_quantity > 0 else 0.0
+
+            if t.status in ["EM_PRODUCAO", "ATIVO"]:
+                em_producao_count += 1
+            elif t.status in ["PLANEJADA", "AGUARDANDO_INSTALACAO"]:
+                aguardando_count += 1
+
+            matrix_label = cat.nome_exibicao if cat else (t.matriz_codigo or "Geral")
+            destination_label = f"{t.predicted_machine.nome}" if t.predicted_machine else "A definir"
+
+            targets_list.append({
+                "id": t.id,
+                "priority": t.priority,
+                "modelo": matrix_label,
+                "codigo_scada": cat.codigo_scada if cat else t.matriz_codigo,
+                "destino": destination_label,
+                "meta": t.planned_quantity,
+                "produzido": prod_target,
+                "restante": restante_t,
+                "percentual": pct_t,
+                "situacao": t.get_status_display(),
+                "status_code": t.status,
+            })
+
+        restante_total = max(0, meta_total - produzido_total)
+        cumprimento_percent = round((produzido_total / meta_total * 100), 1) if meta_total > 0 else 0.0
+
+        return {
+            "meta_total": meta_total,
+            "produzido_total": produzido_total,
+            "restante_total": restante_total,
+            "cumprimento_percent": cumprimento_percent,
+            "total_metas": len(targets_list),
+            "em_producao_count": em_producao_count,
+            "aguardando_count": aguardando_count,
+            "metas_resumidas": targets_list,
+        }
+
+    @classmethod
     def get_cavity_detail(cls, machine_id: int, cavity_id: int) -> Dict[str, Any]:
         """
-        Retorna o contexto detalhado da cavidade com todos os 13 atributos exigidos pela SPEC 06F.
-        Utiliza consultas otimizadas (select_related / prefetch_related) sem requisições ao Scada MySQL.
+        Retorna o contexto detalhado da cavidade com todos os 13 atributos exigidos pela SPEC 06F
+        e os metadados do Plano PCP (Fase 8).
         """
         cavity = (
             ProductionCavityConfig.objects.select_related(
@@ -1716,6 +2148,94 @@ class ProductionStateService:
 
         lote_entry = scada_values.get(cavity.xid_lote_bladder) if cavity.xid_lote_bladder else None
         lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else "Não informado"
+
+        # Produção e Limites conforme SPEC 07A
+        c_prod_entry = scada_values.get(cavity.xid_producao) if cavity.xid_producao else None
+        contador_ciclo_scada = int(c_prod_entry["value"]) if c_prod_entry and isinstance(c_prod_entry.get("value"), (int, float)) else 0
+
+        limite_entry = scada_values.get(cavity.xid_meta) if cavity.xid_meta else None
+        limite_bladder_scada = None
+        if limite_entry and isinstance(limite_entry.get("value"), (int, float)):
+            limite_bladder_scada = int(limite_entry["value"])
+        elif limite_entry and limite_entry.get("str_value") and str(limite_entry["str_value"]).isdigit():
+            limite_bladder_scada = int(limite_entry["str_value"])
+
+        limite_bladder_str = str(limite_bladder_scada) if limite_bladder_scada is not None else "N/A"
+
+        s_obj = active_shift_info.get("shift_obj") if active_shift_info else None
+
+        if active_shift_info and active_shift_info.get("shift_obj"):
+            s_obj = active_shift_info["shift_obj"]
+            acc_rec = ProductionShiftAccumulated.objects.filter(
+                date=timezone.now().date(),
+                shift=s_obj,
+                cavity_config=cavity
+            ).first()
+            producao_acumulada_turno = acc_rec.quantity_accumulated if acc_rec else contador_ciclo_scada
+        else:
+            producao_acumulada_turno = contador_ciclo_scada
+
+        # Resolução do Catálogo Canônico e Meta PCP (Fase 8)
+        matrix_catalog_obj = None
+        matrix_identified = False
+        if matriz_val and matriz_val not in ["Não informada", "", "None"]:
+            matrix_identified = True
+            if matriz_val.isdigit():
+                matrix_catalog_obj = ProductionMatrixCatalog.objects.filter(codigo_scada=int(matriz_val)).first()
+            if not matrix_catalog_obj:
+                matrix_catalog_obj = ProductionMatrixCatalog.objects.filter(
+                    Q(codigo__iexact=matriz_val) |
+                    Q(nome_scada__iexact=matriz_val) |
+                    Q(nome_exibicao__iexact=matriz_val) |
+                    Q(produto__iexact=matriz_val)
+                ).first()
+
+        target_obj = None
+        if matrix_catalog_obj:
+            target_obj = ProductionTarget.objects.filter(
+                date=timezone.now().date(),
+                matrix_catalog=matrix_catalog_obj,
+                status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
+            ).filter(
+                Q(shift=s_obj) | Q(shift__isnull=True)
+            ).order_by("-shift_id").first()
+        elif matriz_val and matriz_val != "Não informada":
+            target_obj = ProductionTarget.objects.filter(
+                date=timezone.now().date(),
+                matriz_codigo__iexact=matriz_val,
+                status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
+            ).filter(
+                Q(shift=s_obj) | Q(shift__isnull=True)
+            ).order_by("-shift_id").first()
+
+        meta_total_modelo = target_obj.planned_quantity if target_obj else 0
+        if target_obj:
+            c_meta_turno = target_obj.planned_quantity
+            c_meta_diaria = target_obj.planned_quantity
+        else:
+            c_meta_diaria = cavity.meta_producao_manual or 0
+            effective_percent = active_shift_info.get("effective_percent", 100.0) if active_shift_info else 100.0
+            has_shifts = active_shift_info.get("has_shifts", False) if active_shift_info else False
+            if has_shifts:
+                c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+            else:
+                c_meta_turno = c_meta_diaria
+
+        producao_total_modelo = 0
+        if s_obj and matrix_catalog_obj and matrix_catalog_obj.codigo_scada:
+            code_str = str(matrix_catalog_obj.codigo_scada)
+            accs = ProductionShiftAccumulated.objects.filter(
+                date=timezone.now().date(),
+                shift=s_obj
+            )
+            for acc in accs:
+                if acc.matriz and code_str in str(acc.matriz):
+                    producao_total_modelo += acc.quantity_accumulated
+        else:
+            producao_total_modelo = producao_acumulada_turno
+
+        restante_cavidade = max(0, c_meta_turno - producao_acumulada_turno)
+        percentual_realizado = round((producao_acumulada_turno / c_meta_turno * 100), 1) if c_meta_turno > 0 else 0.0
 
         c_code, c_label, c_badge, c_motivo = cls.resolve_cavity_status_and_reason(cavity, scada_values)
 
@@ -1769,30 +2289,26 @@ class ProductionStateService:
 
         anomalias_qs = (
             ProductionParameterAnomalyEvent.objects.filter(
-                Q(machine_config=cfg) | Q(cavity_config=cavity)
-            )
-            .select_related("parameter_config")
-            .order_by("-inicio")[:10]
+                cavity_config=cavity,
+                fim__isnull=True
+            ).select_related("parameter_config")
         )
 
         anomalias_relacionadas = [
             {
                 "id": a.id,
                 "parametro": a.parameter_config.nome,
-                "unidade": a.parameter_config.unidade,
-                "tipo_limite": a.tipo_limite,
-                "limite": a.parameter_config.limite_minimo if a.tipo_limite == "MINIMO" else a.parameter_config.limite_maximo,
+                "tipo_limite": a.get_tipo_limite_display(),
                 "valor_atual": a.ultimo_valor,
+                "unidade": a.parameter_config.unidade or "",
                 "inicio_str": a.inicio.strftime("%d/%m/%Y %H:%M"),
-                "fim_str": a.fim.strftime("%d/%m/%Y %H:%M") if a.fim else "Em andamento",
-                "is_active": a.fim is None,
             }
             for a in anomalias_qs
         ]
 
         historico_eventos_qs = (
             ProductionCavityDowntimeEvent.objects.filter(cavity_config=cavity)
-            .order_by("-inicio")[:15]
+            .order_by("-inicio")[:10]
         )
 
         historico_eventos = [
@@ -1823,6 +2339,19 @@ class ProductionStateService:
             "produto": prod_val,
             "matriz": matriz_val,
             "lote_bladder": lote_val,
+            "limite_bladder_scada": limite_bladder_scada,
+            "limite_bladder_str": limite_bladder_str,
+            "contador_ciclo_scada": contador_ciclo_scada,
+            "producao_acumulada_turno": producao_acumulada_turno,
+            "meta_diaria": c_meta_diaria,
+            "meta_turno": c_meta_turno,
+            "matrix_identified": matrix_identified,
+            "matrix_catalog_obj": matrix_catalog_obj,
+            "target_obj": target_obj,
+            "meta_total_modelo": meta_total_modelo,
+            "producao_total_modelo": producao_total_modelo,
+            "restante_cavidade": restante_cavidade,
+            "percentual_realizado": percentual_realizado,
             "responsaveis_manutencao": responsaveis_label,
             "responsaveis_lista": tech_names,
             "atualizacoes_manutencao": atualizacoes_manutencao,
@@ -1831,4 +2360,3 @@ class ProductionStateService:
             "historico_eventos": historico_eventos,
             "precisao_temporal_notice": "Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)",
         }
-

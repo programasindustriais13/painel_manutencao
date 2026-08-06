@@ -1,0 +1,215 @@
+{% extends "production/base_production.html" %}
+{% load static %}
+
+{% block title %}Plano de Produção do Turno - PCP{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <!-- Header -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-2">
+        <div>
+            <h2 class="h3 fw-bold mb-0 text-dark">
+                <i class="bi bi-calendar-check text-primary me-2"></i>Plano de Produção do Turno — PCP
+            </h2>
+            <p class="text-muted small mb-0">Gestão e acompanhamento de metas planejadas por turno, data e modelo de matriz.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
+                <i class="bi bi-grid-fill me-1"></i>Painel Principal
+            </a>
+            <a href="{% url 'production:catalog_list' %}" class="btn btn-outline-primary btn-sm rounded-pill px-3">
+                <i class="bi bi-journal-text me-1"></i>Catálogo (43 Matrizes)
+            </a>
+            <button type="button" class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm fw-semibold" data-bs-toggle="modal" data-bs-target="#createTargetModal">
+                <i class="bi bi-plus-circle me-1"></i>Adicionar Meta
+            </button>
+        </div>
+    </div>
+
+    <!-- Alert Messages -->
+    {% if messages %}
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show border-0 shadow-sm py-2 px-3 mb-3 small" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close py-2" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <!-- Filter Bar -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 mb-4 bg-white">
+        <form method="get" action="." class="row g-3 align-items-end">
+            <div class="col-12 col-md-3">
+                <label for="date" class="form-label small fw-semibold text-muted mb-1">Data da Meta</label>
+                <input type="date" id="date" name="date" class="form-control form-control-sm" value="{{ filters.date }}">
+            </div>
+            <div class="col-12 col-md-3">
+                <label for="shift_id" class="form-label small fw-semibold text-muted mb-1">Turno</label>
+                <select id="shift_id" name="shift_id" class="form-select form-select-sm">
+                    <option value="">Todos os Turnos</option>
+                    {% for s in shifts %}
+                    <option value="{{ s.id }}" {% if filters.shift_id == s.id|stringformat:"s" %}selected{% endif %}>{{ s.nome }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3">
+                <label for="status" class="form-label small fw-semibold text-muted mb-1">Status</label>
+                <select id="status" name="status" class="form-select form-select-sm">
+                    <option value="">Todos os Status</option>
+                    <option value="PLANEJADA" {% if filters.status == 'PLANEJADA' %}selected{% endif %}>Planejada</option>
+                    <option value="AGUARDANDO_INSTALACAO" {% if filters.status == 'AGUARDANDO_INSTALACAO' %}selected{% endif %}>Aguardando Instalação</option>
+                    <option value="EM_PRODUCAO" {% if filters.status == 'EM_PRODUCAO' %}selected{% endif %}>Em Produção</option>
+                    <option value="ATINGIDA" {% if filters.status == 'ATINGIDA' %}selected{% endif %}>Atingida</option>
+                    <option value="CONCLUIDA_PARCIAL" {% if filters.status == 'CONCLUIDA_PARCIAL' %}selected{% endif %}>Concluída Parcial</option>
+                    <option value="CANCELADA" {% if filters.status == 'CANCELADA' %}selected{% endif %}>Cancelada</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-3 d-flex gap-2">
+                <button type="submit" class="btn btn-primary btn-sm w-100 fw-semibold">
+                    <i class="bi bi-funnel me-1"></i>Filtrar
+                </button>
+                <a href="{% url 'production:shift_plan' %}" class="btn btn-outline-secondary btn-sm">Limpar</a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Targets Table -->
+    <div class="card border-0 shadow-sm rounded-3 bg-white mb-4">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 fs-7">
+                <thead class="table-light">
+                    <tr>
+                        <th>Prio</th>
+                        <th>Data</th>
+                        <th>Turno</th>
+                        <th>Modelo (SCADA)</th>
+                        <th>Destino Previsto</th>
+                        <th>Meta Planejada</th>
+                        <th>Status</th>
+                        <th>Cadastrado por</th>
+                        <th class="text-end">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in targets %}
+                    <tr class="{% if t.status == 'CANCELADA' or t.status == 'CANCELADO' %}table-secondary text-muted opacity-75{% endif %}">
+                        <td><span class="badge bg-light text-dark border font-monospace">P{{ t.priority }}</span></td>
+                        <td>{{ t.date|date:"d/m/Y" }}</td>
+                        <td>{{ t.shift.nome|default:"Geral" }}</td>
+                        <td>
+                            <strong class="text-primary d-block">
+                                {% if t.matrix_catalog %}
+                                [{{ t.matrix_catalog.codigo_scada|default:t.matrix_catalog.codigo }}] {{ t.matrix_catalog.nome_exibicao }}
+                                {% else %}
+                                {{ t.matriz_codigo|default:"Sem modelo" }}
+                                {% endif %}
+                            </strong>
+                            <small class="text-muted">{{ t.produto }}</small>
+                        </td>
+                        <td>
+                            {% if t.predicted_machine %}
+                            <span class="badge bg-light text-dark border"><i class="bi bi-cpu me-1"></i>{{ t.predicted_machine.nome }}</span>
+                            {% else %}
+                            <span class="text-muted">A definir</span>
+                            {% endif %}
+                        </td>
+                        <td class="fw-bold text-dark fs-6">{{ t.planned_quantity }} pneus</td>
+                        <td>
+                            {% if t.status == 'PLANEJADA' %}
+                            <span class="badge bg-info text-dark rounded-pill px-2 py-1">Planejada</span>
+                            {% elif t.status == 'AGUARDANDO_INSTALACAO' %}
+                            <span class="badge bg-warning text-dark rounded-pill px-2 py-1">Aguardando Instalação</span>
+                            {% elif t.status == 'EM_PRODUCAO' or t.status == 'ATIVO' %}
+                            <span class="badge bg-primary rounded-pill px-2 py-1">Em Produção</span>
+                            {% elif t.status == 'ATINGIDA' or t.status == 'CONCLUIDO' %}
+                            <span class="badge bg-success rounded-pill px-2 py-1">Atingida</span>
+                            {% elif t.status == 'CONCLUIDA_PARCIAL' %}
+                            <span class="badge bg-secondary rounded-pill px-2 py-1">Concluída Parcial</span>
+                            {% else %}
+                            <span class="badge bg-dark rounded-pill px-2 py-1">Cancelada</span>
+                            {% endif %}
+                        </td>
+                        <td><small>{{ t.created_by.get_full_name|default:t.created_by.username|default:"Sistema" }}</small></td>
+                        <td class="text-end">
+                            {% if t.status != 'CANCELADA' and t.status != 'CANCELADO' %}
+                            <a href="{% url 'production:target_edit' pk=t.id %}" class="btn btn-outline-primary btn-sm py-0 px-2" title="Editar Meta">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <form method="post" action="{% url 'production:target_cancel' pk=t.id %}" class="d-inline" onsubmit="return confirm('Deseja realmente cancelar esta meta do plano?');">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2" title="Cancelar Meta">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="9" class="text-center text-muted py-4">Nenhuma meta de produção cadastrada para os filtros selecionados.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Cadastro de Meta -->
+<div class="modal fade" id="createTargetModal" tabindex="-1" aria-labelledby="createTargetModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow">
+            <form method="post" action="{% url 'production:target_create' %}">
+                {% csrf_token %}
+                <div class="modal-header bg-light">
+                    <h5 class="modal-title fw-bold" id="createTargetModalLabel"><i class="bi bi-bullseye text-primary me-2"></i>Nova Meta de Produção — PCP</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body row g-3">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Data da Meta *</label>
+                        {{ form.date }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Turno *</label>
+                        {{ form.shift }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Modelo da Matriz (Catálogo Canônico - 43 Códigos) *</label>
+                        {{ form.matrix_catalog }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Prioridade (1 = Alta)</label>
+                        {{ form.priority }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Quantidade Planejada (Meta em Pneus) *</label>
+                        {{ form.planned_quantity }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Status Inicial</label>
+                        {{ form.status }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Máquina Prevista (Opcional)</label>
+                        {{ form.predicted_machine }}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label small fw-semibold">Cavidade Prevista (Opcional)</label>
+                        {{ form.predicted_cavity }}
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-semibold">Observação / Justificativa</label>
+                        {{ form.observation }}
+                    </div>
+                </div>
+                <div class="modal-footer bg-light">
+                    <button type="button" class="btn btn-secondary btn-sm rounded-pill px-3" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary btn-sm rounded-pill px-4 fw-semibold shadow-sm">Salvar Meta no Plano</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

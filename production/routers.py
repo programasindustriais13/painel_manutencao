@@ -34,6 +34,10 @@ class ScadaRouter:
         "productionrateaggregate",
         "productionparameterconfig",
         "productionparameteranomalyevent",
+        "productioncycle",
+        "productionshiftaccumulated",
+        "productionmatrixcatalog",
+        "productiontarget",
     }
 
     def db_for_read(self, model, **hints):

@@ -12,6 +12,10 @@ from .models import (
     ProductionRateAggregate,
     ProductionParameterConfig,
     ProductionParameterAnomalyEvent,
+    ProductionCycle,
+    ProductionShiftAccumulated,
+    ProductionMatrixCatalog,
+    ProductionTarget,
 )
 
 
@@ -46,6 +50,54 @@ class ProductionCavityConfigInline(admin.TabularInline):
         "xid_meta",
         "xid_motivo_parada",
     )
+
+
+@admin.register(ProductionCavityConfig)
+class ProductionCavityConfigAdmin(admin.ModelAdmin):
+    list_display = (
+        "machine_config",
+        "nome",
+        "ordem",
+        "xid_matriz",
+        "xid_produto",
+        "xid_lote_bladder",
+        "xid_producao",
+        "meta_producao_manual",
+        "xid_meta",
+        "xid_motivo_parada",
+    )
+    list_editable = ("ordem", "meta_producao_manual")
+    search_fields = (
+        "nome",
+        "machine_config__machine__nome",
+        "xid_matriz",
+        "xid_produto",
+        "xid_lote_bladder",
+        "xid_producao",
+        "xid_meta",
+    )
+    list_filter = ("machine_config__machine",)
+    fieldsets = (
+        ("Identificação", {
+            "fields": ("machine_config", "nome", "ordem")
+        }),
+        ("Telemetria e Mapeamento Scada", {
+            "fields": (
+                "xid_matriz",
+                "xid_produto",
+                "xid_lote_bladder",
+                "xid_producao",
+                "xid_motivo_parada",
+            )
+        }),
+        ("Metas e Limites de Produção", {
+            "fields": (
+                "meta_producao_manual",
+                "xid_meta",
+            )
+        }),
+    )
+
 
 
 @admin.register(ProductionMachineConfig)
@@ -127,6 +179,39 @@ class ProductionParameterAnomalyEventAdmin(admin.ModelAdmin):
     list_filter = ("tipo_limite", "inicio", "fim")
     search_fields = ("parameter_config__nome", "machine_config__machine__nome", "produto_snapshot", "matriz_snapshot")
     date_hierarchy = "inicio"
+
+
+@admin.register(ProductionCycle)
+class ProductionCycleAdmin(admin.ModelAdmin):
+    list_display = ("cavity_config", "matriz", "produto", "lote_bladder", "started_at", "ended_at", "initial_counter", "final_counter", "quantity_produced", "close_reason")
+    list_filter = ("close_reason", "started_at", "ended_at")
+    search_fields = ("cavity_config__nome", "cavity_config__machine_config__machine__nome", "matriz", "produto", "lote_bladder")
+    date_hierarchy = "started_at"
+
+
+@admin.register(ProductionShiftAccumulated)
+class ProductionShiftAccumulatedAdmin(admin.ModelAdmin):
+    list_display = ("date", "shift", "cavity_config", "matriz", "produto", "quantity_accumulated", "last_scada_counter", "updated_at")
+    list_filter = ("date", "shift")
+    search_fields = ("cavity_config__nome", "cavity_config__machine_config__machine__nome", "matriz", "produto")
+    date_hierarchy = "date"
+
+
+@admin.register(ProductionMatrixCatalog)
+class ProductionMatrixCatalogAdmin(admin.ModelAdmin):
+    list_display = ("codigo", "descricao", "produto", "ativo", "created_at")
+    list_filter = ("ativo",)
+    search_fields = ("codigo", "descricao", "produto", "aliases_scada")
+
+
+@admin.register(ProductionTarget)
+class ProductionTargetAdmin(admin.ModelAdmin):
+    list_display = ("date", "shift", "matriz_codigo", "produto", "planned_quantity", "predicted_machine", "status", "created_by")
+    list_filter = ("status", "date", "shift")
+    search_fields = ("matriz_codigo", "produto", "observation")
+    date_hierarchy = "date"
+
+
 
 
 

@@ -1,6 +1,7 @@
 from django.db import models
 from django.core.validators import MinValueValidator
 from django.utils import timezone
+from django.contrib.auth.models import User
 from maintenance.models import Machine
 
 
@@ -172,14 +173,14 @@ class ProductionCavityConfig(models.Model):
     meta_producao_manual = models.PositiveIntegerField(
         default=0,
         verbose_name="Meta Manual de Produção",
-        help_text="Meta de produção manual para a cavidade (usada como fonte no dashboard)."
+        help_text="Meta diária de produção cadastrada manualmente pelo PCP / Líder de Produção."
     )
     xid_meta = models.CharField(
         max_length=100,
         blank=True,
         null=True,
-        verbose_name="XID Meta de Produção (Reservado Futuro)",
-        help_text="Reservado para integração futura. O dashboard utiliza meta_producao_manual."
+        verbose_name="XID Limite de Produção do Bladder (Scada)",
+        help_text="Código XID no Scada que fornece o limite de vida produtiva do ciclo do bladder."
     )
     xid_motivo_parada = models.CharField(
         max_length=100,
@@ -399,6 +400,11 @@ class ProductionDowntimeEvent(models.Model):
         verbose_name = "Evento de Parada de Produção"
         verbose_name_plural = "Eventos de Parada de Produção"
         ordering = ["-inicio"]
+        indexes = [
+            models.Index(fields=["machine_config", "inicio"]),
+            models.Index(fields=["inicio"]),
+            models.Index(fields=["fim"]),
+        ]
 
     def __str__(self):
         status_str = f"até {self.fim.strftime('%d/%m %H:%M')}" if self.fim else "(Em andamento)"
@@ -818,4 +824,319 @@ class ScadaPointValueAnnotation(models.Model):
 
     def __str__(self):
         return self.text_point_value_short or self.text_point_value_long or f"Annotation #{self.point_value_id}"
+
+
+class ProductionCycle(models.Model):
+    CLOSE_REASONS = [
+        ("RESET_CONTADOR", "Reset de Contador Scada"),
+        ("TROCA_MATRIZ", "Troca de Matriz"),
+        ("TROCA_BLADDER", "Troca de Bladder"),
+        ("FIM_TURNO", "Fechamento de Turno"),
+        ("MANUAL", "Encerramento Manual"),
+    ]
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="cycles",
+        verbose_name="Cavidade"
+    )
+    matriz = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Matriz"
+    )
+    produto = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Produto"
+    )
+    lote_bladder = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Lote do Bladder"
+    )
+    started_at = models.DateTimeField(
+        verbose_name="Início do Ciclo"
+    )
+    ended_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        verbose_name="Fim do Ciclo"
+    )
+    initial_counter = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Contador Inicial"
+    )
+    final_counter = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        verbose_name="Contador Final"
+    )
+    quantity_produced = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Quantidade Produzida no Ciclo"
+    )
+    close_reason = models.CharField(
+        max_length=30,
+        choices=CLOSE_REASONS,
+        blank=True,
+        null=True,
+        verbose_name="Motivo do Fechamento"
+    )
+    last_scada_ts = models.BigIntegerField(
+        blank=True,
+        null=True,
+        verbose_name="Último Timestamp Scada (ms)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Ciclo de Produção da Cavidade"
+        verbose_name_plural = "Ciclos de Produção de Cavidades"
+        ordering = ["-started_at"]
+
+    def __str__(self):
+        return f"Ciclo {self.cavity_config.nome} ({self.matriz or 'S/M'}) - {self.started_at.strftime('%d/%m/%Y %H:%M') if self.started_at else ''}"
+
+
+class ProductionShiftAccumulated(models.Model):
+    date = models.DateField(
+        verbose_name="Data do Turno"
+    )
+    shift = models.ForeignKey(
+        ProductionShift,
+        on_delete=models.CASCADE,
+        related_name="accumulated_records",
+        verbose_name="Turno"
+    )
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="shift_accumulated",
+        verbose_name="Cavidade"
+    )
+    matriz = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Última Matriz"
+    )
+    produto = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Último Produto"
+    )
+    quantity_accumulated = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Quantidade Acumulada no Turno"
+    )
+    last_scada_counter = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Último Contador Lido do Scada"
+    )
+    last_scada_ts = models.BigIntegerField(
+        blank=True,
+        null=True,
+        verbose_name="Último Timestamp Scada (ms)"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Acúmulo de Produção no Turno"
+        verbose_name_plural = "Acúmulos de Produção nos Turnos"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["date", "shift", "cavity_config"],
+                name="uniq_prod_shift_accumulated_date_shift_cavity"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.date} [{self.shift.nome}] {self.cavity_config.nome}: {self.quantity_accumulated} pneus"
+
+
+class ProductionMatrixCatalog(models.Model):
+    codigo_scada = models.PositiveSmallIntegerField(
+        unique=True,
+        blank=True,
+        null=True,
+        verbose_name="Código SCADA",
+        help_text="Código inteiro único (1 a 43) enviado pelo SCADA."
+    )
+    nome_scada = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Nome no SCADA"
+    )
+    nome_exibicao = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Nome para Exibição"
+    )
+    codigo = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Código da Matriz",
+        help_text="Código canônico da matriz (ex: 3, 37, M-1024)."
+    )
+    descricao = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        verbose_name="Descrição da Matriz",
+        help_text="Descrição detalhada ou especificações."
+    )
+    produto = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Produto Padronizado",
+        help_text="Nome/Código padronizado do pneu/produto."
+    )
+    aliases_scada = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Aliases no Scada",
+        help_text="Variações de texto recebidas do Scada separadas por vírgula."
+    )
+    ativo = models.BooleanField(
+        default=True,
+        verbose_name="Ativo"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Catálogo de Matriz/Produto"
+        verbose_name_plural = "Catálogo de Matrizes e Produtos"
+        ordering = ["codigo_scada", "codigo"]
+
+    def __str__(self):
+        code_str = f"[{self.codigo_scada}]" if self.codigo_scada else f"{self.codigo}"
+        display_name = self.nome_exibicao or self.nome_scada or self.produto or self.descricao or 'Sem descrição'
+        return f"{code_str} {display_name}"
+
+
+class ProductionTarget(models.Model):
+    STATUS_CHOICES = [
+        ("PLANEJADA", "Planejada"),
+        ("AGUARDANDO_INSTALACAO", "Aguardando Instalação"),
+        ("EM_PRODUCAO", "Em Produção"),
+        ("ATINGIDA", "Atingida"),
+        ("CONCLUIDA_PARCIAL", "Concluída Parcial"),
+        ("CANCELADA", "Cancelada"),
+        ("ATIVO", "Ativo - Legado"),
+        ("CONCLUIDO", "Concluído - Legado"),
+    ]
+
+    date = models.DateField(
+        verbose_name="Data da Meta"
+    )
+    shift = models.ForeignKey(
+        ProductionShift,
+        on_delete=models.CASCADE,
+        blank=True,
+        null=True,
+        related_name="targets",
+        verbose_name="Turno"
+    )
+    matrix_catalog = models.ForeignKey(
+        ProductionMatrixCatalog,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="targets",
+        verbose_name="Matriz (Catálogo)"
+    )
+    matriz_codigo = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Código da Matriz",
+        help_text="Código da matriz para vínculo da meta."
+    )
+    produto = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Produto"
+    )
+    planned_quantity = models.PositiveIntegerField(
+        verbose_name="Quantidade Planejada (Meta)"
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=1,
+        verbose_name="Prioridade",
+        help_text="Ordem de prioridade no plano do turno (1 = Maior prioridade)."
+    )
+    predicted_machine = models.ForeignKey(
+        Machine,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="predicted_targets",
+        verbose_name="Máquina Prevista"
+    )
+    predicted_cavity = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="predicted_targets",
+        verbose_name="Cavidade Prevista"
+    )
+    observation = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Observação / Justificativa"
+    )
+    change_reason = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Motivo da Última Alteração",
+        help_text="Justificativa registrada ao alterar meta com turno em andamento."
+    )
+    status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default="PLANEJADA",
+        verbose_name="Status da Meta"
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="created_production_targets",
+        verbose_name="Cadastrado por"
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="updated_production_targets",
+        verbose_name="Atualizado por"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Meta de Produção Planejada"
+        verbose_name_plural = "Metas de Produção Planejadas"
+        ordering = ["-date", "shift__ordem_exibicao", "priority", "matriz_codigo"]
+
+    def __str__(self):
+        matrix_name = self.matrix_catalog.nome_exibicao if self.matrix_catalog else (self.matriz_codigo or 'Geral')
+        return f"Meta {self.date} [{self.shift.nome if self.shift else 'Geral'}]: {matrix_name} = {self.planned_quantity} pneu(s)"
+
+
+
 
