@@ -39,6 +39,8 @@ from production.services import (
     ProductionStateService,
     get_active_shift,
     normalize_matrix_value,
+    compose_bladder_lot,
+    resolve_matrix_product_display,
 )
 from production.management.commands.collect_production_scada import CrossProcessLock
 from production.forms import ProductionTargetForm, ProductionMatrixCatalogForm
@@ -1003,33 +1005,33 @@ class Spec05BEnrichmentAndAlertTestCase(TestCase):
         self.assertIsNone(cav.xid_lote_bladder)
 
     def test_product_and_lote_fallback_rules(self):
-        """Testa todas as 4 regras de fallback para concatenação visual de Produto e Lote do Bladder."""
+        """Testa regras para concatenação visual do Lote Completo do Bladder."""
         scada_values = {
-            "DP_CAV1_PROD_NOME": {"str_value": "Pneu 175/70", "value": "Pneu 175/70", "ts": 1000},
-            "DP_CAV1_LOTE": {"str_value": "LOTE-998", "value": "LOTE-998", "ts": 1000},
+            "DP_CAV1_PROD_NOME": {"str_value": "6154", "value": "6154", "ts": 1000},
+            "DP_CAV1_LOTE": {"str_value": "161046", "value": "161046", "ts": 1000},
         }
         cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values)
         c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
         c2 = next(c for c in cavs if c["nome"] == "Cavidade 2")
 
-        # 1. Ambos presentes: "Produto - Lote"
-        self.assertEqual(c1["produto_lote_str"], "Pneu 175/70 - LOTE-998")
+        # 1. Ambos presentes
+        self.assertEqual(c1["produto_lote_str"], "Lote: 6154 - 161046")
 
-        # 2. Somente produto
+        # 2. Somente prefixo
         scada_values_prod_only = {
-            "DP_CAV1_PROD_NOME": {"str_value": "Pneu 175/70", "value": "Pneu 175/70", "ts": 1000},
+            "DP_CAV1_PROD_NOME": {"str_value": "6154", "value": "6154", "ts": 1000},
         }
         cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values_prod_only)
         c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
-        self.assertEqual(c1["produto_lote_str"], "Pneu 175/70")
+        self.assertEqual(c1["produto_lote_str"], "Lote: 6154 - Não informado")
 
-        # 3. Somente lote
+        # 3. Somente número
         scada_values_lote_only = {
-            "DP_CAV1_LOTE": {"str_value": "LOTE-998", "value": "LOTE-998", "ts": 1000},
+            "DP_CAV1_LOTE": {"str_value": "161046", "value": "161046", "ts": 1000},
         }
         cavs, _, _, _, _ = ProductionStateService.build_cavities_data(self.config1, scada_values_lote_only)
         c1 = next(c for c in cavs if c["nome"] == "Cavidade 1")
-        self.assertEqual(c1["produto_lote_str"], "Lote: LOTE-998")
+        self.assertEqual(c1["produto_lote_str"], "Lote: Não informado - 161046")
 
         # 4. Nenhum presente
         self.assertEqual(c2["produto_lote_str"], "Não informado")
@@ -3138,6 +3140,101 @@ class ProductionDowntimeHistoryEnhancementTests(TestCase):
         response = self.client.get(url)
         # Redireciona para o login se não autenticado
         self.assertNotEqual(response.status_code, 200)
+
+
+class ProductionSemanticCorrectionTest(TestCase):
+    def setUp(self):
+        self.setor = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 01", setor=self.setor)
+        self.config = ProductionMachineConfig.objects.create(machine=self.machine)
+        self.cavity = ProductionCavityConfig.objects.create(
+            machine_config=self.config,
+            nome="Cavidade A",
+            ordem=1,
+            xid_matriz="XID_MATRIZ_TEST",
+            xid_produto="XID_PROD_PREFIX",
+            xid_lote_bladder="XID_LOTE_NUM",
+            xid_producao="XID_PROD_COUNT",
+        )
+        self.user = User.objects.create_user("testuser_semantic", "test@example.com", "password", is_staff=True)
+
+    def test_compose_bladder_lot_full(self):
+        res = compose_bladder_lot("6154", "161046")
+        self.assertEqual(res["display"], "6154 - 161046")
+        self.assertTrue(res["is_complete"])
+        self.assertFalse(res["is_incomplete"])
+        self.assertEqual(res["status"], "COMPLETO")
+
+    def test_compose_bladder_lot_prefix_only(self):
+        res = compose_bladder_lot("6154", None)
+        self.assertEqual(res["display"], "6154 - Não informado")
+        self.assertFalse(res["is_complete"])
+        self.assertTrue(res["is_incomplete"])
+        self.assertEqual(res["status"], "INCOMPLETO")
+
+    def test_compose_bladder_lot_number_only(self):
+        res = compose_bladder_lot("", "161046")
+        self.assertEqual(res["display"], "Não informado - 161046")
+        self.assertFalse(res["is_complete"])
+        self.assertTrue(res["is_incomplete"])
+        self.assertEqual(res["status"], "INCOMPLETO")
+
+    def test_compose_bladder_lot_both_missing(self):
+        res = compose_bladder_lot(None, "")
+        self.assertEqual(res["display"], "Não informado")
+        self.assertFalse(res["is_complete"])
+        self.assertFalse(res["is_incomplete"])
+        self.assertEqual(res["status"], "AUSENTE")
+
+    def test_compose_bladder_lot_preserves_leading_zeros(self):
+        res = compose_bladder_lot("06154", "00123")
+        self.assertEqual(res["display"], "06154 - 00123")
+        self.assertTrue(res["is_complete"])
+
+    def test_resolve_matrix_product_display(self):
+        ProductionMatrixCatalog.objects.create(
+            codigo_scada=3,
+            codigo="3",
+            nome_scada="PNEUS HOPPER 90/90-18",
+            nome_exibicao="PNEUS HOPPER 90/90-18",
+            produto="PNEUS HOPPER 90/90-18"
+        )
+        res_valid = resolve_matrix_product_display("3")
+        self.assertEqual(res_valid["display"], "PNEUS HOPPER 90/90-18")
+        self.assertTrue(res_valid["matrix_identified"])
+
+        res_unregistered = resolve_matrix_product_display("99")
+        self.assertEqual(res_unregistered["display"], "Código não cadastrado: 99")
+        self.assertFalse(res_unregistered["matrix_identified"])
+
+        res_missing = resolve_matrix_product_display("")
+        self.assertEqual(res_missing["display"], "Não informado")
+        self.assertFalse(res_missing["matrix_identified"])
+
+    def test_cavity_detail_view_semantic_rendering(self):
+        ProductionMatrixCatalog.objects.create(
+            codigo_scada=3,
+            codigo="3",
+            nome_scada="PNEUS HOPPER 90/90-18",
+            nome_exibicao="PNEUS HOPPER 90/90-18"
+        )
+        self.client.force_login(self.user)
+        url = reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity.id})
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        self.assertNotIn("Produto Em Furo", content)
+        self.assertIn("Matriz / Produto em Produção", content)
+        self.assertIn("Lote Completo do Bladder", content)
+
+    def test_verbose_names_and_help_texts(self):
+        field_matriz = ProductionCavityConfig._meta.get_field("xid_matriz")
+        field_produto = ProductionCavityConfig._meta.get_field("xid_produto")
+        field_lote = ProductionCavityConfig._meta.get_field("xid_lote_bladder")
+
+        self.assertEqual(field_matriz.verbose_name, "XID Matriz")
+        self.assertEqual(field_produto.verbose_name, "XID Prefixo do Lote do Bladder")
+        self.assertEqual(field_lote.verbose_name, "XID Número do Lote do Bladder")
 
 
 

@@ -152,6 +152,125 @@ def normalize_matrix_value(raw_val: Any) -> str:
     return s_val
 
 
+def compose_bladder_lot(prefix: Any, number: Any) -> Dict[str, Any]:
+    """
+    Combina o prefixo (1ª parte / xid_produto) e o número (2ª parte / xid_lote_bladder)
+    para apresentar o lote completo do bladder de forma segura.
+
+    Exemplo completo: prefix='6154', number='161046' -> '6154 - 161046'
+    Exemplo lote incompleto 1: prefix='6154', number='' -> '6154 - Não informado'
+    Exemplo lote incompleto 2: prefix='', number='161046' -> 'Não informado - 161046'
+    Exemplo ausente: prefix='', number='' -> 'Não informado'
+    """
+    def _clean(val: Any) -> str:
+        if val is None:
+            return ""
+        s = str(val).strip()
+        if not s or s.lower() in ("none", "null", "n/a", "-", "não informado", "não informada"):
+            return ""
+        try:
+            if "." in s:
+                f_val = float(s)
+                if f_val.is_integer():
+                    return str(int(f_val))
+        except (ValueError, TypeError):
+            pass
+        return s
+
+    p_clean = _clean(prefix)
+    n_clean = _clean(number)
+
+    if p_clean and n_clean:
+        return {
+            "display": f"{p_clean} - {n_clean}",
+            "prefix": p_clean,
+            "number": n_clean,
+            "is_complete": True,
+            "is_incomplete": False,
+            "status": "COMPLETO",
+        }
+    elif p_clean and not n_clean:
+        return {
+            "display": f"{p_clean} - Não informado",
+            "prefix": p_clean,
+            "number": "",
+            "is_complete": False,
+            "is_incomplete": True,
+            "status": "INCOMPLETO",
+        }
+    elif not p_clean and n_clean:
+        return {
+            "display": f"Não informado - {n_clean}",
+            "prefix": "",
+            "number": n_clean,
+            "is_complete": False,
+            "is_incomplete": True,
+            "status": "INCOMPLETO",
+        }
+    else:
+        return {
+            "display": "Não informado",
+            "prefix": "",
+            "number": "",
+            "is_complete": False,
+            "is_incomplete": False,
+            "status": "AUSENTE",
+        }
+
+
+def resolve_matrix_product_display(raw_matriz: Any) -> Dict[str, Any]:
+    """
+    Traduz o código da matriz lido via SCADA (xid_matriz) utilizando o catálogo canônico
+    dos 43 modelos do SCADA (ProductionMatrixCatalog).
+    """
+    if raw_matriz is None:
+        return {
+            "display": "Não informado",
+            "raw_code": "",
+            "catalog_obj": None,
+            "matrix_identified": False,
+            "is_unregistered": False,
+        }
+    s_val = str(raw_matriz).strip()
+    if not s_val or s_val.lower() in ("none", "null", "n/a", "não informada", "não informado"):
+        return {
+            "display": "Não informado",
+            "raw_code": "",
+            "catalog_obj": None,
+            "matrix_identified": False,
+            "is_unregistered": False,
+        }
+
+    catalog_obj = None
+    if s_val.isdigit():
+        catalog_obj = ProductionMatrixCatalog.objects.filter(codigo_scada=int(s_val)).first()
+    if not catalog_obj:
+        catalog_obj = ProductionMatrixCatalog.objects.filter(
+            Q(codigo__iexact=s_val) |
+            Q(nome_scada__iexact=s_val) |
+            Q(nome_exibicao__iexact=s_val) |
+            Q(produto__iexact=s_val)
+        ).first()
+
+    if catalog_obj:
+        display_name = catalog_obj.nome_exibicao or catalog_obj.nome_scada or catalog_obj.produto or catalog_obj.descricao
+        return {
+            "display": display_name,
+            "raw_code": s_val,
+            "catalog_obj": catalog_obj,
+            "matrix_identified": True,
+            "is_unregistered": False,
+        }
+    else:
+        return {
+            "display": f"Código não cadastrado: {s_val}",
+            "raw_code": s_val,
+            "catalog_obj": None,
+            "matrix_identified": False,
+            "is_unregistered": True,
+        }
+
+
 
 class ScadaReaderService:
     """
@@ -680,15 +799,21 @@ class ProductionStateService:
             percent_turno = round((c_prod_turno / c_meta_turno) * 100) if c_meta_turno > 0 else 0
             percent_turno_bar = min(100, max(0, percent_turno)) if c_meta_turno > 0 else 0
 
-            # Regras de fallback para produto e lote:
-            if prod_val and lote_val:
-                produto_lote_str = f"{prod_val} - {lote_val}"
-            elif prod_val:
-                produto_lote_str = prod_val
-            elif lote_val:
-                produto_lote_str = f"Lote: {lote_val}"
+            # Regras de composição para matriz/produto e lote do bladder:
+            bladder_lot_info = compose_bladder_lot(prod_val, lote_val)
+            mat_info = resolve_matrix_product_display(matriz_val)
+
+            if mat_info["matrix_identified"]:
+                model_name = mat_info["display"]
+                if bladder_lot_info["status"] != "AUSENTE":
+                    produto_lote_str = f"{model_name} | Lote: {bladder_lot_info['display']}"
+                else:
+                    produto_lote_str = model_name
             else:
-                produto_lote_str = "Não informado"
+                if bladder_lot_info["status"] != "AUSENTE":
+                    produto_lote_str = f"Lote: {bladder_lot_info['display']}"
+                else:
+                    produto_lote_str = "Não informado"
 
             # Status e motivo da cavidade inferidos via SPEC 05C
             c_status_code, c_status_label, c_badge_class, c_motivo_exibido = cls.resolve_cavity_status_and_reason(cav, scada_values)
@@ -802,7 +927,12 @@ class ProductionStateService:
         # Detecção de Reset ou Troca de Insumos (Matriz / Bladder)
         is_counter_reset = (c_prod < last_counter)
         is_matrix_changed = bool(active_cycle and active_cycle.matriz and mat_val and mat_val != active_cycle.matriz)
-        is_bladder_changed = bool(active_cycle and active_cycle.lote_bladder and lote_val and lote_val != active_cycle.lote_bladder)
+        is_bladder_changed = bool(
+            active_cycle and (
+                (active_cycle.lote_bladder and lote_val and lote_val != active_cycle.lote_bladder) or
+                (active_cycle.produto and prod_val and prod_val != active_cycle.produto)
+            )
+        )
 
         if is_counter_reset or is_matrix_changed or is_bladder_changed:
             close_reason = "TROCA_MATRIZ" if is_matrix_changed else ("TROCA_BLADDER" if is_bladder_changed else "RESET_CONTADOR")
@@ -2141,13 +2271,16 @@ class ProductionStateService:
         scada_values = cls.process_scada_cycle()
 
         mat_entry = scada_values.get(cavity.xid_matriz) if cavity.xid_matriz else None
-        matriz_val = str(mat_entry.get("str_value", mat_entry.get("value", ""))).strip() if mat_entry else "Não informada"
+        matriz_val = str(mat_entry.get("str_value", mat_entry.get("value", ""))).strip() if mat_entry else ""
 
         prod_entry = scada_values.get(cavity.xid_produto) if cavity.xid_produto else None
-        prod_val = str(prod_entry.get("str_value", prod_entry.get("value", ""))).strip() if prod_entry else "Não informado"
+        prod_val = str(prod_entry.get("str_value", prod_entry.get("value", ""))).strip() if prod_entry else ""
 
         lote_entry = scada_values.get(cavity.xid_lote_bladder) if cavity.xid_lote_bladder else None
-        lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else "Não informado"
+        lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else ""
+
+        bladder_lot_info = compose_bladder_lot(prod_val, lote_val)
+        matrix_info = resolve_matrix_product_display(matriz_val)
 
         # Produção e Limites conforme SPEC 07A
         c_prod_entry = scada_values.get(cavity.xid_producao) if cavity.xid_producao else None
@@ -2336,17 +2469,23 @@ class ProductionStateService:
             "inicio_parada_str": inicio_parada.strftime("%d/%m/%Y %H:%M:%S") if inicio_parada else "N/A",
             "tempo_parado_str": tempo_parado_str,
             "motivo_parada": c_motivo or "Nenhum motivo de parada ativo",
-            "produto": prod_val,
-            "matriz": matriz_val,
-            "lote_bladder": lote_val,
+            "produto": prod_val or "Não informado",
+            "matriz": matriz_val or "Não informada",
+            "lote_bladder": lote_val or "Não informado",
+            "matriz_produto_display": matrix_info["display"],
+            "lote_completo_bladder": bladder_lot_info["display"],
+            "lote_bladder_info": bladder_lot_info,
+            "matrix_info": matrix_info,
+            "prefixo_lote": bladder_lot_info["prefix"],
+            "numero_lote": bladder_lot_info["number"],
             "limite_bladder_scada": limite_bladder_scada,
             "limite_bladder_str": limite_bladder_str,
             "contador_ciclo_scada": contador_ciclo_scada,
             "producao_acumulada_turno": producao_acumulada_turno,
             "meta_diaria": c_meta_diaria,
             "meta_turno": c_meta_turno,
-            "matrix_identified": matrix_identified,
-            "matrix_catalog_obj": matrix_catalog_obj,
+            "matrix_identified": matrix_info["matrix_identified"],
+            "matrix_catalog_obj": matrix_info["catalog_obj"],
             "target_obj": target_obj,
             "meta_total_modelo": meta_total_modelo,
             "producao_total_modelo": producao_total_modelo,

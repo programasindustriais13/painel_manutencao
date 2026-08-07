@@ -150,19 +150,22 @@ class ProductionCavityConfig(models.Model):
         max_length=100,
         blank=True,
         null=True,
-        verbose_name="XID Matriz"
+        verbose_name="XID Matriz",
+        help_text="Código da matriz/produto atualmente instalado, traduzido pelo catálogo canônico do SCADA."
     )
     xid_produto = models.CharField(
         max_length=100,
         blank=True,
         null=True,
-        verbose_name="XID Produto"
+        verbose_name="XID Prefixo do Lote do Bladder",
+        help_text="Primeira parte do lote completo. Exemplo: no lote 6154 - 161046, este XID fornece 6154."
     )
     xid_lote_bladder = models.CharField(
         max_length=100,
         blank=True,
         null=True,
-        verbose_name="XID Lote do Bladder"
+        verbose_name="XID Número do Lote do Bladder",
+        help_text="Segunda parte do lote completo. Exemplo: no lote 6154 - 161046, este XID fornece 161046."
     )
     xid_producao = models.CharField(
         max_length=100,

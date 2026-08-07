@@ -61,26 +61,25 @@
         </div>
     </div>
 
-    <!-- Data Operacional & Especificação (Atributos 7, 8, 9) -->
+    <!-- Data Operacional & Especificação (Matriz/Produto & Lote Completo do Bladder) -->
     <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
         <h5 class="fw-bold mb-3 text-dark"><i class="bi bi-box-seam me-2 text-primary"></i>Especificação Operacional da Cavidade</h5>
         <div class="row g-3">
-            <div class="col-12 col-md-4">
-                <div class="p-3 border rounded bg-light">
-                    <span class="d-block text-muted small mb-1"><i class="bi bi-tag me-1"></i>Produto Em Furo</span>
-                    <strong class="text-dark fs-6">{{ produto }}</strong>
+            <div class="col-12 col-md-6">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-bounding-box me-1"></i>Matriz / Produto em Produção</span>
+                    <strong class="text-dark fs-6 d-block mt-1">{{ matriz_produto_display }}</strong>
                 </div>
             </div>
-            <div class="col-12 col-md-4">
-                <div class="p-3 border rounded bg-light">
-                    <span class="d-block text-muted small mb-1"><i class="bi bi-bounding-box me-1"></i>Matriz Instalada</span>
-                    <strong class="text-dark fs-6">{{ matriz }}</strong>
-                </div>
-            </div>
-            <div class="col-12 col-md-4">
-                <div class="p-3 border rounded bg-light">
-                    <span class="d-block text-muted small mb-1"><i class="bi bi-layers me-1"></i>Lote do Bladder</span>
-                    <strong class="text-dark fs-6">{{ lote_bladder }}</strong>
+            <div class="col-12 col-md-6">
+                <div class="p-3 border rounded bg-light h-100">
+                    <span class="d-block text-muted small mb-1"><i class="bi bi-layers me-1"></i>Lote Completo do Bladder</span>
+                    <div class="d-flex align-items-center gap-2 mt-1">
+                        <strong class="text-dark fs-6">{{ lote_completo_bladder }}</strong>
+                        {% if lote_bladder_info.is_incomplete %}
+                        <span class="badge bg-warning text-dark fs-8 rounded-pill px-2 py-1"><i class="bi bi-exclamation-triangle me-1"></i>Lote incompleto</span>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
         </div>

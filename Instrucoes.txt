@@ -2482,8 +2482,54 @@ Resumo dos Recursos Implementados:
    - Links de navegação preservam a query string (`inicio`, `fim`, etc.).
 
 
+17. CORREÇÃO SEMÂNTICA DO PRODUTO/MATRIZ E COMPOSIÇÃO DO LOTE COMPLETO DO BLADDER (2026-08-06)
+--------------------------------------------------------------------------------
+Objetivo:
+Corrigir a interpretação semântica e a apresentação dos dados operacionais da cavidade na fábrica, eliminando a nomenclatura incorreta "Produto Em Furo", traduzindo a Matriz/Produto em produção através do catálogo canônico dos 43 modelos do SCADA (ProductionMatrixCatalog via xid_matriz) e compondo o Lote Completo do Bladder unindo xid_produto (prefixo) e xid_lote_bladder (número) com fallbacks claros e indicação visual para lotes incompletos.
 
+SPEC Criada:
+- regras_programacao/SPEC_PRODUCAO_CORRECAO_SEMANTICA_MATRIZ_E_LOTE_BLADDER.md
 
+Migrations Criadas e Aplicadas:
+- production/migrations/0017_alter_productioncavityconfig_xid_lote_bladder_and_more.py (Alteração de verbose_name e help_text sem alteração de colunas físicas no banco default)
 
+Arquivos Modificados:
+- production/models.py (verbose_name e help_text dos campos xid_matriz, xid_produto e xid_lote_bladder em ProductionCavityConfig)
+- production/admin.py (Ajuste dos fieldsets e representação no Admin Django)
+- production/services.py (Implementação dos helpers compose_bladder_lot e resolve_matrix_product_display, atualização de get_cavity_detail_context, build_cavities_data e detecção de encerramento de ciclo no ProductionCycle)
+- production/templates/production/cavity_detail.html (Substituição dos 3 cards anteriores por 2 cards principais: Card 1 "Matriz / Produto em Produção" e Card 2 "Lote Completo do Bladder")
+- production/tests.py (Atualização dos testes legados e inclusão da classe ProductionSemanticCorrectionTest com 8 novos testes, totalizando 134 testes 100% OK)
+- Instrucoes.txt
 
-
+Detalhamento das Regras Semânticas e de Negócio:
+1. Significado dos XIDs do SCADA:
+   - xid_matriz: Código numérico/texto enviado pelo SCADA traduzido pelo catálogo canônico dos 43 modelos (ProductionMatrixCatalog).
+   - xid_produto: Primeira parte (prefixo) do lote do bladder (ex: 6154).
+   - xid_lote_bladder: Segunda parte (número) do lote do bladder (ex: 161046).
+2. Composição do Lote Completo do Bladder:
+   - Duas partes disponíveis: "6154 - 161046" (is_complete=True, status="COMPLETO")
+   - Prefixo disponível, número ausente: "6154 - Não informado" (is_incomplete=True) + Badge "Lote incompleto"
+   - Prefixo ausente, número disponível: "Não informado - 161046" (is_incomplete=True) + Badge "Lote incompleto"
+   - Duas partes ausentes: "Não informado" (status="AUSENTE")
+   - Zeros à esquerda e formatações textuais preservados sem conversão destrutiva para inteiro.
+3. Relação entre Matriz e Produto em Produção:
+   - Catálogo canônico dos 43 modelos mapeados em ProductionMatrixCatalog (codigo_scada de 1 a 43).
+   - Código lido presente no catálogo -> exibe nome canônico (ex: PNEUS HOPPER 90/90-18).
+   - Código lido ausente no catálogo -> exibe "Código não cadastrado: X".
+   - Leitura ausente/vazia -> exibe "Não informado".
+4. Preservação Histórica e Snapshots (ProductionCycle):
+   - Cada ciclo histórico preserva a matriz, a primeira parte (produto/prefixo) e a segunda parte (lote_bladder) coletadas no momento da produção.
+   - Qualquer alteração na matriz ou em qualquer uma das partes do lote encerra o ciclo atual e inicia um novo ciclo.
+5. Garantia de Segurança no Banco SCADA:
+   - Nenhuma escrita realizada no banco 'scada'. Router Django bloqueia migrações e escritas. Compatibilidade mantida entre SQLite (dev) e MySQL (prod).
+
+Comandos Executados Localmente:
+- python manage.py makemigrations production
+- python manage.py migrate
+- python manage.py check
+- python manage.py test production
+
+Comandos Necessários no Servidor (Deploy):
+- git pull origin main
+- python manage.py migrate production
+- python manage.py check
