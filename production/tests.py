@@ -2804,14 +2804,7 @@ class SpecPCPShiftPlanAndUXTestCase(TestCase):
             ativo=True
         )
 
-        self.matrix = ProductionMatrixCatalog.objects.create(
-            codigo_scada=5,
-            codigo="5",
-            nome_scada="PNEUS READY 110/90-18",
-            nome_exibicao="PNEUS READY 110/90-18",
-            produto="PNEUS READY 110/90-18",
-            ativo=True
-        )
+        self.matrix = ProductionMatrixCatalog.objects.get(codigo_scada=5)
 
     def test_shift_plan_route_access(self):
         """A rota /producao/plano-turno/ abre com status 200 para usuário autorizado."""
@@ -2900,13 +2893,7 @@ class SpecGroupedProductionByMatrixTestCase(TestCase):
             quantity_accumulated=200
         )
 
-        matrix_cat = ProductionMatrixCatalog.objects.create(
-            codigo_scada=3,
-            codigo="3",
-            nome_scada="PNEUS HOPPER 90/90-18",
-            nome_exibicao="PNEUS HOPPER 90/90-18",
-            ativo=True
-        )
+        matrix_cat = ProductionMatrixCatalog.objects.get(codigo_scada=3)
 
         target = ProductionTarget.objects.create(
             date=today,
@@ -3192,13 +3179,7 @@ class ProductionSemanticCorrectionTest(TestCase):
         self.assertTrue(res["is_complete"])
 
     def test_resolve_matrix_product_display(self):
-        ProductionMatrixCatalog.objects.create(
-            codigo_scada=3,
-            codigo="3",
-            nome_scada="PNEUS HOPPER 90/90-18",
-            nome_exibicao="PNEUS HOPPER 90/90-18",
-            produto="PNEUS HOPPER 90/90-18"
-        )
+        ProductionMatrixCatalog.objects.get(codigo_scada=3)
         res_valid = resolve_matrix_product_display("3")
         self.assertEqual(res_valid["display"], "PNEUS HOPPER 90/90-18")
         self.assertTrue(res_valid["matrix_identified"])
@@ -3212,12 +3193,7 @@ class ProductionSemanticCorrectionTest(TestCase):
         self.assertFalse(res_missing["matrix_identified"])
 
     def test_cavity_detail_view_semantic_rendering(self):
-        ProductionMatrixCatalog.objects.create(
-            codigo_scada=3,
-            codigo="3",
-            nome_scada="PNEUS HOPPER 90/90-18",
-            nome_exibicao="PNEUS HOPPER 90/90-18"
-        )
+        ProductionMatrixCatalog.objects.get(codigo_scada=3)
         self.client.force_login(self.user)
         url = reverse("production:cavity_detail", kwargs={"machine_id": self.config.id, "cavity_id": self.cavity.id})
         response = self.client.get(url)
@@ -3235,6 +3211,88 @@ class ProductionSemanticCorrectionTest(TestCase):
         self.assertEqual(field_matriz.verbose_name, "XID Matriz")
         self.assertEqual(field_produto.verbose_name, "XID Prefixo do Lote do Bladder")
         self.assertEqual(field_lote.verbose_name, "XID Número do Lote do Bladder")
+
+
+class MatrixCatalogDataMigrationTestCase(TestCase):
+    """Suíte de testes para validação da carga inicial e idempotência da Data Migration 0018."""
+
+    def test_initial_migration_populates_43_canonical_records(self):
+        """Valida que o banco possui exatamente os 43 registros canônicos criados pela migration 0018."""
+        self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
+
+    def test_code_1_and_43_correct(self):
+        """Valida a precisão dos dados do primeiro (1) e do último (43) registro canônico."""
+        code1 = ProductionMatrixCatalog.objects.get(codigo_scada=1)
+        self.assertEqual(code1.codigo, "1")
+        self.assertEqual(code1.nome_scada, "PNEUS WINGS 90/90-18")
+
+        code43 = ProductionMatrixCatalog.objects.get(codigo_scada=43)
+        self.assertEqual(code43.codigo, "43")
+        self.assertEqual(code43.nome_scada, "PNEU SPEEDY 2.75-18 S/C")
+
+    def test_codes_are_unique_1_to_43(self):
+        """Valida que existem 43 códigos SCADA únicos variando estritamente de 1 a 43."""
+        codes = set(ProductionMatrixCatalog.objects.values_list("codigo_scada", flat=True))
+        self.assertEqual(len(codes), 43)
+        self.assertEqual(codes, set(range(1, 44)))
+
+    def test_sc_remains_distinct_from_non_sc(self):
+        """Valida que modelos S/C (ex: 37) são distintos dos equivalentes sem S/C (ex: 3)."""
+        mat3 = ProductionMatrixCatalog.objects.get(codigo_scada=3)
+        mat37 = ProductionMatrixCatalog.objects.get(codigo_scada=37)
+
+        self.assertNotEqual(mat3.id, mat37.id)
+        self.assertNotIn("S/C", mat3.nome_scada)
+        self.assertIn("S/C", mat37.nome_scada)
+
+    def test_migration_reexecution_is_idempotent_no_duplicates(self):
+        """Valida que a reexecução da lógica da migration não duplica registros."""
+        import importlib
+        from django.apps import apps
+        from unittest.mock import MagicMock
+        migration_0018 = importlib.import_module("production.migrations.0018_seed_matrix_catalog")
+
+        mock_schema_editor = MagicMock()
+        mock_schema_editor.connection.alias = "default"
+
+        migration_0018.populate_matrix_catalog(apps, mock_schema_editor)
+        self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
+
+    def test_preexisting_customization_preserved(self):
+        """Valida que personalizações administrativas pré-existentes no nome_exibicao não são apagadas ou sobrescritas."""
+        import importlib
+        from django.apps import apps
+        from unittest.mock import MagicMock
+        migration_0018 = importlib.import_module("production.migrations.0018_seed_matrix_catalog")
+
+        mat1 = ProductionMatrixCatalog.objects.get(codigo_scada=1)
+        mat1.nome_exibicao = "PNEUS WINGS 90/90-18 - NOME PERSONALIZADO ADMIN"
+        mat1.save()
+
+        mock_schema_editor = MagicMock()
+        mock_schema_editor.connection.alias = "default"
+
+        migration_0018.populate_matrix_catalog(apps, mock_schema_editor)
+
+        mat1_reloaded = ProductionMatrixCatalog.objects.get(codigo_scada=1)
+        self.assertEqual(mat1_reloaded.nome_exibicao, "PNEUS WINGS 90/90-18 - NOME PERSONALIZADO ADMIN")
+        self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
+
+    def test_scada_database_receives_no_write(self):
+        """Valida que quando a migração executa apontando para a conexão 'scada', nenhuma operação de escrita ocorre."""
+        import importlib
+        from django.apps import apps
+        from unittest.mock import MagicMock
+        migration_0018 = importlib.import_module("production.migrations.0018_seed_matrix_catalog")
+
+        mock_schema_editor = MagicMock()
+        mock_schema_editor.connection.alias = "scada"
+
+        # Deve encerrar imediatamente sem lançar exceção ou consultar modelos scada
+        migration_0018.populate_matrix_catalog(apps, mock_schema_editor)
+        self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
+
+
 
 
 

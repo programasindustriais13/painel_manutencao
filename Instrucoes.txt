@@ -2532,4 +2532,30 @@ Comandos Executados Localmente:
 Comandos Necessários no Servidor (Deploy):
 - git pull origin main
 - python manage.py migrate production
-- python manage.py check
+- python manage.py check
+
+
+23. CARGA INICIAL IDEMPOTENTE DO CATÁLOGO CANÔNICO DE MATRIZES SCADA (2026-08-10)
+--------------------------------------------------------------------------------
+Resolução do problema em produção onde ProductionMatrixCatalog.objects.count() == 0.
+Criada nova Data Migration (RunPython) para inicializar automaticamente o catálogo
+com exatamente os 43 códigos oficiais do SCADA sem dependência de comandos manuais.
+
+Arquivos criados/modificados:
+- regras_programacao/SPEC_CARGA_INICIAL_CATALOGO_MATRIZES.md [NOVO]
+- production/migrations/0018_seed_matrix_catalog.py [NOVO]
+- production/tests.py (Nova classe MatrixCatalogDataMigrationTestCase)
+- Instrucoes.txt
+
+Detalhamento Técnico:
+1. Chave Canônica e Mapeamento:
+   - A migration 0018 itera pelos 43 códigos numéricos (1 a 43) oficiais do SCADA.
+   - Associa codigo_scada=code e codigo=str(code) idempotentemente.
+2. Preservação de Dados e Nomes Personalizados:
+   - Se o registro não existe, é criado com nome_scada, nome_exibicao, produto e descricao.
+   - Se já existe, nome_exibicao personalizado por administradores NÃO é sobrescrito ou apagado.
+   - Modelos com "S/C" (ex: código 37) permanecem distintos dos equivalentes sem "S/C" (ex: código 3).
+3. Roteamento Multi-banco e Compatibilidade:
+   - Usa schema_editor.connection.alias. Se a migration rodar na conexão 'scada', encerra sem nenhuma escrita.
+   - Compatível com SQLite (desenvolvimento) e MySQL (produção).
+
