@@ -3293,6 +3293,150 @@ class MatrixCatalogDataMigrationTestCase(TestCase):
         self.assertEqual(ProductionMatrixCatalog.objects.count(), 43)
 
 
+class ProductionMatrixUXImprovementTests(TestCase):
+    """
+    Testes de regressão e aceitação para as melhorias de UX do módulo de Produção:
+    1. Histórico de Matrizes exibindo o nome canônico em vez de código numérico (4, 29, etc.).
+    2. Resolução segura de fallback para códigos não cadastrados sem erro 500.
+    3. Cards de cavidade com Matriz (Linha 1) e Lote (Linha 2) em blocos separados.
+    """
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from maintenance.models import Machine, Sector
+        from production.models import (
+            ProductionMachineConfig,
+            ProductionCavityConfig,
+            ProductionCavityMatrixHistory,
+            ProductionMatrixCatalog,
+        )
+
+        self.user = User.objects.create_user("ux_lider", "ux@test.com", "pwd123", is_staff=True)
+        self.client.login(username="ux_lider", password="pwd123")
+
+        self.sector = Sector.objects.create(nome="Produção UX Test")
+        self.machine = Machine.objects.create(nome="PRENSA BOM 01", setor=self.sector)
+        self.m_cfg = ProductionMachineConfig.objects.create(
+            machine=self.machine,
+            ordem_exibicao=1
+        )
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.m_cfg,
+            nome="CAVIDADE 01",
+            xid_matriz="DP_P01_CAV1_MATRIZ",
+            xid_produto="DP_P01_CAV1_PROD",
+            xid_lote_bladder="DP_P01_CAV1_LOTE",
+            ordem=1
+        )
+
+        # Garantir catálogos canônicos 4 e 29 no banco
+        self.cat4, _ = ProductionMatrixCatalog.objects.get_or_create(
+            codigo_scada=4,
+            defaults={"codigo": "4", "nome_exibicao": "PNEUS HOPPER 2.75-18", "produto": "PNEUS HOPPER 2.75-18"}
+        )
+        self.cat29, _ = ProductionMatrixCatalog.objects.get_or_create(
+            codigo_scada=29,
+            defaults={"codigo": "29", "nome_exibicao": "PNEU READY 100/90-18", "produto": "PNEU READY 100/90-18"}
+        )
+
+    def test_matrix_code_4_and_29_resolution_in_history(self):
+        from production.models import ProductionCavityMatrixHistory
+        from production.services import ProductionStateService
+
+        now = timezone.now()
+        h1 = ProductionCavityMatrixHistory.objects.create(
+            cavity_config=self.cav1,
+            matrix_value="4",
+            started_at=now - timezone.timedelta(hours=2),
+            ended_at=now - timezone.timedelta(hours=1)
+        )
+        h2 = ProductionCavityMatrixHistory.objects.create(
+            cavity_config=self.cav1,
+            matrix_value="29",
+            started_at=now - timezone.timedelta(hours=1),
+            ended_at=None
+        )
+
+        dash_state = ProductionStateService.get_dashboard_state(scada_values={})
+        history = dash_state["matrix_history"]
+        self.assertTrue(len(history) >= 2)
+
+        item29 = next((h for h in history if h["id"] == h2.id), None)
+        item4 = next((h for h in history if h["id"] == h1.id), None)
+
+        self.assertIsNotNone(item29)
+        self.assertIsNotNone(item4)
+
+        # Deve exibir o nome canônico e NÃO apenas o código bruto ("4" ou "29")
+        self.assertIn(self.cat29.nome_exibicao, item29["matriz_value"])
+        self.assertNotEqual(item29["matriz_value"], "29")
+
+        self.assertIn(self.cat4.nome_exibicao, item4["matriz_value"])
+        self.assertNotEqual(item4["matriz_value"], "4")
+
+    def test_unregistered_matrix_code_fallback_does_not_error(self):
+        from production.models import ProductionCavityMatrixHistory
+        from production.services import ProductionStateService
+
+        now = timezone.now()
+        h_unregistered = ProductionCavityMatrixHistory.objects.create(
+            cavity_config=self.cav1,
+            matrix_value="99",
+            started_at=now - timezone.timedelta(minutes=30),
+            ended_at=None
+        )
+
+        dash_state = ProductionStateService.get_dashboard_state(scada_values={})
+        history = dash_state["matrix_history"]
+        item99 = next((h for h in history if h["id"] == h_unregistered.id), None)
+
+        self.assertIsNotNone(item99)
+        self.assertIn("99", item99["matriz_value"])
+        self.assertIn("Código não cadastrado", item99["matriz_value"])
+
+    def test_card_cavity_structure_has_separated_matriz_and_lote(self):
+        from production.services import ProductionStateService
+
+        scada_values = {
+            "DP_P01_CAV1_MATRIZ": {"value": 4, "str_value": "4"},
+            "DP_P01_CAV1_PROD": {"value": "6154", "str_value": "6154"},
+            "DP_P01_CAV1_LOTE": {"value": "161035", "str_value": "161035"},
+        }
+        dash_state = ProductionStateService.get_dashboard_state(scada_values=scada_values)
+        machines = dash_state["machines"]
+        self.assertTrue(len(machines) >= 1)
+
+        m0 = next((m for m in machines if m["id"] == self.m_cfg.id), None)
+        self.assertIsNotNone(m0)
+        cav0 = next((c for c in m0["cavidades"] if c["id"] == self.cav1.id), None)
+        self.assertIsNotNone(cav0)
+
+        # Validar novos atributos no dicionário da cavidade
+        self.assertEqual(cav0["matriz_nome"], self.cat4.nome_exibicao)
+        self.assertEqual(cav0["lote_display"], "6154 - 161035")
+
+    def test_dashboard_view_renders_separated_lines_and_canonical_history(self):
+        from production.models import ProductionCavityMatrixHistory
+
+        now = timezone.now()
+        ProductionCavityMatrixHistory.objects.create(
+            cavity_config=self.cav1,
+            matrix_value="29",
+            started_at=now - timezone.timedelta(minutes=15),
+            ended_at=None
+        )
+
+        response = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+
+        # Confirmar nome canônico presente na resposta
+        self.assertIn(self.cat29.nome_exibicao, content)
+        # Confirmar nova estrutura visual dos cards com Matriz e Lote em linhas separadas
+        self.assertIn("Matriz: <strong class=\"text-dark\">", content)
+        self.assertIn("Lote: <strong class=\"text-dark\">", content)
+
+
 
 
 

@@ -2553,9 +2553,32 @@ Detalhamento Técnico:
    - Associa codigo_scada=code e codigo=str(code) idempotentemente.
 2. Preservação de Dados e Nomes Personalizados:
    - Se o registro não existe, é criado com nome_scada, nome_exibicao, produto e descricao.
-   - Se já existe, nome_exibicao personalizado por administradores NÃO é sobrescrito ou apagado.
-   - Modelos com "S/C" (ex: código 37) permanecem distintos dos equivalentes sem "S/C" (ex: código 3).
-3. Roteamento Multi-banco e Compatibilidade:
-   - Usa schema_editor.connection.alias. Se a migration rodar na conexão 'scada', encerra sem nenhuma escrita.
-   - Compatível com SQLite (desenvolvimento) e MySQL (produção).
+
+24. MELHORIA DE UX NO MÓDULO DE PRODUÇÃO - HISTÓRICO DE MATRIZES E CARDS DE CAVIDADES (2026-08-10)
+--------------------------------------------------------------------------------------------------
+Melhoria de usabilidade no módulo de Produção (/producao/ e detalhe da máquina):
+- Exibição do Nome Canônico da Matriz no Histórico de Matrizes em substituição ao código numérico SCADA.
+- Reformulação dos cards das cavidades/prensas separando Matriz (Linha 1) e Lote (Linha 2) em blocos distintos.
+
+Arquivos criados/modificados:
+- regras_programacao/SPEC_PRODUCAO_MELHORIA_UX_HISTORICO_E_CARDS_MATRIZES.md [NOVO]
+- production/services.py (get_dashboard_data: matriz_nome, lote_display, matriz_value via resolve_matrix_product_display)
+- production/templates/production/dashboard.html (Reestruturação dos cards da prensa e histórico)
+- production/templates/production/machine_detail.html (Reestruturação dos cards da prensa no detalhe da máquina)
+- production/tests.py (Nova classe ProductionMatrixUXImprovementTests)
+- implementation_plan.md
+- walkthrough.md [NOVO]
+- Instrucoes.txt
+
+Detalhamento Técnico:
+1. Fonte Única de Verdade (Single Source of Truth):
+   - Reutilizado obrigatoriamente o helper resolve_matrix_product_display em production/services.py.
+   - Nenhuma tabela/dicionário secundário de mapeamento foi criado.
+2. Histórico de Matrizes:
+   - A coluna "Matriz" no Histórico de Matrizes agora resolve rec.matrix_value via resolve_matrix_product_display.
+   - Códigos numéricos brutos como 4 e 29 são exibidos como PNEUS HOPPER 2.75-18 e PNEU READY 100/90-18.
+3. Cards de Cavidades:
+   - Separados em Linha 1 (Matriz com ícone bi-bounding-box e nome amigável) e Linha 2 (Lote com ícone bi-box-seam).
+   - Nomes longos de matriz quebram naturalmente dentro da Linha 1 sem empurrar ou desalinhar o campo Lote.
+
 

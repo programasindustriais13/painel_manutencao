@@ -833,6 +833,8 @@ class ProductionStateService:
                 "status_label": c_status_label,
                 "badge_class": c_badge_class,
                 "matriz": matriz_val if matriz_val else "Não informada",
+                "matriz_nome": mat_info["display"],
+                "lote_display": bladder_lot_info["display"],
                 "produto_val": prod_val,
                 "lote_val": lote_val,
                 "produto_lote_str": produto_lote_str,
@@ -1518,9 +1520,10 @@ class ProductionStateService:
 
                 key = norm_mat if norm_mat else ""
                 if key not in matrix_summary_map:
+                    mat_disp = resolve_matrix_product_display(norm_mat)["display"] if norm_mat else "Matriz não informada"
                     matrix_summary_map[key] = {
                         "matriz": norm_mat,
-                        "label": f"Matriz {norm_mat}" if norm_mat else "Matriz não informada",
+                        "label": mat_disp,
                         "is_informada": bool(norm_mat),
                         "normais": 0,
                         "paradas": 0,
@@ -1596,11 +1599,13 @@ class ProductionStateService:
                 eff_end = min(dur_end, end_dt)
                 dur_secs = max(0, int((eff_end - eff_start).total_seconds()))
 
+                mat_info = resolve_matrix_product_display(rec.matrix_value)
                 matrix_history.append({
                     "id": rec.id,
                     "maquina_nome": rec.cavity_config.machine_config.machine.nome,
                     "cavidade_nome": rec.cavity_config.nome,
-                    "matriz_value": rec.matrix_value,
+                    "matriz_value": mat_info["display"],
+                    "matriz_code": rec.matrix_value,
                     "started_at": rec.started_at,
                     "ended_at": rec.ended_at,
                     "duracao_str": cls.format_elapsed_seconds(dur_secs),

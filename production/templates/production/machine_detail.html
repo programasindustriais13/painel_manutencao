@@ -179,9 +179,11 @@
                         </div>
                         <span class="fw-bold text-primary">{{ cav.producao }} / {{ cav.meta }} ({{ cav.percentual }}%)</span>
                     </div>
-                    <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
-                        <span><i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz }}</strong></span>
-                        <span><i class="bi bi-box-seam me-1"></i><strong class="text-dark">{{ cav.produto_lote_str }}</strong></span>
+                    <div class="text-muted fs-8 mb-1 text-break">
+                        <i class="bi bi-bounding-box me-1"></i>Matriz: <strong class="text-dark">{{ cav.matriz_nome }}</strong>
+                    </div>
+                    <div class="text-muted fs-8 mb-1 text-break">
+                        <i class="bi bi-box-seam me-1"></i>Lote: <strong class="text-dark">{{ cav.lote_display }}</strong>
                     </div>
                     <div class="d-flex justify-content-between align-items-center text-muted fs-8 mb-1">
                         <span><i class="bi bi-shield-check me-1" title="Limite de Vida do Bladder (Scada)"></i>Limite Bladder: <strong class="text-dark">{{ cav.limite_bladder_str }}</strong></span>
