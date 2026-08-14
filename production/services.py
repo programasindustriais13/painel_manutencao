@@ -1,5 +1,6 @@
 import logging
 import time
+from datetime import datetime, date, time as dt_time, timedelta
 from typing import Dict, List, Any, Optional
 from django.db import models, transaction
 from django.db.models import Max, Q
@@ -24,6 +25,11 @@ from .models import (
     ProductionShiftAccumulated,
     ProductionMatrixCatalog,
     ProductionTarget,
+    ProductionMatrixSize,
+    ProductionBladder,
+    ProductionPCPSetting,
+    ProductionPCPPlan,
+    ProductionPCPPlanShiftTarget,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
@@ -2504,3 +2510,426 @@ class ProductionStateService:
             "historico_eventos": historico_eventos,
             "precisao_temporal_notice": "Precisão temporal das anomalias vinculada ao intervalo de leitura do coletor (60s)",
         }
+
+
+class PCPCalculationService:
+    """
+    Motor de Cálculo e Domínio para Programação Industrial PCP.
+    """
+
+    @classmethod
+    def get_pcp_settings(cls) -> Dict[str, Any]:
+        """
+        Resgata as configurações globais de PCP do banco default com fallbacks seguros.
+        """
+        s_interv = ProductionPCPSetting.objects.filter(chave="intervalo_operacional_segundos").first()
+        s_lixo = ProductionPCPSetting.objects.filter(chave="perda_lixo_percentual").first()
+        s_ia = ProductionPCPSetting.objects.filter(chave="perda_ia_percentual").first()
+
+        try:
+            interval_sec = int(s_interv.valor) if s_interv and s_interv.valor else 90
+        except ValueError:
+            interval_sec = 90
+
+        try:
+            lixo_pct = float(s_lixo.valor.replace(",", ".")) if s_lixo and s_lixo.valor else 0.50
+        except ValueError:
+            lixo_pct = 0.50
+
+        try:
+            ia_pct = float(s_ia.valor.replace(",", ".")) if s_ia and s_ia.valor else 1.00
+        except ValueError:
+            ia_pct = 1.00
+
+        return {
+            "intervalo_operacional_segundos": max(0, interval_sec),
+            "perda_lixo_percentual": max(0.0, lixo_pct),
+            "perda_ia_percentual": max(0.0, ia_pct),
+        }
+
+    @classmethod
+    def get_available_cavities_limit(cls) -> int:
+        """
+        Infere o limite máximo de cavidades ativas configuradas no sistema.
+        """
+        count = ProductionCavityConfig.objects.count()
+        return max(4, count)
+
+    @classmethod
+    def get_compatible_bladders(cls, matrix_catalog: ProductionMatrixCatalog) -> Dict[str, Any]:
+        """
+        Identifica os bladders compatíveis pela MEDIDA/TAMANHO da matriz.
+        """
+        if not matrix_catalog:
+            return {"bladders": [], "warning": "Matriz não informada", "auto_selected": None}
+
+        size_obj = matrix_catalog.medida_size
+        size_str = matrix_catalog.medida_str
+
+        qs = ProductionBladder.objects.filter(ativo=True)
+        if size_obj:
+            qs = qs.filter(medidas=size_obj)
+        elif size_str:
+            qs = qs.filter(medidas__medida__iexact=size_str)
+        else:
+            qs = ProductionBladder.objects.none()
+
+        bladders = list(qs.distinct().order_by("codigo_bladder"))
+        warning = None
+        auto_selected = None
+
+        if not bladders:
+            warning = "BLADDER NÃO CADASTRADO PARA ESTA MEDIDA"
+        elif len(bladders) == 1:
+            auto_selected = bladders[0]
+        else:
+            warning = f"ERRO DE CONFIGURAÇÃO: Encontrados {len(bladders)} bladders ativos para a medida '{size_str or size_obj}'. Corrija no Admin."
+            logger.warning(warning)
+            auto_selected = None
+
+        return {
+            "bladders": bladders,
+            "warning": warning,
+            "auto_selected": auto_selected,
+        }
+
+    @classmethod
+    def _build_shift_windows(cls, start_dt, shift_choice, days_ahead=60) -> List[Dict[str, Any]]:
+        """
+        Gera janelas de turno autorizadas (A, B ou Ambos).
+        """
+        from datetime import datetime, time, timedelta
+
+        if timezone.is_naive(start_dt):
+            tz = timezone.get_current_timezone()
+            start_dt = timezone.make_aware(start_dt, tz)
+        tz = start_dt.tzinfo
+
+        shifts = list(ProductionShift.objects.filter(ativo=True).order_by("ordem_exibicao"))
+        shift_a = next((s for s in shifts if "1" in s.nome or "A" in s.nome.upper()), shifts[0] if shifts else None)
+        shift_b = next((s for s in shifts if "2" in s.nome or "B" in s.nome.upper()), shifts[1] if len(shifts) > 1 else shift_a)
+
+        if not shift_a:
+            shift_a = ProductionShift(id=1, nome="Turno A", horario_inicial=time(6, 0), horario_final=time(18, 0), ordem_exibicao=1)
+        if not shift_b:
+            shift_b = ProductionShift(id=2, nome="Turno B", horario_inicial=time(18, 0), horario_final=time(6, 0), ordem_exibicao=2)
+
+        windows = []
+        base_date = start_dt.date() - timedelta(days=1)
+
+        for d in range(days_ahead + 5):
+            cur_date = base_date + timedelta(days=d)
+
+            # Turno A: 06:00 -> 18:00
+            w_a_start = timezone.make_aware(datetime.combine(cur_date, time(6, 0)), tz)
+            w_a_end = timezone.make_aware(datetime.combine(cur_date, time(18, 0)), tz)
+
+            # Turno B: 18:00 -> 06:00 do dia seguinte
+            w_b_start = timezone.make_aware(datetime.combine(cur_date, time(18, 0)), tz)
+            w_b_end = timezone.make_aware(datetime.combine(cur_date + timedelta(days=1), time(6, 0)), tz)
+
+            if shift_choice in ["A", "AMBOS"] and shift_a:
+                windows.append({"shift": shift_a, "date": cur_date, "start": w_a_start, "end": w_a_end})
+            if shift_choice in ["B", "AMBOS"] and shift_b:
+                windows.append({"shift": shift_b, "date": cur_date, "start": w_b_start, "end": w_b_end})
+
+        windows.sort(key=lambda w: w["start"])
+        return windows
+
+    @classmethod
+    def calculate_plan(
+        cls,
+        matrix_catalog: ProductionMatrixCatalog,
+        start_dt,
+        quantity: int,
+        shift_choice: str = "AMBOS",
+        cavities: int = 1,
+        custom_interval: Optional[int] = None,
+        custom_lixo_pct: Optional[float] = None,
+        custom_ia_pct: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Motor determinístico de cálculo de Programação PCP com aritmética O(1) ultra-rápida.
+        """
+        import math
+        from datetime import datetime, time, timedelta
+
+        if quantity <= 0:
+            raise ValueError("A quantidade programada deve ser maior que zero.")
+
+        if cavities <= 0:
+            cavities = 1
+
+        settings = cls.get_pcp_settings()
+        t_interv = custom_interval if custom_interval is not None else settings["intervalo_operacional_segundos"]
+        lixo_pct = custom_lixo_pct if custom_lixo_pct is not None else settings["perda_lixo_percentual"]
+        ia_pct = custom_ia_pct if custom_ia_pct is not None else settings["perda_ia_percentual"]
+
+        t_prod = matrix_catalog.tempo_producao_segundos or 760
+        m_cycles = math.ceil(quantity / cavities)
+        t_cycle = t_prod + t_interv
+
+        if timezone.is_naive(start_dt):
+            tz = timezone.get_current_timezone()
+            start_dt = timezone.make_aware(start_dt, tz)
+        else:
+            tz = start_dt.tzinfo
+
+        shift_breakdown_map = {}
+
+        if shift_choice == "AMBOS":
+            # Operação contínua 24h sem interrupção de turnos
+            total_seconds = m_cycles * t_prod + (m_cycles - 1) * t_interv
+            final_dt = start_dt + timedelta(seconds=total_seconds)
+
+            days_needed = math.ceil(total_seconds / 86400.0)
+            preview_days = min(days_needed + 5, 180)
+            windows = cls._build_shift_windows(start_dt, "AMBOS", days_ahead=preview_days)
+
+            for w in windows:
+                if w["end"] <= start_dt:
+                    continue
+                if w["start"] > final_dt:
+                    break
+
+                s_sec = (w["start"] - start_dt).total_seconds()
+                e_sec = (w["end"] - start_dt).total_seconds()
+
+                k1 = math.ceil((s_sec - t_prod) / t_cycle)
+                if k1 < 0:
+                    k1 = 0
+
+                k2 = math.floor((e_sec - t_prod) / t_cycle)
+                if k2 >= m_cycles:
+                    k2 = m_cycles - 1
+
+                if k1 <= k2:
+                    if k1 <= m_cycles - 1 <= k2:
+                        tires_in_win = (m_cycles - 1 - k1) * cavities + (quantity - (m_cycles - 1) * cavities)
+                    else:
+                        tires_in_win = (k2 - k1 + 1) * cavities
+
+                    if tires_in_win > 0:
+                        key = (w["date"], w["shift"])
+                        shift_breakdown_map[key] = shift_breakdown_map.get(key, 0) + tires_in_win
+        else:
+            # Operação restrita a um único turno (Turno A ou B: 12 horas úteis por dia)
+            window_duration = 43200.0
+            c_full = 1 + math.floor((window_duration - t_prod) / t_cycle)
+            if c_full <= 0:
+                raise ValueError("O tempo de produção é superior à duração da janela de turno.")
+
+            windows_all = cls._build_shift_windows(start_dt, shift_choice, days_ahead=3)
+            # Encontrar primeiro início válido
+            curr_time = start_dt
+            first_win = None
+            for w in windows_all:
+                if curr_time < w["end"]:
+                    first_win = w
+                    break
+
+            if first_win and curr_time < first_win["start"]:
+                curr_time = first_win["start"]
+
+            avail_first = (first_win["end"] - curr_time).total_seconds() if first_win else 0
+            c_first = (1 + math.floor((avail_first - t_prod) / t_cycle)) if avail_first >= t_prod else 0
+
+            if m_cycles <= c_first:
+                used_sec = m_cycles * t_prod + (m_cycles - 1) * t_interv
+                final_dt = curr_time + timedelta(seconds=used_sec)
+            else:
+                rem = m_cycles - c_first
+                full_days = math.floor(rem / c_full)
+                rem_last = rem % c_full
+                if rem_last == 0:
+                    full_days -= 1
+                    rem_last = c_full
+
+                last_used = rem_last * t_prod + (rem_last - 1) * t_interv
+                target_date = first_win["date"] + timedelta(days=1 + full_days)
+
+                if shift_choice == "A":
+                    start_last = timezone.make_aware(datetime.combine(target_date, time(6, 0)), tz)
+                else:
+                    start_last = timezone.make_aware(datetime.combine(target_date, time(18, 0)), tz)
+
+                final_dt = start_last + timedelta(seconds=last_used)
+
+            # Construir visualização de turnos (limitada a 180 dias)
+            days_needed = math.ceil(m_cycles / c_full) + 5
+            preview_days = min(days_needed, 180)
+            windows = cls._build_shift_windows(start_dt, shift_choice, days_ahead=preview_days)
+
+            remaining_cycles = m_cycles
+            curr_time_p = start_dt
+
+            for w in windows:
+                if remaining_cycles <= 0:
+                    break
+                if curr_time_p >= w["end"]:
+                    continue
+                if curr_time_p < w["start"]:
+                    curr_time_p = w["start"]
+
+                avail_sec = (w["end"] - curr_time_p).total_seconds()
+                if avail_sec < t_prod:
+                    continue
+
+                cycles_in_win = 1 + math.floor((avail_sec - t_prod) / t_cycle)
+                if cycles_in_win > remaining_cycles:
+                    cycles_in_win = remaining_cycles
+
+                start_cycle_idx = m_cycles - remaining_cycles
+                end_cycle_idx = start_cycle_idx + cycles_in_win - 1
+
+                if start_cycle_idx <= m_cycles - 1 <= end_cycle_idx:
+                    tires_in_win = (m_cycles - 1 - start_cycle_idx) * cavities + (quantity - (m_cycles - 1) * cavities)
+                else:
+                    tires_in_win = cycles_in_win * cavities
+
+                key = (w["date"], w["shift"])
+                shift_breakdown_map[key] = shift_breakdown_map.get(key, 0) + tires_in_win
+
+                used_sec = cycles_in_win * t_prod + (cycles_in_win - 1) * t_interv
+                curr_time_p = curr_time_p + timedelta(seconds=used_sec + t_interv)
+                remaining_cycles -= cycles_in_win
+
+        # Invariante 1: data/hora final deve ser maior que inicio
+        if final_dt <= start_dt:
+            raise ValueError("Invariante violada: a data final prevista deve ser estritamente maior que a data de início.")
+
+        # Cálculo de perdas estatísticas (sobre a meta total)
+        lixo_est = round(quantity * (lixo_pct / 100.0))
+        ia_est = round(quantity * (ia_pct / 100.0))
+        perda_tot = lixo_est + ia_est
+        boa_est = max(0, quantity - perda_tot)
+
+        # Montar lista amigável para exibição e salvamento
+        shift_targets = []
+        for (d, s_obj), q in sorted(shift_breakdown_map.items(), key=lambda x: (x[0][0], x[0][1].ordem_exibicao)):
+            shift_targets.append({
+                "date": d,
+                "shift": s_obj,
+                "meta_prevista": q,
+                "inicio_janela": datetime.combine(d, s_obj.horario_inicial) if hasattr(s_obj, "horario_inicial") else start_dt,
+                "fim_janela": datetime.combine(d, s_obj.horario_final) if hasattr(s_obj, "horario_final") else start_dt,
+            })
+
+        # Invariante 2: soma das metas por turno deve ser igual a quantity
+        total_meta_sum = sum(st["meta_prevista"] for st in shift_targets)
+        if total_meta_sum != quantity:
+            rem = quantity - total_meta_sum
+            if rem > 0 and shift_targets:
+                shift_targets[-1]["meta_prevista"] += rem
+            elif total_meta_sum != quantity:
+                raise ValueError(f"Invariante violada: soma das metas por turno ({total_meta_sum}) difere da quantidade programada ({quantity}).")
+
+        bladder_info = cls.get_compatible_bladders(matrix_catalog)
+
+        return {
+            "matriz": matrix_catalog,
+            "start_dt": start_dt,
+            "quantity": quantity,
+            "shift_choice": shift_choice,
+            "cavities": cavities,
+            "tempo_producao": t_prod,
+            "intervalo": t_interv,
+            "total_cycles": m_cycles,
+            "lixo_pct": lixo_pct,
+            "ia_pct": ia_pct,
+            "lixo_estimado": lixo_est,
+            "ia_estimada": ia_est,
+            "perda_total_estimada": perda_tot,
+            "producao_boa_estimada": boa_est,
+            "final_dt": final_dt,
+            "shift_targets": shift_targets,
+            "bladder_info": bladder_info,
+        }
+
+    @classmethod
+    @transaction.atomic
+    def save_pcp_plan(
+        cls,
+        matrix_catalog: ProductionMatrixCatalog,
+        start_dt,
+        quantity: int,
+        shift_choice: str = "AMBOS",
+        cavities: int = 1,
+        bladder: Optional[ProductionBladder] = None,
+        user=None,
+        custom_interval: Optional[int] = None,
+        custom_lixo_pct: Optional[float] = None,
+        custom_ia_pct: Optional[float] = None,
+        observacao: str = "",
+    ) -> ProductionPCPPlan:
+        """
+        Calcula e persiste a Programação PCP com snapshots e gera os registros de compatibilidade em ProductionTarget.
+        """
+        calc = cls.calculate_plan(
+            matrix_catalog=matrix_catalog,
+            start_dt=start_dt,
+            quantity=quantity,
+            shift_choice=shift_choice,
+            cavities=cavities,
+            custom_interval=custom_interval,
+            custom_lixo_pct=custom_lixo_pct,
+            custom_ia_pct=custom_ia_pct,
+        )
+
+        if not bladder and calc["bladder_info"]["auto_selected"]:
+            bladder = calc["bladder_info"]["auto_selected"]
+
+        plan = ProductionPCPPlan.objects.create(
+            matriz=matrix_catalog,
+            data_hora_inicio=calc["start_dt"],
+            quantidade_programada=quantity,
+            turno_opcao=shift_choice,
+            cavidades_disponiveis=cavities,
+            bladder=bladder,
+            tempo_producao_utilizado=calc["tempo_producao"],
+            intervalo_utilizado=calc["intervalo"],
+            perda_lixo_pct_utilizada=calc["lixo_pct"],
+            perda_ia_pct_utilizada=calc["ia_pct"],
+            lixo_estimado=calc["lixo_estimado"],
+            ia_estimada=calc["ia_estimada"],
+            perda_total_estimada=calc["perda_total_estimada"],
+            producao_boa_estimada=calc["producao_boa_estimada"],
+            data_hora_fim_prevista=calc["final_dt"],
+            status="PLANEJADO",
+            observacao=observacao,
+            created_by=user if user and user.is_authenticated else None,
+        )
+
+        # Criar detalhamento por turno e integrar com ProductionTarget
+        for st in calc["shift_targets"]:
+            d_val = st["date"]
+            s_obj = st["shift"]
+            meta_val = st["meta_prevista"]
+
+            # Compatibilidade com dashboard legado (ProductionTarget)
+            t_obj, _ = ProductionTarget.objects.update_or_create(
+                date=d_val,
+                shift=s_obj,
+                matrix_catalog=matrix_catalog,
+                defaults={
+                    "matriz_codigo": matrix_catalog.codigo,
+                    "produto": matrix_catalog.nome_exibicao,
+                    "planned_quantity": meta_val,
+                    "status": "PLANEJADA",
+                    "observation": f"Gerado automaticamente pelo PCP Plan #{plan.id}",
+                    "created_by": user if user and user.is_authenticated else None,
+                }
+            )
+
+            ProductionPCPPlanShiftTarget.objects.create(
+                pcp_plan=plan,
+                date=d_val,
+                shift=s_obj,
+                data_hora_inicio_janela=calc["start_dt"], # fallback seguro para datetime
+                data_hora_fim_janela=calc["final_dt"],
+                meta_prevista=meta_val,
+                target_legado=t_obj,
+            )
+
+        return plan
+

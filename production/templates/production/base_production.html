@@ -128,6 +128,11 @@
                             <i class="bi bi-speedometer2 me-1"></i> Dashboard Produção
                         </a>
                     </li>
+                    <li class="nav-item">
+                        <a class="nav-link nav-link-custom" href="{% url 'production:pcp_plan_list' %}">
+                            <i class="bi bi-calendar-check me-1"></i> Programação PCP
+                        </a>
+                    </li>
                     {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.1.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Tecnicos' or request.user.groups.all.1.name == 'Tecnicos' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' or request.user.technician_profile %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom" href="{% url 'technician_management' %}">

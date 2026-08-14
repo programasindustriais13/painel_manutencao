@@ -963,13 +963,102 @@ class ProductionShiftAccumulated(models.Model):
         return f"{self.date} [{self.shift.nome}] {self.cavity_config.nome}: {self.quantity_accumulated} pneus"
 
 
+class ProductionMatrixSize(models.Model):
+    medida = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Medida / Tamanho",
+        help_text="Ex: 90/90-18, 2.75-18, 24X8-12."
+    )
+    medida_normalizada = models.CharField(
+        max_length=50,
+        db_index=True,
+        verbose_name="Medida Normalizada",
+        help_text="Formato padronizado sem espaços adicionais e com remoção de zeros desnecessários."
+    )
+    ativo = models.BooleanField(
+        default=True,
+        verbose_name="Ativo"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Medida de Matriz"
+        verbose_name_plural = "Medidas de Matrizes"
+        ordering = ["medida"]
+
+    def __str__(self):
+        return self.medida
+
+
+class ProductionBladder(models.Model):
+    codigo_bladder = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Código do Bladder",
+        help_text="Ex: BLA001, BLA002, etc."
+    )
+    descricao = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Descrição / Especificação"
+    )
+    medidas = models.ManyToManyField(
+        ProductionMatrixSize,
+        related_name="bladders",
+        blank=True,
+        verbose_name="Medidas Compatíveis"
+    )
+    ativo = models.BooleanField(
+        default=True,
+        verbose_name="Ativo"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Código de Bladder"
+        verbose_name_plural = "Códigos de Bladders"
+        ordering = ["codigo_bladder"]
+
+    def __str__(self):
+        return f"{self.codigo_bladder} ({self.descricao or 'Sem descrição'})"
+
+
+class ProductionPCPSetting(models.Model):
+    chave = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name="Chave de Configuração"
+    )
+    valor = models.CharField(
+        max_length=100,
+        verbose_name="Valor"
+    )
+    descricao = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        verbose_name="Descrição"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Configuração Global PCP"
+        verbose_name_plural = "Configurações Globais PCP"
+
+    def __str__(self):
+        return f"{self.chave} = {self.valor}"
+
+
 class ProductionMatrixCatalog(models.Model):
     codigo_scada = models.PositiveSmallIntegerField(
         unique=True,
         blank=True,
         null=True,
         verbose_name="Código SCADA",
-        help_text="Código inteiro único (1 a 43) enviado pelo SCADA."
+        help_text="Código inteiro único enviado pelo SCADA."
     )
     nome_scada = models.CharField(
         max_length=150,
@@ -987,7 +1076,7 @@ class ProductionMatrixCatalog(models.Model):
         max_length=50,
         unique=True,
         verbose_name="Código da Matriz",
-        help_text="Código canônico da matriz (ex: 3, 37, M-1024)."
+        help_text="Código canônico da matriz (ex: 3, 37, 44)."
     )
     descricao = models.CharField(
         max_length=200,
@@ -1002,6 +1091,34 @@ class ProductionMatrixCatalog(models.Model):
         null=True,
         verbose_name="Produto Padronizado",
         help_text="Nome/Código padronizado do pneu/produto."
+    )
+    medida_size = models.ForeignKey(
+        ProductionMatrixSize,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="matrices",
+        verbose_name="Medida (Tamanho)"
+    )
+    medida_str = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Medida Texto Bruto"
+    )
+    tempo_producao_segundos = models.PositiveIntegerField(
+        default=760,
+        verbose_name="Tempo de Produção (s)",
+        help_text="Tempo total por pneu sem incluir o intervalo operacional entre pneus."
+    )
+    tempo_vulcanizacao_segundos = models.PositiveIntegerField(
+        default=600,
+        verbose_name="Tempo de Vulcanização (s)",
+        help_text="Tempo da etapa física de cura no molde."
+    )
+    variante_sc = models.BooleanField(
+        default=False,
+        verbose_name="Variante Sem Câmara (S/C)"
     )
     aliases_scada = models.TextField(
         blank=True,
@@ -1022,7 +1139,7 @@ class ProductionMatrixCatalog(models.Model):
         ordering = ["codigo_scada", "codigo"]
 
     def __str__(self):
-        code_str = f"[{self.codigo_scada}]" if self.codigo_scada else f"{self.codigo}"
+        code_str = f"[{self.codigo_scada}]" if self.codigo_scada else f"[{self.codigo}]"
         display_name = self.nome_exibicao or self.nome_scada or self.produto or self.descricao or 'Sem descrição'
         return f"{code_str} {display_name}"
 
@@ -1139,6 +1256,177 @@ class ProductionTarget(models.Model):
     def __str__(self):
         matrix_name = self.matrix_catalog.nome_exibicao if self.matrix_catalog else (self.matriz_codigo or 'Geral')
         return f"Meta {self.date} [{self.shift.nome if self.shift else 'Geral'}]: {matrix_name} = {self.planned_quantity} pneu(s)"
+
+
+class ProductionPCPPlan(models.Model):
+    SHIFT_CHOICES = [
+        ("A", "Turno A"),
+        ("B", "Turno B"),
+        ("AMBOS", "Ambos os Turnos (A + B)"),
+    ]
+    STATUS_CHOICES = [
+        ("PLANEJADO", "Planejado"),
+        ("EM_PRODUCAO", "Em Produção"),
+        ("ATINGIDA", "Atingida / Concluído"),
+        ("CANCELADO", "Cancelado"),
+    ]
+
+    matriz = models.ForeignKey(
+        ProductionMatrixCatalog,
+        on_delete=models.PROTECT,
+        related_name="pcp_plans",
+        verbose_name="Matriz / Modelo"
+    )
+    data_hora_inicio = models.DateTimeField(
+        verbose_name="Data/Hora de Início"
+    )
+    quantidade_programada = models.PositiveIntegerField(
+        verbose_name="Quantidade Programada (Meta Total)"
+    )
+    turno_opcao = models.CharField(
+        max_length=10,
+        choices=SHIFT_CHOICES,
+        default="AMBOS",
+        verbose_name="Turno(s) Autorizado(s)"
+    )
+    cavidades_disponiveis = models.PositiveIntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        verbose_name="Cavidades Disponíveis (Capacidade Paralela)"
+    )
+    bladder = models.ForeignKey(
+        ProductionBladder,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="pcp_plans",
+        verbose_name="Bladder Compatível Selecionado"
+    )
+
+    # Snapshots dos parâmetros operacionais
+    tempo_producao_utilizado = models.PositiveIntegerField(
+        verbose_name="Tempo de Produção Utilizado (s)"
+    )
+    intervalo_utilizado = models.PositiveIntegerField(
+        default=90,
+        verbose_name="Intervalo Operacional Utilizado (s)"
+    )
+    perda_lixo_pct_utilizada = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0.50,
+        verbose_name="Percentual Lixo Utilizado (%)"
+    )
+    perda_ia_pct_utilizada = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=1.00,
+        verbose_name="Percentual IA Utilizado (%)"
+    )
+
+    # Resultados calculados
+    lixo_estimado = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Lixo Estimado (Pneus)"
+    )
+    ia_estimada = models.PositiveIntegerField(
+        default=0,
+        verbose_name="IA Estimada (Pneus)"
+    )
+    perda_total_estimada = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Perda Total Estimada (Pneus)"
+    )
+    producao_boa_estimada = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Produção Boa Estimada (Pneus)"
+    )
+    data_hora_fim_prevista = models.DateTimeField(
+        verbose_name="Data/Hora Final Prevista"
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="PLANEJADO",
+        verbose_name="Status da Programação"
+    )
+    observacao = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Observações"
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="created_pcp_plans",
+        verbose_name="Cadastrado por"
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="updated_pcp_plans",
+        verbose_name="Atualizado por"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Programação PCP"
+        verbose_name_plural = "Programações PCP"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"PCP #{self.pk} - {self.matriz.nome_exibicao}: {self.quantidade_programada} pneu(s) [{self.get_status_display()}]"
+
+
+class ProductionPCPPlanShiftTarget(models.Model):
+    pcp_plan = models.ForeignKey(
+        ProductionPCPPlan,
+        on_delete=models.CASCADE,
+        related_name="shift_targets",
+        verbose_name="Plano PCP"
+    )
+    date = models.DateField(
+        verbose_name="Data do Turno"
+    )
+    shift = models.ForeignKey(
+        ProductionShift,
+        on_delete=models.CASCADE,
+        related_name="pcp_shift_targets",
+        verbose_name="Turno"
+    )
+    data_hora_inicio_janela = models.DateTimeField(
+        verbose_name="Início da Janela"
+    )
+    data_hora_fim_janela = models.DateTimeField(
+        verbose_name="Fim da Janela"
+    )
+    meta_prevista = models.PositiveIntegerField(
+        verbose_name="Meta Prevista para este Turno"
+    )
+    target_legado = models.ForeignKey(
+        ProductionTarget,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="pcp_shift_breakdowns",
+        verbose_name="Registro de Meta Legado"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Meta de Turno PCP"
+        verbose_name_plural = "Metas de Turnos PCP"
+        ordering = ["date", "shift__ordem_exibicao"]
+
+    def __str__(self):
+        return f"{self.date} [{self.shift.nome}]: {self.meta_prevista} pneu(s)"
+
 
 
 

@@ -1,8 +1,14 @@
 from django import forms
 from django.db.models import Q
 from django.core.exceptions import ValidationError
-from maintenance.models import Machine
-from .models import ProductionShift, ProductionCavityConfig, ProductionMatrixCatalog, ProductionTarget
+from .models import (
+    ProductionShift,
+    ProductionCavityConfig,
+    ProductionMatrixCatalog,
+    ProductionTarget,
+    ProductionPCPPlan,
+    ProductionBladder,
+)
 
 
 class ProductionMatrixCatalogForm(forms.ModelForm):
@@ -94,5 +100,50 @@ class ProductionTargetForm(forms.ModelForm):
                 raise ValidationError("Já existe uma meta ativa cadastrada com esta mesma combinação.")
 
         return cleaned_data
+
+
+class ProductionPCPPlanForm(forms.ModelForm):
+    class Meta:
+        model = ProductionPCPPlan
+        fields = [
+            "matriz",
+            "data_hora_inicio",
+            "quantidade_programada",
+            "turno_opcao",
+            "cavidades_disponiveis",
+        ]
+        widgets = {
+            "matriz": forms.Select(attrs={"class": "form-select select2-matrix"}),
+            "data_hora_inicio": forms.DateTimeInput(
+                attrs={"class": "form-control", "type": "datetime-local"},
+                format="%Y-%m-%dT%H:%M"
+            ),
+            "quantidade_programada": forms.NumberInput(attrs={"class": "form-control", "min": "1", "placeholder": "Ex: 3000"}),
+            "turno_opcao": forms.Select(attrs={"class": "form-select"}),
+            "cavidades_disponiveis": forms.NumberInput(attrs={"class": "form-control", "min": "1", "value": "4"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["matriz"].queryset = ProductionMatrixCatalog.objects.filter(ativo=True).order_by("nome_exibicao")
+        self.fields["matriz"].label_from_instance = lambda obj: obj.nome_exibicao or obj.nome_scada or obj.produto or obj.codigo
+        self.fields["matriz"].label = "Matriz"
+        self.fields["data_hora_inicio"].label = "Data de início"
+        self.fields["quantidade_programada"].label = "Quantidade"
+        self.fields["turno_opcao"].label = "Turno"
+        self.fields["cavidades_disponiveis"].label = "Quantidade de Matrizes/Cavidades Disponíveis"
+
+    def clean_quantidade_programada(self):
+        qty = self.cleaned_data.get("quantidade_programada")
+        if qty is None or qty <= 0:
+            raise ValidationError("A quantidade programada deve ser maior que zero.")
+        return qty
+
+    def clean_cavidades_disponiveis(self):
+        cav = self.cleaned_data.get("cavidades_disponiveis")
+        if cav is None or cav <= 0:
+            raise ValidationError("A quantidade de cavidades disponíveis deve ser pelo menos 1.")
+        return cav
+
 
 

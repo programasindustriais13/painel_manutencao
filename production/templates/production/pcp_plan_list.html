@@ -1,0 +1,151 @@
+{% extends "production/base_production.html" %}
+
+{% block title %}Programação PCP | Painel de Produção{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-4 py-4">
+    <!-- Header -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-4 gap-3">
+        <div>
+            <h2 class="h3 fw-bold text-dark mb-1">
+                <i class="bi bi-calendar-check text-primary me-2"></i>Programação de Produção PCP
+            </h2>
+            <p class="text-muted mb-0">Planejamento inteligente de matrizes, cavidades paralelas, turnos e perdas estatísticas</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'production:pcp_plan_create' %}" class="btn btn-primary btn-lg shadow-sm">
+                <i class="bi bi-plus-lg me-1"></i>Nova Programação PCP
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card card-custom shadow-sm mb-4">
+        <div class="card-body py-3">
+            <form method="get" class="row g-3 align-items-center">
+                <div class="col-md-5">
+                    <label for="matriz_id" class="form-label fs-7 fw-semibold text-secondary">Filtrar por Matriz</label>
+                    <select name="matriz_id" id="matriz_id" class="form-select form-select-sm">
+                        <option value="">-- Todas as Matrizes --</option>
+                        {% for m in matrices %}
+                        <option value="{{ m.id }}" {% if filters.matriz_id == m.id|stringformat:"s" %}selected{% endif %}>
+                            {{ m.nome_exibicao }} ({{ m.medida_str|default:"-" }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label for="status" class="form-label fs-7 fw-semibold text-secondary">Status</label>
+                    <select name="status" id="status" class="form-select form-select-sm">
+                        <option value="">-- Todos os Status --</option>
+                        <option value="PLANEJADO" {% if filters.status == "PLANEJADO" %}selected{% endif %}>Planejado</option>
+                        <option value="EM_PRODUCAO" {% if filters.status == "EM_PRODUCAO" %}selected{% endif %}>Em Produção</option>
+                        <option value="ATINGIDA" {% if filters.status == "ATINGIDA" %}selected{% endif %}>Atingida / Concluído</option>
+                        <option value="CANCELADO" {% if filters.status == "CANCELADO" %}selected{% endif %}>Cancelado</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end gap-2">
+                    <button type="submit" class="btn btn-sm btn-primary flex-fill">
+                        <i class="bi bi-funnel me-1"></i>Filtrar
+                    </button>
+                    <a href="{% url 'production:pcp_plan_list' %}" class="btn btn-sm btn-outline-secondary">Limpar</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Table -->
+    <div class="card card-custom shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr class="fs-7 text-uppercase text-secondary">
+                            <th class="ps-4">ID / Data Cadastro</th>
+                            <th>Matriz</th>
+                            <th>Medida</th>
+                            <th class="text-center">Quantidade</th>
+                            <th class="text-center">Cavidades</th>
+                            <th class="text-center">Turnos</th>
+                            <th>Início Programado</th>
+                            <th>Término Previsto</th>
+                            <th>Bladder</th>
+                            <th class="text-center">Status</th>
+                            <th class="text-end pe-4">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for plan in plans %}
+                        <tr>
+                            <td class="ps-4">
+                                <span class="fw-bold text-dark">#{{ plan.id }}</span>
+                                <div class="fs-7 text-muted">{{ plan.created_at|date:"d/m/Y H:i" }}</div>
+                            </td>
+                            <td>
+                                <div class="fw-semibold text-dark">
+                                    {{ plan.matriz.nome_exibicao }}
+                                </div>
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary-subtle text-secondary font-monospace">{{ plan.matriz.medida_str|default:"-" }}</span>
+                            </td>
+                            <td class="text-center fw-bold fs-6 text-primary">
+                                {{ plan.quantidade_programada }}
+                            </td>
+                            <td class="text-center">
+                                <span class="badge bg-info-subtle text-info-emphasis px-2 py-1 fs-7">
+                                    <i class="bi bi-grid-fill me-1"></i>{{ plan.cavidades_disponiveis }} cav.
+                                </span>
+                            </td>
+                            <td class="text-center fs-7 font-monospace">
+                                {{ plan.get_turno_opcao_display }}
+                            </td>
+                            <td class="fs-7">
+                                {{ plan.data_hora_inicio|date:"d/m/Y H:i" }}
+                            </td>
+                            <td class="fs-7 text-success fw-semibold">
+                                {{ plan.data_hora_fim_prevista|date:"d/m/Y H:i" }}
+                            </td>
+                            <td>
+                                {% if plan.bladder %}
+                                <span class="badge bg-dark-subtle text-dark border font-monospace">
+                                    <i class="bi bi-shield-check me-1"></i>{{ plan.bladder.codigo_bladder }}
+                                </span>
+                                {% else %}
+                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>Não informado
+                                </span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if plan.status == "PLANEJADO" %}
+                                <span class="badge bg-primary-subtle text-primary border border-primary">Planejado</span>
+                                {% elif plan.status == "EM_PRODUCAO" %}
+                                <span class="badge bg-warning-subtle text-warning border border-warning">Em Produção</span>
+                                {% elif plan.status == "ATINGIDA" %}
+                                <span class="badge bg-success-subtle text-success border border-success">Concluído</span>
+                                {% else %}
+                                <span class="badge bg-secondary-subtle text-secondary border">Cancelado</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end pe-4">
+                                <a href="{% url 'production:pcp_plan_detail' pk=plan.pk %}" class="btn btn-sm btn-outline-primary me-1" title="Ver Detalhes">
+                                    <i class="bi bi-eye"></i> Detalhes
+                                </a>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="11" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-1 d-block mb-2 text-secondary"></i>
+                                Nenhuma programação PCP encontrada com os filtros selecionados.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

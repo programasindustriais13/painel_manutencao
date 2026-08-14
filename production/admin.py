@@ -1,3 +1,4 @@
+from django import forms
 from django.contrib import admin
 from .models import (
     ProductionShift,
@@ -16,6 +17,11 @@ from .models import (
     ProductionShiftAccumulated,
     ProductionMatrixCatalog,
     ProductionTarget,
+    ProductionMatrixSize,
+    ProductionBladder,
+    ProductionPCPSetting,
+    ProductionPCPPlan,
+    ProductionPCPPlanShiftTarget,
 )
 
 
@@ -36,8 +42,28 @@ class ProductionShiftAdmin(admin.ModelAdmin):
 
 
 
+class ProductionCavityConfigAdminForm(forms.ModelForm):
+    meta_producao_manual = forms.IntegerField(
+        required=False,
+        initial=0,
+        label="Meta Manual de Produção (Legado / Opcional)",
+        help_text="Campo legado. As novas metas devem ser definidas pela Programação PCP."
+    )
+
+    class Meta:
+        model = ProductionCavityConfig
+        fields = "__all__"
+
+    def clean_meta_producao_manual(self):
+        val = self.cleaned_data.get("meta_producao_manual")
+        if val is None or val == "":
+            return 0
+        return val
+
+
 class ProductionCavityConfigInline(admin.TabularInline):
     model = ProductionCavityConfig
+    form = ProductionCavityConfigAdminForm
     extra = 2
     fields = (
         "ordem",
@@ -54,6 +80,7 @@ class ProductionCavityConfigInline(admin.TabularInline):
 
 @admin.register(ProductionCavityConfig)
 class ProductionCavityConfigAdmin(admin.ModelAdmin):
+    form = ProductionCavityConfigAdminForm
     list_display = (
         "machine_config",
         "nome",
@@ -197,11 +224,32 @@ class ProductionShiftAccumulatedAdmin(admin.ModelAdmin):
     date_hierarchy = "date"
 
 
+@admin.register(ProductionMatrixSize)
+class ProductionMatrixSizeAdmin(admin.ModelAdmin):
+    list_display = ("medida", "medida_normalizada", "ativo", "created_at")
+    list_filter = ("ativo",)
+    search_fields = ("medida", "medida_normalizada")
+
+
+@admin.register(ProductionBladder)
+class ProductionBladderAdmin(admin.ModelAdmin):
+    list_display = ("codigo_bladder", "descricao", "ativo", "created_at")
+    list_filter = ("ativo",)
+    search_fields = ("codigo_bladder", "descricao")
+    filter_horizontal = ("medidas",)
+
+
+@admin.register(ProductionPCPSetting)
+class ProductionPCPSettingAdmin(admin.ModelAdmin):
+    list_display = ("chave", "valor", "descricao", "updated_at")
+    search_fields = ("chave", "descricao")
+
+
 @admin.register(ProductionMatrixCatalog)
 class ProductionMatrixCatalogAdmin(admin.ModelAdmin):
-    list_display = ("codigo", "descricao", "produto", "ativo", "created_at")
-    list_filter = ("ativo",)
-    search_fields = ("codigo", "descricao", "produto", "aliases_scada")
+    list_display = ("codigo_scada", "codigo", "nome_exibicao", "medida_str", "tempo_producao_segundos", "tempo_vulcanizacao_segundos", "variante_sc", "ativo")
+    list_filter = ("ativo", "variante_sc")
+    search_fields = ("codigo_scada", "codigo", "nome_scada", "nome_exibicao", "produto", "medida_str")
 
 
 @admin.register(ProductionTarget)
@@ -210,6 +258,22 @@ class ProductionTargetAdmin(admin.ModelAdmin):
     list_filter = ("status", "date", "shift")
     search_fields = ("matriz_codigo", "produto", "observation")
     date_hierarchy = "date"
+
+
+class ProductionPCPPlanShiftTargetInline(admin.TabularInline):
+    model = ProductionPCPPlanShiftTarget
+    extra = 0
+    readonly_fields = ("date", "shift", "data_hora_inicio_janela", "data_hora_fim_janela", "meta_prevista", "target_legado")
+
+
+@admin.register(ProductionPCPPlan)
+class ProductionPCPPlanAdmin(admin.ModelAdmin):
+    list_display = ("id", "matriz", "data_hora_inicio", "quantidade_programada", "turno_opcao", "cavidades_disponiveis", "data_hora_fim_prevista", "lixo_estimado", "ia_estimada", "producao_boa_estimada", "status", "created_at")
+    list_filter = ("status", "turno_opcao", "created_at")
+    search_fields = ("matriz__nome_exibicao", "matriz__codigo", "observacao")
+    date_hierarchy = "data_hora_inicio"
+    inlines = [ProductionPCPPlanShiftTargetInline]
+
 
 
 

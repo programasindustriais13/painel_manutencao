@@ -38,6 +38,11 @@ class ScadaRouter:
         "productionshiftaccumulated",
         "productionmatrixcatalog",
         "productiontarget",
+        "productionmatrixsize",
+        "productionbladder",
+        "productionpcpsetting",
+        "productionpcpplan",
+        "productionpcpplanshifttarget",
     }
 
     def db_for_read(self, model, **hints):

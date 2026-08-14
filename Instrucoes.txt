@@ -2581,4 +2581,49 @@ Detalhamento Técnico:
    - Separados em Linha 1 (Matriz com ícone bi-bounding-box e nome amigável) e Linha 2 (Lote com ícone bi-box-seam).
    - Nomes longos de matriz quebram naturalmente dentro da Linha 1 sem empurrar ou desalinhar o campo Lote.
 
+
+25. IMPLEMENTAÇÃO AUTÔNOMA DA NOVA PROGRAMAÇÃO PCP / PRODUÇÃO (2026-08-13)
+---------------------------------------------------------------------------
+Substituição e evolução da experiência manual de cadastro de metas por uma tela inteligente de Programação PCP.
+
+Arquivos criados/modificados:
+- regras_programacao/SPEC_PROGRAMACAO_PCP_NOVA_TELAS_E_MOTOR.md [NOVO]
+- LISTA_MATRIZES_PLC_SCADA.md [NOVO]
+- TEMPO_PRODUCAO_E_COD_BLADDER.xlsx [FONTE CANÔNICA DE ENTRADA]
+- production/models.py (Inclusão de ProductionMatrixSize, ProductionBladder, ProductionPCPSetting, ProductionPCPPlan, ProductionPCPPlanShiftTarget e campos adicionais em ProductionMatrixCatalog)
+- production/routers.py (Adicionados modelos gerenciados em LOCAL_MANAGED_MODELS)
+- production/migrations/0019_productionbladder_productionmatrixsize_and_more.py [NOVO]
+- production/management/commands/import_production_planning_data.py [NOVO]
+- production/services.py (Inclusão de PCPCalculationService com motor determinístico de janelas de turno, cavidades paralelas, perdas estatísticas e salvamento com integração a ProductionTarget)
+- production/forms.py (Criado ProductionPCPPlanForm)
+- production/views.py (Views pcp_plan_list, pcp_plan_create, pcp_plan_detail e endpoint AJAX pcp_api_calculate)
+- production/urls.py (Novas rotas /production/pcp/, /production/pcp/nova/, /production/pcp/<id>/, /production/pcp/api/calcular/)
+- production/admin.py (Registros do Django Admin para todos os novos modelos PCP)
+- production/templates/production/base_production.html (Novo link de navegação "Programação PCP")
+- production/templates/production/pcp_plan_list.html [NOVO]
+- production/templates/production/pcp_plan_form.html [NOVO]
+- production/templates/production/pcp_plan_detail.html [NOVO]
+- production/test_pcp_system.py [NOVO] (Testes automatizados do importador e do motor PCP, totalizando 154 testes 100% OK)
+- Instrucoes.txt
+
+Detalhamento Técnico:
+1. Reconciliação SCADA 43 x 55 XLSX:
+   - Preservados 100% dos 43 códigos canônicos legados do SCADA (1 a 43).
+   - Atribuídos novos códigos sequenciais (44 a 55) para os 12 modelos novos do XLSX.
+   - Gerado o arquivo LISTA_MATRIZES_PLC_SCADA.md para cadastramento físico dos novos códigos no PLC.
+2. Modelagem de Bladders e Medidas:
+   - Desvinculação entre modelo do pneu e bladder. Modelagem em 4 camadas: Modelo -> Medida -> Bladders Compatíveis.
+   - Medidas sem bladder (ex: 3.25-08, 100/90-14) sinalizadas com aviso explicativo sem associação falsa.
+3. Motor de Cálculo PCP (PCPCalculationService):
+   - Tempo de produção (TEMPO DE PRODUÇÃO do XLSX) + intervalo entre pneus (padrão 90s configurável no Admin).
+   - Janelas de turno (Turno A: 06:00-18:00, Turno B: 18:00-06:00, Ambos: 24h contínuos).
+   - Proteção de ciclo: ciclo em andamento não é quebrado artificialmente ao final de turno não autorizado.
+   - Perdas estatísticas: Lixo (0,5%), IA (1,0%), total 1,5% calculados sobre a meta total. Meta programada preservada.
+   - Capacidade paralela: distribuição do lote de ciclos M = ceil(Q / N) entre N cavidades ativas.
+   - Geração automática de metas por turno integradas com ProductionTarget para compatibilidade total com Dashboard.
+4. Segurança e Banco de Dados:
+   - Alias 'scada' mantido estritamente somente-leitura.
+   - Todas as novas tabelas e parâmetros gravados exclusivamente no banco 'default'.
+
+
 

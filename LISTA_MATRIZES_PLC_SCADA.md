@@ -1,0 +1,88 @@
+# LISTA DE MATRIZES PARA CADASTRO NO PLC E RECONCILIAÇÃO SCADA / PCP
+
+Documento gerado automaticamente pelo processo de reconciliação entre os **43 códigos oficiais SCADA** e os **55 modelos do arquivo canônico PCP** (`TEMPO_PRODUCAO_E_COD_BLADDER.xlsx`).
+
+---
+
+## PARTE A — SOMENTE O QUE PRECISO CADASTRAR NO PLC
+
+Esta é a lista operacional de matrizes realmente novas que receberam novos códigos a partir do 44.
+
+| NOVO CÓDIGO PLC | MODELO/MATRIZ | MEDIDA | TEMPO PRODUÇÃO |
+| --------------: | ------------- | ------ | -------------: |
+| 44 | PNEU SPEEDY 80/100-18 | 80/100-18 | 910s |
+| 45 | PNEU READY 100/80-18 | 100/80-18 | 910s |
+| 46 | PNEU SPEEDY 90/90-14 | 90/90-14 | 760s |
+| 47 | PNEU SPEEDY 100/90-14 | 100/90-14 | 760s |
+| 48 | PNEU RIVER 24 X 8 - 12 | 24X8-12 | 1510s |
+| 49 | PNEU RIVER 24 X 10 - 11 | 24X10-11 | 1510s |
+| 50 | PNEU OPTION 90/90-18 S/C | 90/90-18 | 760s |
+| 51 | PNEU HOPPER 100/80-18 S/C | 100/80-18 | 910s |
+| 52 | PNEU SPEEDY 80/100-18 S/C | 80/100-18 | 910s |
+| 53 | PNEU READY 100/80-18 S/C | 100/80-18 | 910s |
+| 54 | PNEU SPEEDY 90/90-14 S/C | 90/90-14 | 760s |
+| 55 | PNEU SPEEDY 100/90-14 S/C | 100/90-14 | 760s |
+
+---
+
+## PARTE B — RECONCILIAÇÃO COMPLETA (55 MODELOS)
+
+Tabela completa com o de/para dos 43 códigos legados/existentes do SCADA e a expansão para 55 modelos.
+
+| Código | Modelo SCADA Atual | Modelo XLSX Atual | Situação | Ação |
+| -----: | ------------------ | ----------------- | -------- | ---- |
+| 1 | PNEUS WINGS 90/90-18 | PNEU WINGS 90/90-18 | NORMALIZADO | Manter código SCADA |
+| 2 | PNEUS WINGS 2.75-18 | PNEU WINGS 2.75-18 | NORMALIZADO | Manter código SCADA |
+| 3 | PNEUS HOPPER 90/90-18 | PNEU HOPPER 90/90-18 | NORMALIZADO | Manter código SCADA |
+| 4 | PNEUS HOPPER 2.75-18 | PNEU HOPPER 2.75-18 | NORMALIZADO | Manter código SCADA |
+| 5 | PNEUS READY 110/90-18 | PNEU READY 110/90-18 | NORMALIZADO | Manter código SCADA |
+| 6 | PNEUS HOPPER 4.10-18 | PNEU HOPPER 4.10-18 | NORMALIZADO | Manter código SCADA |
+| 7 | PNEUS HOPPER 110/90-17 | PNEU HOPPER 110/90-17 | NORMALIZADO | Manter código SCADA |
+| 8 | PNEU HOPPER 90/90-19 | PNEU HOPPER 90/90-19 | IGUAL | Manter código SCADA |
+| 9 | PNEUS WINGS 80/100-14 | PNEU WINGS 80/100-14 | NORMALIZADO | Manter código SCADA |
+| 10 | PNEUS WINGS 60/100-17 | PNEU WINGS 60/100-17 | NORMALIZADO | Manter código SCADA |
+| 11 | PNEUS READY 90/90-18 | PNEU READY 90/90-18 | NORMALIZADO | Manter código SCADA |
+| 12 | PNEU READY 2.75-17 | PNEU READY 2.75-17 | IGUAL | Manter código SCADA |
+| 13 | PNEU READY 110/80-14 | PNEU READY 110/80-14 | IGUAL | Manter código SCADA |
+| 14 | PNEU OPTION 90/90-18 | PNEU OPTION 90/90-18 | IGUAL | Manter código SCADA |
+| 15 | PNEU HOPPER 4.80/4.00-08 | PNEU HOPPER 4.80/4.00-8 | NORMALIZADO | Manter código SCADA |
+| 16 | PNEU HOPPER 80/100-14 | PNEU HOPPER 80/100-14 | IGUAL | Manter código SCADA |
+| 17 | PNEU HOPPER 2.50-17 | PNEU HOPPER 2.50-17 | IGUAL | Manter código SCADA |
+| 18 | PNEU SPEEDY 90/90-18 | PNEU SPEEDY 90/90-18 | IGUAL | Manter código SCADA |
+| 19 | PNEU SPEEDY 2.75-18 | PNEU SPEEDY 2.75-18 | IGUAL | Manter código SCADA |
+| 20 | PNEU ROBOT 3.25-08 | PNEU ROBOT 3.25-08 | IGUAL | Manter código SCADA |
+| 21 | PNEU HOPPER 2.75-17 | PNEU HOPPER 2.75-17 | IGUAL | Manter código SCADA |
+| 22 | PNEU HOPPER 120/80-18 | PNEU HOPPER 120/80-18 | IGUAL | Manter código SCADA |
+| 23 | PNEU HOPPER 90/90-21 | PNEU HOPPER 90/90-21 | IGUAL | Manter código SCADA |
+| 24 | PNEU WINTER 100/100-18 | PNEU WINTER 100/100-18 | IGUAL | Manter código SCADA |
+| 25 | PNEU WINTER 90/90-21 | PNEU WINTER 90/90-21 | IGUAL | Manter código SCADA |
+| 26 | PNEU HOPPER 100/90-18 | PNEU HOPPER 100/90-18 | IGUAL | Manter código SCADA |
+| 27 | PNEU HOPPER 80/100-18 | PNEU HOPPER 80/100-18 | IGUAL | Manter código SCADA |
+| 28 | PNEU SPEEDY 100/90-18 | PNEU SPEEDY 100/90-18 | IGUAL | Manter código SCADA |
+| 29 | PNEU READY 100/90-18 | PNEU READY 100/90-18 | IGUAL | Manter código SCADA |
+| 30 | PNEU READY 80/100-18 | PNEU READY 80/100-18 | IGUAL | Manter código SCADA |
+| 31 | PNEU HOPPER 100/80-18 | PNEU HOPPER 100/80-18 | IGUAL | Manter código SCADA |
+| 32 | PNEU HOPPER 100/90-18 S/C | PNEU HOPPER 100/90-18 S/C | IGUAL | Manter código SCADA |
+| 33 | PNEU HOPPER 80/100-18 S/C | PNEU HOPPER 80/100-18 S/C | IGUAL | Manter código SCADA |
+| 34 | PNEU SPEEDY 100/90-18 S/C | PNEU SPEEDY 100/90-18 S/C | IGUAL | Manter código SCADA |
+| 35 | PNEU READY 100/90-18 S/C | PNEU READY 100/90-18 S/C | IGUAL | Manter código SCADA |
+| 36 | PNEU READY 80/100-18 S/C | PNEU READY 80/100-18 S/C | IGUAL | Manter código SCADA |
+| 37 | PNEU HOPPER 90/90-18 S/C | PNEU HOPPER 90/90-18 S/C | IGUAL | Manter código SCADA |
+| 38 | PNEU HOPPER 2.75-18 S/C | PNEU HOPPER 2.75-18 S/C | IGUAL | Manter código SCADA |
+| 39 | PNEU READY 90/90-18 S/C | PNEU READY 90/90-18 S/C | IGUAL | Manter código SCADA |
+| 40 | PNEU WINGS 90/90-18 S/C | PNEU WINGS 90/90-18 S/C | IGUAL | Manter código SCADA |
+| 41 | PNEU WINGS 2.75-18 S/C | PNEU WINGS 2.75-18 S/C | IGUAL | Manter código SCADA |
+| 42 | PNEU SPEEDY 90/90-18 S/C | PNEU SPEEDY 90/90-18 S/C | IGUAL | Manter código SCADA |
+| 43 | PNEU SPEEDY 2.75-18 S/C | PNEU SPEEDY 2.75-18 S/C | IGUAL | Manter código SCADA |
+| 44 | - | PNEU SPEEDY 80/100-18 | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 45 | - | PNEU READY 100/80-18 | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 46 | - | PNEU SPEEDY 90/90-14 | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 47 | - | PNEU SPEEDY 100/90-14 | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 48 | - | PNEU RIVER 24 X 8 - 12 | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 49 | - | PNEU RIVER 24 X 10 - 11 | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 50 | - | PNEU OPTION 90/90-18 S/C | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 51 | - | PNEU HOPPER 100/80-18 S/C | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 52 | - | PNEU SPEEDY 80/100-18 S/C | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 53 | - | PNEU READY 100/80-18 S/C | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 54 | - | PNEU SPEEDY 90/90-14 S/C | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
+| 55 | - | PNEU SPEEDY 100/90-14 S/C | NOVO — CADASTRAR NO PLC | Cadastrar no PLC |
