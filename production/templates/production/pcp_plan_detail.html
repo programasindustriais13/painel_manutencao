@@ -16,6 +16,11 @@
             <p class="text-muted mb-0">Cadastrado por {{ plan.created_by.username|default:"Sistema PCP" }} em {{ plan.created_at|date:"d/m/Y H:i" }}</p>
         </div>
         <div class="d-flex gap-2">
+            {% if plan.status != "CANCELADO" and plan.status != "ATINGIDA" %}
+            <a href="{% url 'production:pcp_plan_edit' pk=plan.pk %}" class="btn btn-warning shadow-sm">
+                <i class="bi bi-pencil me-1"></i>Editar Programação
+            </a>
+            {% endif %}
             <a href="{% url 'production:pcp_plan_create' %}" class="btn btn-primary shadow-sm">
                 <i class="bi bi-plus-lg me-1"></i>Nova Programação PCP
             </a>
@@ -205,6 +210,59 @@
                 </table>
             </div>
         </div>
+    <!-- Tabela de Histórico de Alterações / Auditoria -->
+    {% if history_entries %}
+    <div class="card card-custom shadow-sm mt-4">
+        <div class="card-header bg-white py-3 border-bottom">
+            <h5 class="card-title fw-bold m-0 text-dark fs-6">
+                <i class="bi bi-clock-history me-2 text-warning"></i>Histórico de Alterações e Auditoria
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr class="fs-7 text-uppercase text-secondary">
+                            <th class="ps-4">Data/Hora</th>
+                            <th>Ação</th>
+                            <th>Usuário</th>
+                            <th class="text-center">Qtd (Antes -> Depois)</th>
+                            <th class="text-center">Turnos (Antes -> Depois)</th>
+                            <th>Motivo / Observações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for h in history_entries %}
+                        <tr>
+                            <td class="ps-4 fs-7 text-dark fw-semibold">
+                                {{ h.created_at|date:"d/m/Y H:i" }}
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary-subtle text-dark border">{{ h.get_action_type_display }}</span>
+                            </td>
+                            <td class="fs-7">
+                                {{ h.user.username|default:"Sistema" }}
+                            </td>
+                            <td class="text-center font-monospace fs-7">
+                                {% if h.quantity_before != None %}
+                                {{ h.quantity_before }} &rarr; <strong class="text-primary">{{ h.quantity_after }}</strong>
+                                {% else %}-{% endif %}
+                            </td>
+                            <td class="text-center fs-7">
+                                {% if h.shift_choice_before %}
+                                {{ h.shift_choice_before }} &rarr; <strong>{{ h.shift_choice_after }}</strong>
+                                {% else %}-{% endif %}
+                            </td>
+                            <td class="fs-7 text-muted">
+                                {{ h.reason|default:"-" }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
+    {% endif %}
 </div>
 {% endblock %}

@@ -22,6 +22,7 @@ from .models import (
     ProductionPCPSetting,
     ProductionPCPPlan,
     ProductionPCPPlanShiftTarget,
+    ProductionPCPPlanHistory,
 )
 
 
@@ -273,6 +274,13 @@ class ProductionPCPPlanAdmin(admin.ModelAdmin):
     search_fields = ("matriz__nome_exibicao", "matriz__codigo", "observacao")
     date_hierarchy = "data_hora_inicio"
     inlines = [ProductionPCPPlanShiftTargetInline]
+
+
+@admin.register(ProductionPCPPlanHistory)
+class ProductionPCPPlanHistoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "pcp_plan", "action_type", "user", "created_at")
+    list_filter = ("action_type", "created_at")
+    search_fields = ("pcp_plan__id", "reason")
 
 
 

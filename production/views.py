@@ -142,6 +142,13 @@ def pcp_plan_list(request):
     """
     plans_qs = ProductionPCPPlan.objects.select_related("matriz", "bladder", "created_by").prefetch_related("shift_targets__shift").order_by("-created_at")
 
+@lider_ou_pcp_required
+def pcp_plan_list(request):
+    """
+    Listagem de todas as Programações PCP com suporte a filtros, progresso e ações.
+    """
+    plans_qs = ProductionPCPPlan.objects.select_related("matriz", "bladder").order_by("-id")
+
     matriz_filter = request.GET.get("matriz_id", "").strip()
     status_filter = request.GET.get("status", "").strip()
 
@@ -150,11 +157,21 @@ def pcp_plan_list(request):
     if status_filter:
         plans_qs = plans_qs.filter(status=status_filter)
 
+    now = timezone.now()
+    plans_list = list(plans_qs)
+
+    for plan in plans_list:
+        realized = PCPCalculationService.get_plan_realized_quantity(plan)
+        plan.realized_total = realized
+        plan.progress_pct = round((realized / plan.quantidade_programada * 100), 1) if plan.quantidade_programada > 0 else 0.0
+        plan.can_delete = (plan.status == "PLANEJADO" and plan.data_hora_inicio > now and realized == 0)
+        plan.can_cancel = (not plan.can_delete and plan.status not in ["CANCELADO", "ATINGIDA"])
+
     max_cavities = PCPCalculationService.get_available_cavities_limit()
     matrices = ProductionMatrixCatalog.objects.filter(ativo=True).order_by("nome_exibicao", "codigo_scada")
 
     return render(request, "production/pcp_plan_list.html", {
-        "plans": plans_qs,
+        "plans": plans_list,
         "matrices": matrices,
         "max_cavities": max_cavities,
         "filters": {
@@ -199,7 +216,6 @@ def pcp_plan_create(request):
         else:
             messages.error(request, "Por favor, corrija os erros do formulário.")
     else:
-        # Initial datetime: agora formatado localmente
         initial_dt = timezone.localtime().replace(minute=0, second=0, microsecond=0)
         max_cavities = PCPCalculationService.get_available_cavities_limit()
         form = ProductionPCPPlanForm(initial={
@@ -219,16 +235,135 @@ def pcp_plan_create(request):
 
 
 @lider_ou_pcp_required
+def pcp_plan_edit(request, pk):
+    """
+    Formulário de edição de Programação PCP (em andamento ou não iniciada).
+    """
+    from .forms import ProductionPCPPlanForm
+
+    plan = get_object_or_404(ProductionPCPPlan.objects.select_related("matriz", "bladder"), pk=pk)
+    now = timezone.now()
+    realized = PCPCalculationService.get_plan_realized_quantity(plan)
+    is_started = (plan.status != "PLANEJADO" or plan.data_hora_inicio <= now or realized > 0)
+
+    if request.method == "POST":
+        form = ProductionPCPPlanForm(request.POST, instance=plan)
+        reason = request.POST.get("reason", "").strip()
+
+        if form.is_valid():
+            matriz = form.cleaned_data["matriz"]
+            start_dt = form.cleaned_data["data_hora_inicio"]
+            if start_dt and timezone.is_naive(start_dt):
+                start_dt = timezone.make_aware(start_dt, timezone.get_current_timezone())
+
+            quantity = form.cleaned_data["quantidade_programada"]
+            shift_choice = form.cleaned_data["turno_opcao"]
+            cavities = form.cleaned_data["cavidades_disponiveis"]
+
+            try:
+                if is_started:
+                    edited_plan = PCPCalculationService.edit_started_pcp_plan(
+                        plan=plan,
+                        new_quantity=quantity,
+                        new_shift_choice=shift_choice,
+                        new_cavities=cavities,
+                        user=request.user,
+                        reason=reason
+                    )
+                    messages.success(request, f"Programação PCP #{edited_plan.id} (em andamento) atualizada com sucesso!")
+                else:
+                    edited_plan = PCPCalculationService.edit_unstarted_pcp_plan(
+                        plan=plan,
+                        matrix_catalog=matriz,
+                        start_dt=start_dt,
+                        quantity=quantity,
+                        shift_choice=shift_choice,
+                        cavities=cavities,
+                        user=request.user,
+                        reason=reason
+                    )
+                    messages.success(request, f"Programação PCP #{edited_plan.id} recalculada e atualizada com sucesso!")
+                return redirect("production:pcp_plan_detail", pk=edited_plan.pk)
+            except Exception as e:
+                messages.error(request, f"Erro ao atualizar programação PCP: {e}")
+        else:
+            messages.error(request, "Por favor, corrija os erros do formulário.")
+    else:
+        form = ProductionPCPPlanForm(instance=plan)
+
+    max_cavities = PCPCalculationService.get_available_cavities_limit()
+    matrices = ProductionMatrixCatalog.objects.filter(ativo=True).order_by("nome_exibicao", "codigo_scada")
+
+    return render(request, "production/pcp_plan_form.html", {
+        "form": form,
+        "plan": plan,
+        "is_edit": True,
+        "is_started": is_started,
+        "realized_qty": realized,
+        "matrices": matrices,
+        "max_cavities": max_cavities,
+    })
+
+
+@lider_ou_pcp_required
+def pcp_plan_cancel(request, pk):
+    """
+    Cancela uma programação PCP em andamento com auditoria de motivo.
+    """
+    plan = get_object_or_404(ProductionPCPPlan, pk=pk)
+
+    if request.method == "POST":
+        reason = request.POST.get("reason", "Cancelamento via interface").strip()
+        try:
+            PCPCalculationService.cancel_pcp_plan(plan, user=request.user, reason=reason)
+            messages.success(request, f"Programação PCP #{plan.id} foi cancelada com sucesso. O histórico foi preservado.")
+        except Exception as e:
+            messages.error(request, f"Erro ao cancelar programação PCP #{plan.id}: {e}")
+
+    return redirect("production:pcp_plan_list")
+
+
+@lider_ou_pcp_required
+def pcp_plan_delete(request, pk):
+    """
+    Exclui fisicamente uma programação PCP não iniciada e sem produção associada.
+    """
+    plan = get_object_or_404(ProductionPCPPlan, pk=pk)
+
+    if request.method == "POST":
+        try:
+            PCPCalculationService.delete_pcp_plan(plan, user=request.user)
+            messages.success(request, f"Programação PCP #{plan.id} excluída com sucesso.")
+        except Exception as e:
+            messages.error(request, f"Não foi possível excluir a programação PCP #{plan.id}: {e}")
+
+    return redirect("production:pcp_plan_list")
+
+
+@lider_ou_pcp_required
 def pcp_plan_detail(request, pk):
     """
-    Detalhes e detalhamento por turno de uma Programação PCP (#id).
+    Detalhes e detalhamento por turno de uma Programação PCP (#id) com histórico de auditoria.
     """
     plan = get_object_or_404(ProductionPCPPlan.objects.select_related("matriz", "bladder", "created_by"), pk=pk)
     shift_targets = plan.shift_targets.select_related("shift", "target_legado").order_by("date", "shift__ordem_exibicao")
+    history_entries = plan.history_entries.select_related("user").order_by("-created_at")
+
+    realized = PCPCalculationService.get_plan_realized_quantity(plan)
+    progress_pct = round((realized / plan.quantidade_programada * 100), 1) if plan.quantidade_programada > 0 else 0.0
+    now = timezone.now()
+
+    can_delete = (plan.status == "PLANEJADO" and plan.data_hora_inicio > now and realized == 0)
+    can_cancel = (not can_delete and plan.status not in ["CANCELADO", "ATINGIDA"])
 
     return render(request, "production/pcp_plan_detail.html", {
         "plan": plan,
         "shift_targets": shift_targets,
+        "history_entries": history_entries,
+        "realized_total": realized,
+        "progress_pct": progress_pct,
+        "can_delete": can_delete,
+        "can_cancel": can_cancel,
     })
 
 

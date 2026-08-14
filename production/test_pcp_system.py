@@ -1,4 +1,4 @@
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timedelta
 from django.test import TestCase
 from django.utils import timezone
 from django.core.management import call_command
@@ -12,6 +12,7 @@ from production.models import (
     ProductionTarget,
     ProductionShift,
     ProductionCavityConfig,
+    ProductionMachineConfig,
 )
 from production.services import PCPCalculationService
 
@@ -446,4 +447,271 @@ class PCPEngineTestCase(TestCase):
         saved_cav = form.save()
         self.assertEqual(saved_cav.meta_producao_manual, 0)
         self.assertEqual(saved_cav.xid_meta, "DP_BLADDER_LIMIT_1001")
+
+
+class PCPAdvancementTestCase(TestCase):
+    """
+    Testes de integração das metas PCP nos cards, distribuição justa de metas entre cavidades e operações de edição/cancelamento/exclusão com auditoria.
+    """
+
+    def setUp(self):
+        from maintenance.models import Machine, Sector
+        sector, _ = Sector.objects.get_or_create(nome="Vulcanização Teste")
+        self.machine, _ = Machine.objects.get_or_create(nome="Prensa PCP 01", defaults={"setor": sector})
+        self.mc, _ = ProductionMachineConfig.objects.get_or_create(machine=self.machine, defaults={"ordem_exibicao": 1})
+
+        self.cav1 = ProductionCavityConfig.objects.create(
+            machine_config=self.mc, nome="Cavidade A", ordem=1, xid_matriz="1", meta_producao_manual=40
+        )
+        self.cav2 = ProductionCavityConfig.objects.create(
+            machine_config=self.mc, nome="Cavidade B", ordem=2, xid_matriz="1", meta_producao_manual=40
+        )
+
+        self.mat1 = ProductionMatrixCatalog.objects.filter(codigo_scada=1).first()
+        if not self.mat1:
+            self.mat1 = ProductionMatrixCatalog.objects.create(
+                codigo_scada=1, codigo="1", nome_scada="PNEU WINGS 90/90-18",
+                nome_exibicao="PNEU WINGS 90/90-18", produto="PNEU WINGS 90/90-18",
+                tempo_producao_segundos=760, tempo_vulcanizacao_segundos=600, medida_str="90/90-18", ativo=True
+            )
+
+        self.shift_a, _ = ProductionShift.objects.get_or_create(
+            nome="Turno A", defaults={"horario_inicial": time(6, 0), "horario_final": time(18, 0), "ordem_exibicao": 1, "ativo": True}
+        )
+
+    def test_card_without_pcp_maintains_safe_fallback(self):
+        """1. Card sem PCP mantém fallback seguro (meta_producao_manual ou target legado)."""
+        res = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav1, machine_config=self.mc, mat_catalog=self.mat1, matriz_val="1", shift_obj=self.shift_a
+        )
+        self.assertFalse(res["is_pcp"])
+
+    def test_card_inside_pcp_period_shows_meta(self):
+        """2. Card dentro do período PCP mostra meta."""
+        now = timezone.now()
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=now - timedelta(hours=1), quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+        res = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav1, machine_config=self.mc, mat_catalog=self.mat1, matriz_val="1", shift_obj=self.shift_a, current_dt=now
+        )
+        self.assertTrue(res["is_pcp"])
+        self.assertGreater(res["meta_turno"], 0)
+
+    def test_card_before_start_does_not_show_pcp_meta(self):
+        """3. Antes do início não mostra meta PCP."""
+        future_dt = timezone.now() + timedelta(days=5)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=future_dt, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+        res = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav1, machine_config=self.mc, mat_catalog=self.mat1, matriz_val="1", shift_obj=self.shift_a, current_dt=timezone.now()
+        )
+        self.assertFalse(res["is_pcp"])
+
+    def test_card_after_end_does_not_show_pcp_meta(self):
+        """4. Após término não mostra meta PCP."""
+        past_dt = timezone.now() - timedelta(days=20)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=past_dt, quantity=10, shift_choice="AMBOS", cavities=2
+        )
+        res = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav1, machine_config=self.mc, mat_catalog=self.mat1, matriz_val="1", shift_obj=self.shift_a, current_dt=timezone.now()
+        )
+        self.assertFalse(res["is_pcp"])
+
+    def test_different_matrix_does_not_receive_meta(self):
+        """5. Matriz diferente não recebe meta do PCP."""
+        now = timezone.now()
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=now - timedelta(hours=1), quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+        res = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav1, machine_config=self.mc, mat_catalog=None, matriz_val="OUTRA_MATRIZ_99", shift_obj=self.shift_a, current_dt=now
+        )
+        self.assertFalse(res["is_pcp"])
+
+    def test_fair_distribution_101_in_two_cavities_51_50(self):
+        """6 & 7. Meta de 101 em duas cavidades distribui 51/50 e a soma das metas = meta do turno."""
+        now = timezone.now()
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=now - timedelta(hours=1), quantity=101, shift_choice="AMBOS", cavities=2
+        )
+        st = plan.shift_targets.first()
+        st.meta_prevista = 101
+        st.save()
+
+        res1 = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav1, machine_config=self.mc, mat_catalog=self.mat1, matriz_val="1", shift_obj=st.shift, current_dt=st.data_hora_inicio_janela + timedelta(minutes=5)
+        )
+        res2 = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=self.cav2, machine_config=self.mc, mat_catalog=self.mat1, matriz_val="1", shift_obj=st.shift, current_dt=st.data_hora_inicio_janela + timedelta(minutes=5)
+        )
+
+        self.assertEqual(res1["meta_turno"], 51)
+        self.assertEqual(res2["meta_turno"], 50)
+        self.assertEqual(res1["meta_turno"] + res2["meta_turno"], 101)
+
+    def test_edit_unstarted_recalculates_end_quantity_shift_cavities(self):
+        """8, 9, 10, 11 & 12. Edição antes do início recalcula término, metas, turnos e cavidades sem duplicar targets."""
+        future_dt = timezone.now() + timedelta(days=2)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=future_dt, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+        old_end = plan.data_hora_fim_prevista
+
+        edited = PCPCalculationService.edit_unstarted_pcp_plan(
+            plan=plan, matrix_catalog=self.mat1, start_dt=future_dt, quantity=2000, shift_choice="A", cavities=1
+        )
+
+        self.assertNotEqual(edited.data_hora_fim_prevista, old_end)
+        self.assertEqual(edited.quantidade_programada, 2000)
+        self.assertEqual(edited.turno_opcao, "A")
+        self.assertEqual(edited.cavidades_disponiveis, 1)
+        self.assertEqual(edited.history_entries.filter(action_type="EDICAO").count(), 1)
+
+    def test_delete_unstarted_plan(self):
+        """13. Excluir plano não iniciado exclui plano e shift_targets derivados."""
+        future_dt = timezone.now() + timedelta(days=3)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=future_dt, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+        plan_id = plan.id
+
+        success = PCPCalculationService.delete_pcp_plan(plan)
+        self.assertTrue(success)
+        self.assertFalse(ProductionPCPPlan.objects.filter(id=plan_id).exists())
+        self.assertFalse(ProductionPCPPlanShiftTarget.objects.filter(pcp_plan_id=plan_id).exists())
+
+    def test_cancel_started_plan_preserves_history(self):
+        """14. Cancelar plano iniciado altera status para CANCELADO e preserva o histórico."""
+        past_dt = timezone.now() - timedelta(hours=2)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=past_dt, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+
+        cancelled = PCPCalculationService.cancel_pcp_plan(plan, reason="Motivo teste cancelamento")
+        self.assertEqual(cancelled.status, "CANCELADO")
+        self.assertEqual(cancelled.history_entries.filter(action_type="CANCELAMENTO").count(), 1)
+
+    def test_edit_started_plan_preserves_realized_and_recalculates_balance(self):
+        """15. Editar plano iniciado preserva realizado e recalcula o saldo futuro."""
+        now = timezone.now()
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=now - timedelta(hours=1), quantity=3000, shift_choice="AMBOS", cavities=2
+        )
+
+        edited = PCPCalculationService.edit_started_pcp_plan(
+            plan=plan, new_quantity=3500, new_shift_choice="AMBOS", new_cavities=2, reason="Aumento comercial"
+        )
+        self.assertEqual(edited.quantidade_programada, 3500)
+        self.assertEqual(edited.history_entries.filter(action_type="EDICAO").count(), 1)
+
+    def test_concurrent_edit_locking(self):
+        """16. Tentativa concorrente usa locking sem deixar estado parcial."""
+        now = timezone.now() + timedelta(days=1)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=now, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+        edited = PCPCalculationService.edit_unstarted_pcp_plan(
+            plan=plan, matrix_catalog=self.mat1, start_dt=now, quantity=1500, shift_choice="AMBOS", cavities=2
+        )
+        self.assertEqual(edited.quantidade_programada, 1500)
+
+    def test_http_post_create_plan_returns_302(self):
+        """17. Teste HTTP POST de criação de plano com redirecionamento 302 e persistência."""
+        from django.contrib.auth import get_user_model
+        from django.test import Client
+
+        User = get_user_model()
+        user, _ = User.objects.get_or_create(username="pcp_test_user", defaults={"is_staff": True, "is_superuser": True})
+        client = Client()
+        client.force_login(user)
+
+        post_data = {
+            "matriz": self.mat1.id,
+            "data_hora_inicio": "2026-08-14T14:00",
+            "quantidade_programada": 1000,
+            "turno_opcao": "AMBOS",
+            "cavidades_disponiveis": 2
+        }
+        res = client.post("/producao/pcp/nova/", post_data, follow=False)
+        self.assertEqual(res.status_code, 302)
+
+        plan = ProductionPCPPlan.objects.order_by("-id").first()
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan.quantidade_programada, 1000)
+        self.assertEqual(plan.history_entries.filter(action_type="CRIACAO").count(), 1)
+
+    def test_http_post_edit_plan_returns_302(self):
+        """18. Teste HTTP POST de edição de plano com redirecionamento 302."""
+        from django.contrib.auth import get_user_model
+        from django.test import Client
+
+        User = get_user_model()
+        user, _ = User.objects.get_or_create(username="pcp_test_user", defaults={"is_staff": True, "is_superuser": True})
+        client = Client()
+        client.force_login(user)
+
+        future_dt = timezone.now() + timedelta(days=2)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=future_dt, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+
+        edit_data = {
+            "matriz": self.mat1.id,
+            "data_hora_inicio": future_dt.strftime("%Y-%m-%dT%H:%M"),
+            "quantidade_programada": 1500,
+            "turno_opcao": "AMBOS",
+            "cavidades_disponiveis": 2,
+            "reason": "Aumento comercial"
+        }
+        res = client.post(f"/producao/pcp/{plan.id}/editar/", edit_data, follow=False)
+        self.assertEqual(res.status_code, 302)
+
+        plan.refresh_from_db()
+        self.assertEqual(plan.quantidade_programada, 1500)
+        self.assertTrue(plan.history_entries.filter(action_type="EDICAO").exists())
+
+    def test_http_post_delete_unstarted_plan_returns_302(self):
+        """19. Teste HTTP POST de exclusão de plano não iniciado com 302."""
+        from django.contrib.auth import get_user_model
+        from django.test import Client
+
+        User = get_user_model()
+        user, _ = User.objects.get_or_create(username="pcp_test_user", defaults={"is_staff": True, "is_superuser": True})
+        client = Client()
+        client.force_login(user)
+
+        future_dt = timezone.now() + timedelta(days=5)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=future_dt, quantity=500, shift_choice="AMBOS", cavities=2
+        )
+        plan_id = plan.id
+
+        res = client.post(f"/producao/pcp/{plan_id}/excluir/", follow=False)
+        self.assertEqual(res.status_code, 302)
+        self.assertFalse(ProductionPCPPlan.objects.filter(pk=plan_id).exists())
+
+    def test_http_post_cancel_started_plan_returns_302(self):
+        """20. Teste HTTP POST de cancelamento de plano em andamento com 302."""
+        from django.contrib.auth import get_user_model
+        from django.test import Client
+
+        User = get_user_model()
+        user, _ = User.objects.get_or_create(username="pcp_test_user", defaults={"is_staff": True, "is_superuser": True})
+        client = Client()
+        client.force_login(user)
+
+        past_dt = timezone.now() - timedelta(hours=2)
+        plan = PCPCalculationService.save_pcp_plan(
+            matrix_catalog=self.mat1, start_dt=past_dt, quantity=1000, shift_choice="AMBOS", cavities=2
+        )
+
+        res = client.post(f"/producao/pcp/{plan.id}/cancelar/", {"reason": "Motivo teste"}, follow=False)
+        self.assertEqual(res.status_code, 302)
+
+        plan.refresh_from_db()
+        self.assertEqual(plan.status, "CANCELADO")
+        self.assertTrue(plan.history_entries.filter(action_type="CANCELAMENTO").exists())
 

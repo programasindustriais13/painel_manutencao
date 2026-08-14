@@ -30,6 +30,7 @@ from .models import (
     ProductionPCPSetting,
     ProductionPCPPlan,
     ProductionPCPPlanShiftTarget,
+    ProductionPCPPlanHistory,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
@@ -761,27 +762,52 @@ class ProductionStateService:
             lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
             lote_val = str(lote_entry.get("str_value", "")).strip() if lote_entry else ""
 
-            # Resolução de Meta (SPEC 07C: Meta Planejada vs Fallback Meta Manual)
+            # Resolução de Meta (PCP Target Ativo vs Fallback Legado)
             s_obj = shift_info.get("shift_obj") if shift_info else None
-            target_obj = None
-            if matriz_val:
-                target_obj = ProductionTarget.objects.filter(
-                    date=timezone.now().date(),
-                    status="ATIVO",
-                    matriz_codigo__iexact=matriz_val
-                ).filter(
-                    Q(shift=s_obj) | Q(shift__isnull=True)
-                ).order_by("-shift_id").first()
+            mat_catalog = None
+            if matriz_val and matriz_val != "Não informada":
+                mat_catalog = ProductionMatrixCatalog.objects.filter(
+                    Q(codigo__iexact=matriz_val) |
+                    Q(nome_scada__iexact=matriz_val) |
+                    Q(nome_exibicao__iexact=matriz_val) |
+                    Q(produto__iexact=matriz_val)
+                ).first()
 
-            if target_obj:
-                c_meta_turno = target_obj.planned_quantity
-                c_meta_diaria = target_obj.planned_quantity
+            pcp_info = PCPCalculationService.resolve_pcp_target_for_cavity(
+                cavity=cav,
+                machine_config=config,
+                mat_catalog=mat_catalog,
+                matriz_val=matriz_val,
+                shift_obj=s_obj
+            )
+
+            if pcp_info["is_pcp"]:
+                c_meta_turno = pcp_info["meta_turno"]
+                c_meta_diaria = pcp_info["meta_turno"]
+                is_pcp = True
+                pcp_divergencia = pcp_info.get("pcp_divergencia")
             else:
-                c_meta_diaria = cav.meta_producao_manual or 0
-                if has_shifts:
-                    c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+                is_pcp = False
+                pcp_divergencia = None
+                target_obj = None
+                if matriz_val:
+                    target_obj = ProductionTarget.objects.filter(
+                        date=timezone.now().date(),
+                        status="ATIVO",
+                        matriz_codigo__iexact=matriz_val
+                    ).filter(
+                        Q(shift=s_obj) | Q(shift__isnull=True)
+                    ).order_by("-shift_id").first()
+
+                if target_obj:
+                    c_meta_turno = target_obj.planned_quantity
+                    c_meta_diaria = target_obj.planned_quantity
                 else:
-                    c_meta_turno = c_meta_diaria
+                    c_meta_diaria = cav.meta_producao_manual or 0
+                    if has_shifts:
+                        c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+                    else:
+                        c_meta_turno = c_meta_diaria
 
             if has_shifts and s_obj:
                 acc_rec = ProductionShiftAccumulated.objects.filter(
@@ -848,6 +874,8 @@ class ProductionStateService:
                 "meta": c_meta_diaria,
                 "meta_diaria": c_meta_diaria,
                 "meta_turno": c_meta_turno,
+                "is_pcp": is_pcp,
+                "pcp_divergencia": pcp_divergencia,
                 "producao_turno": c_prod_turno,
                 "diferenca_meta_turno": diferenca_meta_turno,
                 "diferenca_meta_turno_str": diferenca_meta_turno_str,
@@ -2334,36 +2362,53 @@ class ProductionStateService:
                     Q(produto__iexact=matriz_val)
                 ).first()
 
-        target_obj = None
-        if matrix_catalog_obj:
-            target_obj = ProductionTarget.objects.filter(
-                date=timezone.now().date(),
-                matrix_catalog=matrix_catalog_obj,
-                status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
-            ).filter(
-                Q(shift=s_obj) | Q(shift__isnull=True)
-            ).order_by("-shift_id").first()
-        elif matriz_val and matriz_val != "Não informada":
-            target_obj = ProductionTarget.objects.filter(
-                date=timezone.now().date(),
-                matriz_codigo__iexact=matriz_val,
-                status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
-            ).filter(
-                Q(shift=s_obj) | Q(shift__isnull=True)
-            ).order_by("-shift_id").first()
+        pcp_info = PCPCalculationService.resolve_pcp_target_for_cavity(
+            cavity=cavity,
+            machine_config=cavity.machine_config,
+            mat_catalog=matrix_catalog_obj,
+            matriz_val=matriz_val,
+            shift_obj=s_obj
+        )
 
-        meta_total_modelo = target_obj.planned_quantity if target_obj else 0
-        if target_obj:
-            c_meta_turno = target_obj.planned_quantity
-            c_meta_diaria = target_obj.planned_quantity
+        if pcp_info["is_pcp"]:
+            c_meta_turno = pcp_info["meta_turno"]
+            c_meta_diaria = pcp_info["meta_turno"]
+            meta_total_modelo = pcp_info["meta_total_turno"]
+            is_pcp = True
+            pcp_divergencia = pcp_info.get("pcp_divergencia")
         else:
-            c_meta_diaria = cavity.meta_producao_manual or 0
-            effective_percent = active_shift_info.get("effective_percent", 100.0) if active_shift_info else 100.0
-            has_shifts = active_shift_info.get("has_shifts", False) if active_shift_info else False
-            if has_shifts:
-                c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+            is_pcp = False
+            pcp_divergencia = None
+            target_obj = None
+            if matrix_catalog_obj:
+                target_obj = ProductionTarget.objects.filter(
+                    date=timezone.now().date(),
+                    matrix_catalog=matrix_catalog_obj,
+                    status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
+                ).filter(
+                    Q(shift=s_obj) | Q(shift__isnull=True)
+                ).order_by("-shift_id").first()
+            elif matriz_val and matriz_val != "Não informada":
+                target_obj = ProductionTarget.objects.filter(
+                    date=timezone.now().date(),
+                    matriz_codigo__iexact=matriz_val,
+                    status__in=["PLANEJADA", "AGUARDANDO_INSTALACAO", "EM_PRODUCAO", "ATINGIDA", "CONCLUIDA_PARCIAL", "ATIVO"]
+                ).filter(
+                    Q(shift=s_obj) | Q(shift__isnull=True)
+                ).order_by("-shift_id").first()
+
+            meta_total_modelo = target_obj.planned_quantity if target_obj else 0
+            if target_obj:
+                c_meta_turno = target_obj.planned_quantity
+                c_meta_diaria = target_obj.planned_quantity
             else:
-                c_meta_turno = c_meta_diaria
+                c_meta_diaria = cavity.meta_producao_manual or 0
+                effective_percent = active_shift_info.get("effective_percent", 100.0) if active_shift_info else 100.0
+                has_shifts = active_shift_info.get("has_shifts", False) if active_shift_info else False
+                if has_shifts:
+                    c_meta_turno = round(c_meta_diaria * (effective_percent / 100.0))
+                else:
+                    c_meta_turno = c_meta_diaria
 
         producao_total_modelo = 0
         if s_obj and matrix_catalog_obj and matrix_catalog_obj.codigo_scada:
@@ -2610,9 +2655,15 @@ class PCPCalculationService:
         shift_b = next((s for s in shifts if "2" in s.nome or "B" in s.nome.upper()), shifts[1] if len(shifts) > 1 else shift_a)
 
         if not shift_a:
-            shift_a = ProductionShift(id=1, nome="Turno A", horario_inicial=time(6, 0), horario_final=time(18, 0), ordem_exibicao=1)
+            shift_a, _ = ProductionShift.objects.get_or_create(
+                nome="Turno A",
+                defaults={"horario_inicial": time(6, 0), "horario_final": time(18, 0), "ordem_exibicao": 1, "ativo": True}
+            )
         if not shift_b:
-            shift_b = ProductionShift(id=2, nome="Turno B", horario_inicial=time(18, 0), horario_final=time(6, 0), ordem_exibicao=2)
+            shift_b, _ = ProductionShift.objects.get_or_create(
+                nome="Turno B",
+                defaults={"horario_inicial": time(18, 0), "horario_final": time(6, 0), "ordem_exibicao": 2, "ativo": True}
+            )
 
         windows = []
         base_date = start_dt.date() - timedelta(days=1)
@@ -2925,11 +2976,385 @@ class PCPCalculationService:
                 pcp_plan=plan,
                 date=d_val,
                 shift=s_obj,
-                data_hora_inicio_janela=calc["start_dt"], # fallback seguro para datetime
+                data_hora_inicio_janela=calc["start_dt"],
                 data_hora_fim_janela=calc["final_dt"],
                 meta_prevista=meta_val,
                 target_legado=t_obj,
             )
 
+        ProductionPCPPlanHistory.objects.create(
+            pcp_plan=plan,
+            user=user if user and getattr(user, "is_authenticated", False) else None,
+            action_type="CRIACAO",
+            quantity_before=None,
+            quantity_after=quantity,
+            shift_choice_before=None,
+            shift_choice_after=shift_choice,
+            cavities_before=None,
+            cavities_after=cavities,
+            final_dt_before=None,
+            final_dt_after=calc["final_dt"],
+            reason="Criação da programação PCP."
+        )
+
         return plan
+
+    @classmethod
+    def resolve_pcp_target_for_cavity(cls, cavity, machine_config, mat_catalog, matriz_val, shift_obj, current_dt=None):
+        """
+        Resolve a meta PCP do turno para uma cavidade específica com distribuição justa entre cavidades participantes.
+        """
+        if not current_dt:
+            current_dt = timezone.now()
+        current_date = current_dt.date()
+
+        if not mat_catalog and matriz_val and matriz_val not in ["Não informada", "", "None"]:
+            mat_catalog = ProductionMatrixCatalog.objects.filter(
+                Q(codigo__iexact=matriz_val) |
+                Q(nome_scada__iexact=matriz_val) |
+                Q(nome_exibicao__iexact=matriz_val) |
+                Q(produto__iexact=matriz_val)
+            ).first()
+
+        if not mat_catalog:
+            return {"is_pcp": False, "meta_turno": 0}
+
+        plans = ProductionPCPPlan.objects.filter(
+            matriz=mat_catalog,
+            status__in=["PLANEJADO", "EM_PRODUCAO"]
+        ).order_by("-id")
+
+        active_plan = None
+        for plan in plans:
+            if plan.data_hora_inicio <= current_dt <= plan.data_hora_fim_prevista:
+                active_plan = plan
+                break
+            if shift_obj:
+                has_st = ProductionPCPPlanShiftTarget.objects.filter(
+                    pcp_plan=plan,
+                    date=current_date,
+                    shift=shift_obj
+                ).exists()
+                if has_st:
+                    active_plan = plan
+                    break
+
+        if not active_plan:
+            return {"is_pcp": False, "meta_turno": 0}
+
+        st = None
+        if shift_obj:
+            st = ProductionPCPPlanShiftTarget.objects.filter(
+                pcp_plan=active_plan,
+                date=current_date,
+                shift=shift_obj
+            ).first()
+
+        if not st:
+            st = ProductionPCPPlanShiftTarget.objects.filter(
+                pcp_plan=active_plan,
+                data_hora_inicio_janela__lte=current_dt,
+                data_hora_fim_janela__gte=current_dt
+            ).first()
+
+        if not st:
+            return {"is_pcp": False, "meta_turno": 0}
+
+        meta_turno_total = st.meta_prevista
+        cavidades_previstas = active_plan.cavidades_disponiveis
+
+        matching_cavities = []
+        if machine_config:
+            all_cavs = list(machine_config.cavities.all().order_by("ordem", "id"))
+            for c in all_cavs:
+                c_mat = getattr(c, "xid_matriz", "") or ""
+                if c_mat and (c_mat.strip().lower() == str(mat_catalog.codigo_scada).lower() or
+                              c_mat.strip().lower() in mat_catalog.nome_exibicao.lower() or
+                              c_mat.strip().lower() == mat_catalog.codigo.lower() or
+                              (matriz_val and c_mat.strip().lower() == matriz_val.strip().lower())):
+                    matching_cavities.append(c)
+
+        if not matching_cavities:
+            matching_cavities = [cavity]
+
+        n_detectadas = len(matching_cavities)
+        n_participantes = min(n_detectadas, cavidades_previstas)
+        if n_participantes < 1:
+            n_participantes = 1
+
+        try:
+            cav_index = [c.id for c in matching_cavities].index(cavity.id)
+        except ValueError:
+            cav_index = 0
+
+        if cav_index < n_participantes:
+            base_meta = meta_turno_total // n_participantes
+            resto = meta_turno_total % n_participantes
+            meta_cavidade = base_meta + (1 if cav_index < resto else 0)
+        else:
+            meta_cavidade = 0
+
+        pcp_divergencia = None
+        if n_detectadas != cavidades_previstas:
+            pcp_divergencia = f"PCP prevê {cavidades_previstas} cavidade(s); {n_detectadas} detectada(s)."
+
+        return {
+            "is_pcp": True,
+            "meta_turno": meta_cavidade,
+            "meta_total_turno": meta_turno_total,
+            "pcp_plan_id": active_plan.id,
+            "pcp_divergencia": pcp_divergencia
+        }
+
+    @classmethod
+    def get_plan_realized_quantity(cls, plan) -> int:
+        """
+        Calcula a quantidade acumulada produzida para um plano PCP.
+        """
+        if not plan or not plan.matriz:
+            return 0
+        code_scada = plan.matriz.codigo_scada
+        sts = plan.shift_targets.all()
+        if not sts:
+            return 0
+
+        total_realized = 0
+        for st in sts:
+            accs = ProductionShiftAccumulated.objects.filter(
+                date=st.date,
+                shift=st.shift
+            )
+            for acc in accs:
+                if acc.matriz and (str(code_scada) in str(acc.matriz) or plan.matriz.nome_exibicao in str(acc.matriz)):
+                    total_realized += acc.quantity_accumulated
+        return total_realized
+
+    @classmethod
+    def edit_unstarted_pcp_plan(cls, plan, matrix_catalog, start_dt, quantity, shift_choice, cavities, user=None, reason=None):
+        """
+        Edita uma programação PCP não iniciada recalulando integralmente perdas, término e metas de turno.
+        """
+        from django.db import transaction
+
+        with transaction.atomic(using="default"):
+            plan_locked = ProductionPCPPlan.objects.select_for_update().get(pk=plan.pk)
+
+            qty_before = plan_locked.quantidade_programada
+            shift_before = plan_locked.turno_opcao
+            cavities_before = plan_locked.cavidades_disponiveis
+            final_dt_before = plan_locked.data_hora_fim_prevista
+
+            calc = cls.calculate_plan(matrix_catalog, start_dt, quantity, shift_choice, cavities)
+
+            for st in list(plan_locked.shift_targets.all()):
+                if st.target_legado:
+                    st.target_legado.delete()
+                st.delete()
+
+            plan_locked.matriz = matrix_catalog
+            plan_locked.data_hora_inicio = start_dt
+            plan_locked.quantidade_programada = quantity
+            plan_locked.turno_opcao = shift_choice
+            plan_locked.cavidades_disponiveis = cavities
+            if calc["bladder_info"]["auto_selected"]:
+                plan_locked.bladder = calc["bladder_info"]["auto_selected"]
+            plan_locked.tempo_producao_utilizado = calc["tempo_producao"]
+            plan_locked.lixo_estimado = calc["lixo_estimado"]
+            plan_locked.ia_estimada = calc["ia_estimada"]
+            plan_locked.perda_total_estimada = calc["perda_total_estimada"]
+            plan_locked.producao_boa_estimada = calc["producao_boa_estimada"]
+            plan_locked.data_hora_fim_prevista = calc["final_dt"]
+            plan_locked.updated_by = user if user and getattr(user, "is_authenticated", False) else None
+            plan_locked.save()
+
+            for st in calc["shift_targets"]:
+                d_val = st["date"]
+                s_obj = st["shift"]
+                meta_val = st["meta_prevista"]
+
+                t_obj, _ = ProductionTarget.objects.update_or_create(
+                    date=d_val,
+                    shift=s_obj,
+                    matrix_catalog=matrix_catalog,
+                    defaults={
+                        "matriz_codigo": matrix_catalog.codigo,
+                        "produto": matrix_catalog.nome_exibicao,
+                        "planned_quantity": meta_val,
+                        "status": "PLANEJADA",
+                        "observation": f"Gerado automaticamente pelo PCP Plan #{plan_locked.id}",
+                        "created_by": user if user and getattr(user, "is_authenticated", False) else None,
+                    }
+                )
+
+                ProductionPCPPlanShiftTarget.objects.create(
+                    pcp_plan=plan_locked,
+                    date=d_val,
+                    shift=s_obj,
+                    data_hora_inicio_janela=start_dt,
+                    data_hora_fim_janela=calc["final_dt"],
+                    meta_prevista=meta_val,
+                    target_legado=t_obj,
+                )
+
+            ProductionPCPPlanHistory.objects.create(
+                pcp_plan=plan_locked,
+                user=user if user and getattr(user, "is_authenticated", False) else None,
+                action_type="EDICAO",
+                quantity_before=qty_before,
+                quantity_after=quantity,
+                shift_choice_before=shift_before,
+                shift_choice_after=shift_choice,
+                cavities_before=cavities_before,
+                cavities_after=cavities,
+                final_dt_before=final_dt_before,
+                final_dt_after=calc["final_dt"],
+                reason=reason or "Edição de programação não iniciada."
+            )
+
+            return plan_locked
+
+    @classmethod
+    def edit_started_pcp_plan(cls, plan, new_quantity, new_shift_choice, new_cavities, user=None, reason=None):
+        """
+        Edita uma programação em andamento preservando o histórico de produção já realizada.
+        """
+        from django.db import transaction
+
+        with transaction.atomic(using="default"):
+            plan_locked = ProductionPCPPlan.objects.select_for_update().get(pk=plan.pk)
+
+            qty_before = plan_locked.quantidade_programada
+            shift_before = plan_locked.turno_opcao
+            cavities_before = plan_locked.cavidades_disponiveis
+            final_dt_before = plan_locked.data_hora_fim_prevista
+
+            now = timezone.now()
+            realized_qty = cls.get_plan_realized_quantity(plan_locked)
+            remaining_qty = max(0, new_quantity - realized_qty)
+
+            future_targets = plan_locked.shift_targets.filter(data_hora_inicio_janela__gte=now)
+            for st in list(future_targets):
+                if st.target_legado:
+                    st.target_legado.delete()
+                st.delete()
+
+            if remaining_qty > 0:
+                recalc_start = now
+                calc = cls.calculate_plan(
+                    matrix_catalog=plan_locked.matriz,
+                    start_dt=recalc_start,
+                    quantity=remaining_qty,
+                    shift_choice=new_shift_choice,
+                    cavities=new_cavities
+                )
+                new_final_dt = calc["final_dt"]
+
+                for st in calc["shift_targets"]:
+                    d_val = st["date"]
+                    s_obj = st["shift"]
+                    meta_val = st["meta_prevista"]
+
+                    t_obj, _ = ProductionTarget.objects.update_or_create(
+                        date=d_val,
+                        shift=s_obj,
+                        matrix_catalog=plan_locked.matriz,
+                        defaults={
+                            "matriz_codigo": plan_locked.matriz.codigo,
+                            "produto": plan_locked.matriz.nome_exibicao,
+                            "planned_quantity": meta_val,
+                            "status": "PLANEJADA",
+                            "observation": f"Gerado automaticamente pelo PCP Plan #{plan_locked.id} (recalculado)",
+                            "created_by": user if user and getattr(user, "is_authenticated", False) else None,
+                        }
+                    )
+
+                    ProductionPCPPlanShiftTarget.objects.update_or_create(
+                        pcp_plan=plan_locked,
+                        date=d_val,
+                        shift=s_obj,
+                        defaults={
+                            "data_hora_inicio_janela": recalc_start,
+                            "data_hora_fim_janela": new_final_dt,
+                            "meta_prevista": meta_val,
+                            "target_legado": t_obj,
+                        }
+                    )
+            else:
+                new_final_dt = now
+
+            plan_locked.quantidade_programada = new_quantity
+            plan_locked.turno_opcao = new_shift_choice
+            plan_locked.cavidades_disponiveis = new_cavities
+            plan_locked.data_hora_fim_prevista = new_final_dt
+            plan_locked.updated_by = user if user and getattr(user, "is_authenticated", False) else None
+            plan_locked.save()
+
+            ProductionPCPPlanHistory.objects.create(
+                pcp_plan=plan_locked,
+                user=user if user and getattr(user, "is_authenticated", False) else None,
+                action_type="EDICAO",
+                quantity_before=qty_before,
+                quantity_after=new_quantity,
+                shift_choice_before=shift_before,
+                shift_choice_after=new_shift_choice,
+                cavities_before=cavities_before,
+                cavities_after=new_cavities,
+                final_dt_before=final_dt_before,
+                final_dt_after=new_final_dt,
+                reason=reason or f"Edição de plano em andamento (Realizado: {realized_qty}, Saldo recalculado: {remaining_qty})."
+            )
+
+            return plan_locked
+
+    @classmethod
+    def cancel_pcp_plan(cls, plan, user=None, reason=None):
+        """
+        Cancela um plano PCP em andamento preservando todo o histórico.
+        """
+        from django.db import transaction
+
+        with transaction.atomic(using="default"):
+            plan_locked = ProductionPCPPlan.objects.select_for_update().get(pk=plan.pk)
+            plan_locked.status = "CANCELADO"
+            plan_locked.updated_by = user if user and getattr(user, "is_authenticated", False) else None
+            plan_locked.save()
+
+            for st in plan_locked.shift_targets.all():
+                if st.target_legado:
+                    st.target_legado.status = "CANCELADO"
+                    st.target_legado.save()
+
+            ProductionPCPPlanHistory.objects.create(
+                pcp_plan=plan_locked,
+                user=user if user and getattr(user, "is_authenticated", False) else None,
+                action_type="CANCELAMENTO",
+                quantity_before=plan_locked.quantidade_programada,
+                quantity_after=plan_locked.quantidade_programada,
+                reason=reason or "Programação cancelada."
+            )
+
+            return plan_locked
+
+    @classmethod
+    def delete_pcp_plan(cls, plan, user=None, reason=None):
+        """
+        Exclui fisicamente um plano PCP que NUNCA iniciou e não possui produção real associada.
+        """
+        from django.db import transaction
+
+        with transaction.atomic(using="default"):
+            plan_locked = ProductionPCPPlan.objects.select_for_update().get(pk=plan.pk)
+            realized = cls.get_plan_realized_quantity(plan_locked)
+            now = timezone.now()
+
+            if plan_locked.status != "PLANEJADO" and (plan_locked.data_hora_inicio <= now or realized > 0):
+                raise ValueError("Esta programação já iniciou ou possui produção realizada. Use a opção Cancelar.")
+
+            for st in list(plan_locked.shift_targets.all()):
+                if st.target_legado:
+                    st.target_legado.delete()
+                st.delete()
+
+            plan_locked.delete()
+            return True
 

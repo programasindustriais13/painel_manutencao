@@ -66,7 +66,7 @@
                             <th>Medida</th>
                             <th class="text-center">Quantidade</th>
                             <th class="text-center">Cavidades</th>
-                            <th class="text-center">Turnos</th>
+                            <th class="text-center">Progresso</th>
                             <th>Início Programado</th>
                             <th>Término Previsto</th>
                             <th>Bladder</th>
@@ -97,8 +97,11 @@
                                     <i class="bi bi-grid-fill me-1"></i>{{ plan.cavidades_disponiveis }} cav.
                                 </span>
                             </td>
-                            <td class="text-center fs-7 font-monospace">
-                                {{ plan.get_turno_opcao_display }}
+                            <td class="text-center">
+                                <div class="fw-bold fs-7 text-dark mb-1">{{ plan.realized_total }} / {{ plan.quantidade_programada }} ({{ plan.progress_pct }}%)</div>
+                                <div class="progress" style="height: 6px;">
+                                    <div class="progress-bar bg-success" role="progressbar" style="width: {{ plan.progress_pct }}%;" aria-valuenow="{{ plan.progress_pct }}" aria-valuemin="0" aria-valuemax="100"></div>
+                                </div>
                             </td>
                             <td class="fs-7">
                                 {{ plan.data_hora_inicio|date:"d/m/Y H:i" }}
@@ -129,9 +132,79 @@
                                 {% endif %}
                             </td>
                             <td class="text-end pe-4">
-                                <a href="{% url 'production:pcp_plan_detail' pk=plan.pk %}" class="btn btn-sm btn-outline-primary me-1" title="Ver Detalhes">
-                                    <i class="bi bi-eye"></i> Detalhes
-                                </a>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <a href="{% url 'production:pcp_plan_detail' pk=plan.pk %}" class="btn btn-outline-primary" title="Ver Detalhes">
+                                        <i class="bi bi-eye"></i>
+                                    </a>
+                                    {% if plan.status != "CANCELADO" and plan.status != "ATINGIDA" %}
+                                    <a href="{% url 'production:pcp_plan_edit' pk=plan.pk %}" class="btn btn-outline-warning" title="Editar Programação">
+                                        <i class="bi bi-pencil"></i>
+                                    </a>
+                                    {% endif %}
+
+                                    {% if plan.can_delete %}
+                                    <button type="button" class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#deleteModal{{ plan.id }}" title="Excluir Programação Não Iniciada">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                    {% elif plan.can_cancel %}
+                                    <button type="button" class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#cancelModal{{ plan.id }}" title="Cancelar Programação em Andamento">
+                                        <i class="bi bi-x-circle"></i>
+                                    </button>
+                                    {% endif %}
+                                </div>
+
+                                <!-- Modal Exclusão -->
+                                {% if plan.can_delete %}
+                                <div class="modal fade text-start" id="deleteModal{{ plan.id }}" tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog modal-dialog-centered">
+                                        <div class="modal-content">
+                                            <div class="modal-header bg-danger text-white">
+                                                <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill me-2"></i>Excluir Programação PCP #{{ plan.id }}</h5>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                                            </div>
+                                            <form method="post" action="{% url 'production:pcp_plan_delete' pk=plan.pk %}">
+                                                {% csrf_token %}
+                                                <div class="modal-body">
+                                                    <p>Esta programação <strong>ainda não foi iniciada</strong> e não possui registros de produção real.</p>
+                                                    <p class="text-danger mb-0">Tem certeza que deseja excluir fisicamente a Programação PCP #{{ plan.id }} ({{ plan.matriz.nome_exibicao }})?</p>
+                                                </div>
+                                                <div class="modal-footer">
+                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                                                    <button type="submit" class="btn btn-danger">Confirmar Exclusão</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endif %}
+
+                                <!-- Modal Cancelamento -->
+                                {% if plan.can_cancel %}
+                                <div class="modal fade text-start" id="cancelModal{{ plan.id }}" tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog modal-dialog-centered">
+                                        <div class="modal-content">
+                                            <div class="modal-header bg-warning text-dark">
+                                                <h5 class="modal-title"><i class="bi bi-pause-circle-fill me-2"></i>Cancelar Programação PCP #{{ plan.id }}</h5>
+                                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                            </div>
+                                            <form method="post" action="{% url 'production:pcp_plan_cancel' pk=plan.pk %}">
+                                                {% csrf_token %}
+                                                <div class="modal-body">
+                                                    <p>A programação já iniciou ou possui histórico associado. O cancelamento <strong>preservará todo o histórico</strong> de produção.</p>
+                                                    <div class="mb-3">
+                                                        <label for="reason{{ plan.id }}" class="form-label fw-semibold fs-7">Motivo do Cancelamento</label>
+                                                        <textarea name="reason" id="reason{{ plan.id }}" class="form-control form-control-sm" rows="3" placeholder="Informe o motivo para registro na auditoria..."></textarea>
+                                                    </div>
+                                                </div>
+                                                <div class="modal-footer">
+                                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Voltar</button>
+                                                    <button type="submit" class="btn btn-warning">Confirmar Cancelamento</button>
+                                                </div>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endif %}
                             </td>
                         </tr>
                         {% empty %}

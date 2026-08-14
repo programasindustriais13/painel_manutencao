@@ -43,6 +43,7 @@ class ScadaRouter:
         "productionpcpsetting",
         "productionpcpplan",
         "productionpcpplanshifttarget",
+        "productionpcpplanhistory",
     }
 
     def db_for_read(self, model, **hints):

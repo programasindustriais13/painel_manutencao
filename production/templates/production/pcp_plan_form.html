@@ -9,13 +9,23 @@
             <i class="bi bi-arrow-left me-1"></i>Voltar para lista
         </a>
         <h2 class="h3 fw-bold text-dark mb-1">
+            {% if is_edit %}
+            <i class="bi bi-pencil-square text-warning me-2"></i>Editar Programação PCP #{{ plan.id }}
+            {% else %}
             <i class="bi bi-calendar-plus text-primary me-2"></i>Nova Programação PCP
+            {% endif %}
         </h2>
         <p class="text-muted mb-0">Preencha os dados da programação para calcular automaticamente perdas, metas por turno e previsão de término.</p>
     </div>
 
     <form method="post" id="pcpForm" class="needs-validation" novalidate>
         {% csrf_token %}
+        {% if is_started %}
+        <div class="alert alert-info py-2 fs-7 mb-3 shadow-sm">
+            <i class="bi bi-info-circle-fill me-1 text-info"></i>
+            <strong>Programação Em Andamento:</strong> O histórico de produção já realizado (<strong>{{ realized_qty }} pneu(s)</strong>) será estritamente preservado. A alteração recalculará apenas o saldo futuro a produzir a partir de agora.
+        </div>
+        {% endif %}
         <div class="row g-4">
             <!-- Coluna da Esquerda: Formulário de Entrada -->
             <div class="col-lg-5">
@@ -88,7 +98,7 @@
                         </div>
 
                         <!-- Quantidade de Matrizes/Cavidades Disponíveis -->
-                        <div class="mb-4">
+                        <div class="mb-3">
                             <label for="{{ form.cavidades_disponiveis.id_for_label }}" class="form-label fw-bold fs-7">
                                 Quantidade de Matrizes/Cavidades Disponíveis <span class="text-danger">*</span>
                             </label>
@@ -98,9 +108,18 @@
                             {% endif %}
                         </div>
 
+                        {% if is_edit %}
+                        <div class="mb-4">
+                            <label for="id_reason" class="form-label fw-bold fs-7 text-secondary">
+                                Motivo da Alteração / Observação (Auditoria)
+                            </label>
+                            <input type="text" name="reason" id="id_reason" class="form-control" placeholder="Ex: Solicitação comercial para aumento da meta">
+                        </div>
+                        {% endif %}
+
                         <div class="d-grid gap-2">
-                            <button type="submit" class="btn btn-primary btn-lg shadow-sm fw-bold">
-                                <i class="bi bi-check2-circle me-1"></i>Salvar Programação
+                            <button type="submit" class="btn {% if is_edit %}btn-warning{% else %}btn-primary{% endif %} btn-lg shadow-sm fw-bold">
+                                <i class="bi bi-check2-circle me-1"></i>{% if is_edit %}Atualizar Programação PCP{% else %}Salvar Programação PCP{% endif %}
                             </button>
                         </div>
                     </div>

@@ -1428,6 +1428,57 @@ class ProductionPCPPlanShiftTarget(models.Model):
         return f"{self.date} [{self.shift.nome}]: {self.meta_prevista} pneu(s)"
 
 
+class ProductionPCPPlanHistory(models.Model):
+    ACTION_CHOICES = [
+        ("CRIACAO", "Criação"),
+        ("EDICAO", "Edição"),
+        ("CANCELAMENTO", "Cancelamento"),
+        ("EXCLUSAO", "Exclusão"),
+    ]
+
+    pcp_plan = models.ForeignKey(
+        ProductionPCPPlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="history_entries",
+        verbose_name="Plano PCP"
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="pcp_plan_history_entries",
+        verbose_name="Usuário"
+    )
+    created_at = models.DateTimeField(default=timezone.now, verbose_name="Data/Hora da Ação")
+    action_type = models.CharField(max_length=30, choices=ACTION_CHOICES, verbose_name="Tipo de Ação")
+
+    quantity_before = models.IntegerField(null=True, blank=True, verbose_name="Qtd Anterior")
+    quantity_after = models.IntegerField(null=True, blank=True, verbose_name="Qtd Nova")
+
+    shift_choice_before = models.CharField(max_length=20, null=True, blank=True, verbose_name="Turno Anterior")
+    shift_choice_after = models.CharField(max_length=20, null=True, blank=True, verbose_name="Turno Novo")
+
+    cavities_before = models.IntegerField(null=True, blank=True, verbose_name="Cavidades Anterior")
+    cavities_after = models.IntegerField(null=True, blank=True, verbose_name="Cavidades Novas")
+
+    final_dt_before = models.DateTimeField(null=True, blank=True, verbose_name="Término Anterior")
+    final_dt_after = models.DateTimeField(null=True, blank=True, verbose_name="Término Novo")
+
+    reason = models.TextField(null=True, blank=True, verbose_name="Motivo / Observações")
+
+    class Meta:
+        db_table = "production_pcp_plan_history"
+        verbose_name = "Histórico de Programação PCP"
+        verbose_name_plural = "Históricos de Programação PCP"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Histórico PCP #{self.pcp_plan_id} [{self.get_action_type_display()}] em {self.created_at.strftime('%d/%m/%Y %H:%M')}"
+
+
 
 
 

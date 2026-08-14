@@ -16,6 +16,9 @@ urlpatterns = [
     path("pcp/", views.pcp_plan_list, name="pcp_plan_list"),
     path("pcp/nova/", views.pcp_plan_create, name="pcp_plan_create"),
     path("pcp/<int:pk>/", views.pcp_plan_detail, name="pcp_plan_detail"),
+    path("pcp/<int:pk>/editar/", views.pcp_plan_edit, name="pcp_plan_edit"),
+    path("pcp/<int:pk>/cancelar/", views.pcp_plan_cancel, name="pcp_plan_cancel"),
+    path("pcp/<int:pk>/excluir/", views.pcp_plan_delete, name="pcp_plan_delete"),
     path("pcp/api/calcular/", views.pcp_api_calculate, name="pcp_api_calculate"),
 ]
 

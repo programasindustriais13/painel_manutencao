@@ -128,6 +128,7 @@ class ProductionPCPPlanForm(forms.ModelForm):
         self.fields["matriz"].queryset = ProductionMatrixCatalog.objects.filter(ativo=True).order_by("nome_exibicao")
         self.fields["matriz"].label_from_instance = lambda obj: obj.nome_exibicao or obj.nome_scada or obj.produto or obj.codigo
         self.fields["matriz"].label = "Matriz"
+        self.fields["data_hora_inicio"].input_formats = ["%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"]
         self.fields["data_hora_inicio"].label = "Data de início"
         self.fields["quantidade_programada"].label = "Quantidade"
         self.fields["turno_opcao"].label = "Turno"
