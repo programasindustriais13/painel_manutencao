@@ -44,6 +44,8 @@ class ScadaRouter:
         "productionpcpplan",
         "productionpcpplanshifttarget",
         "productionpcpplanhistory",
+        "productionbladderusage",
+        "productionbladdersetupmismatchevent",
     }
 
     def db_for_read(self, model, **hints):

@@ -2,8 +2,8 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.utils import timezone
 from .decorators import lider_producao_required, lider_ou_pcp_required
-from .services import ProductionStateService, PCPCalculationService
-from .models import ProductionTarget, ProductionMatrixCatalog, ProductionShift, ProductionPCPPlan
+from .services import ProductionStateService, PCPCalculationService, BladderTrackingService
+from .models import ProductionTarget, ProductionMatrixCatalog, ProductionShift, ProductionPCPPlan, ProductionBladderUsage
 from .forms import ProductionTargetForm, ProductionMatrixCatalogForm
 
 
@@ -484,6 +484,63 @@ def pcp_api_calculate(request):
         })
     except Exception as e:
         return JsonResponse({"success": False, "error": str(e)})
+
+
+@lider_producao_required
+def bladder_list(request):
+    """
+    Lista todos os bladders atualmente em uso nas cavidades configuradas.
+    """
+    filters = {
+        "q": request.GET.get("q", "").strip(),
+        "prensa_id": request.GET.get("prensa_id", "").strip(),
+        "setup_status": request.GET.get("setup_status", "").strip(),
+        "near_limit": request.GET.get("near_limit", "").strip(),
+    }
+    context = BladderTrackingService.get_active_bladders_context(filters)
+    return render(request, "production/bladder_list.html", context)
+
+
+@lider_producao_required
+def bladder_history(request):
+    """
+    Exibe o histórico consolidado de utilizações de bladders com filtros e paginação backend.
+    """
+    filters = {
+        "data_inicio": request.GET.get("data_inicio", "").strip(),
+        "data_fim": request.GET.get("data_fim", "").strip(),
+        "bla": request.GET.get("bla", "").strip(),
+        "lote": request.GET.get("lote", "").strip(),
+        "prensa_id": request.GET.get("prensa_id", "").strip(),
+        "cavidade_id": request.GET.get("cavidade_id", "").strip(),
+        "motivo_troca": request.GET.get("motivo_troca", "").strip(),
+        "status": request.GET.get("status", "").strip(),
+    }
+    page = request.GET.get("page", 1)
+    context = BladderTrackingService.get_bladder_history_context(filters, page=page)
+    return render(request, "production/bladder_history.html", context)
+
+
+@lider_producao_required
+def bladder_detail(request, pk=None):
+    """
+    Exibe a ficha detalhada e consolidada do ciclo de vida completo de uma identidade de bladder (BLA + Lote).
+    """
+    bla_param = request.GET.get("bla", "").strip()
+    lote_param = request.GET.get("lote", "").strip()
+
+    context_data = BladderTrackingService.get_bladder_consolidated_detail(
+        bla_code=bla_param if bla_param else None,
+        lot_str=lote_param if lote_param else None,
+        usage_id=pk
+    )
+
+    if not context_data:
+        messages.error(request, "Bladder ou utilização não encontrada.")
+        return redirect("production:bladder_list")
+
+    return render(request, "production/bladder_detail.html", context_data)
+
 
 
 

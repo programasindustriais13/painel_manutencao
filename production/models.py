@@ -191,6 +191,20 @@ class ProductionCavityConfig(models.Model):
         null=True,
         verbose_name="XID Motivo de Parada da Cavidade"
     )
+    xid_bla_real = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="XID BLA Real Instalado",
+        help_text="Código BLA do bladder lido do SCADA na cavidade."
+    )
+    xid_motivo_troca_bladder = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="XID Motivo da Troca do Bladder",
+        help_text="Código numérico (0 a 8) do motivo de troca do bladder."
+    )
 
     class Meta:
         verbose_name = "Configuração de Cavidade"
@@ -1024,6 +1038,252 @@ class ProductionBladder(models.Model):
 
     def __str__(self):
         return f"{self.codigo_bladder} ({self.descricao or 'Sem descrição'})"
+
+
+class ProductionBladderChangeReason(models.IntegerChoices):
+    NENHUM = 0, "Nenhum / Não informado"
+    VAZAMENTO = 1, "Vazamento"
+    BLADDER_ESTOUROU = 2, "Bladder estourou"
+    DEFORMACAO_BLADDER = 3, "Deformação no bladder"
+    TROCA_MATRIZ = 4, "Troca de matriz"
+    PROBLEMAS_DIMENSIONAIS = 5, "Problemas dimensionais"
+    CONTAMINACAO = 6, "Contaminação"
+    DESGASTE_NATURAL = 7, "Desgaste natural"
+    OUTROS = 8, "Outros"
+
+
+class ProductionBladderUsage(models.Model):
+    STATUS_CHOICES = [
+        ("EM_USO", "Em Uso"),
+        ("FINALIZADO", "Finalizado"),
+    ]
+
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="bladder_usages",
+        verbose_name="Cavidade"
+    )
+    machine_name_snapshot = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Prensa / Máquina (Snapshot)"
+    )
+    cavity_name_snapshot = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Cavidade (Snapshot)"
+    )
+    codigo_bla_real = models.CharField(
+        max_length=50,
+        db_index=True,
+        verbose_name="Código BLA Real",
+        help_text="Código normalizado do BLA (ex: BLA003)."
+    )
+    raw_bla_value = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Valor Bruto do BLA Lido"
+    )
+    lote_prefixo = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Prefixo do Lote"
+    )
+    lote_numero = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Número do Lote"
+    )
+    lote_completo_snapshot = models.CharField(
+        max_length=100,
+        db_index=True,
+        verbose_name="Lote Completo (Snapshot)"
+    )
+    started_at = models.DateTimeField(
+        db_index=True,
+        verbose_name="Data/Hora de Início"
+    )
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Data/Hora Final"
+    )
+    timestamp_scada_inicio = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Timestamp SCADA Início (ms)"
+    )
+    timestamp_scada_fim = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Timestamp SCADA Fim (ms)"
+    )
+    passadas_acumuladas = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Passadas Acumuladas"
+    )
+    limite_vida_snapshot = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Limite de Vida (Snapshot)"
+    )
+    motivo_troca = models.IntegerField(
+        choices=ProductionBladderChangeReason.choices,
+        default=ProductionBladderChangeReason.NENHUM,
+        verbose_name="Motivo da Troca"
+    )
+    motivo_troca_raw = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Código Bruto do Motivo"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="EM_USO",
+        db_index=True,
+        verbose_name="Status da Utilização"
+    )
+    last_scada_counter = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Último Contador Lido"
+    )
+    last_scada_ts = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Último Timestamp Scada (ms)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Atualizado em")
+
+    class Meta:
+        verbose_name = "Utilização de Bladder"
+        verbose_name_plural = "Utilizações de Bladders"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["cavity_config", "status"]),
+            models.Index(fields=["codigo_bla_real", "lote_completo_snapshot"]),
+            models.Index(fields=["started_at"]),
+            models.Index(fields=["ended_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.codigo_bla_real} ({self.lote_completo_snapshot}) em {self.cavity_config} - {self.passadas_acumuladas} passadas [{self.status}]"
+
+
+class ProductionBladderSetupMismatchEvent(models.Model):
+    """
+    Registra ocorrências e auditoria de incompatibilidade entre a Matriz instalada
+    e o Bladder real em operação na cavidade.
+    Permite mensurar quantas passadas foram produzidas sob divergência de setup para controle de qualidade.
+    """
+    STATUS_CHOICES = [
+        ("EM_ABERTO", "Em Aberto"),
+        ("FINALIZADO", "Finalizado"),
+    ]
+
+    cavity_config = models.ForeignKey(
+        ProductionCavityConfig,
+        on_delete=models.CASCADE,
+        related_name="setup_mismatch_events",
+        verbose_name="Cavidade"
+    )
+    machine_name_snapshot = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Prensa / Máquina (Snapshot)"
+    )
+    cavity_name_snapshot = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Cavidade (Snapshot)"
+    )
+    matriz_instalada_raw = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Código da Matriz Lida"
+    )
+    matriz_nome_snapshot = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        verbose_name="Nome da Matriz (Snapshot)"
+    )
+    codigo_bla_instalado = models.CharField(
+        max_length=50,
+        db_index=True,
+        verbose_name="Código BLA Instalado"
+    )
+    lote_bladder_snapshot = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Lote do Bladder (Snapshot)"
+    )
+    bladders_esperados_snapshot = models.CharField(
+        max_length=200,
+        verbose_name="BLAs Autorizados / Esperados (Snapshot)"
+    )
+    started_at = models.DateTimeField(
+        db_index=True,
+        verbose_name="Data/Hora de Início da Divergência"
+    )
+    ended_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Data/Hora de Resolução"
+    )
+    duracao_segundos = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Duração da Divergência (s)"
+    )
+    passadas_produzidas_em_divergencia = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Passadas Produzidas em Divergência"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="EM_ABERTO",
+        db_index=True,
+        verbose_name="Status do Evento"
+    )
+    resolvido_por = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        default="SETUP_CORRIGIDO",
+        verbose_name="Forma de Resolução"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Criado em")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Atualizado em")
+
+    class Meta:
+        verbose_name = "Evento de Divergência de Setup de Bladder"
+        verbose_name_plural = "Eventos de Divergência de Setup de Bladders"
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["cavity_config", "status"]),
+            models.Index(fields=["codigo_bla_instalado", "status"]),
+            models.Index(fields=["started_at"]),
+            models.Index(fields=["ended_at"]),
+        ]
+
+    def __str__(self):
+        return f"Divergência {self.cavity_config}: {self.codigo_bla_instalado} (Esperado: {self.bladders_esperados_snapshot}) [{self.status}]"
+
 
 
 class ProductionPCPSetting(models.Model):

@@ -2626,4 +2626,54 @@ Detalhamento Técnico:
    - Todas as novas tabelas e parâmetros gravados exclusivamente no banco 'default'.
 
 
+26. RASTREABILIDADE, VIDA ÚTIL E VALIDAÇÃO DE SETUP DE BLADDERS (2026-08-19)
+---------------------------------------------------------------------------
+Módulo industrial completo para rastreamento individual e acumulado de vida útil de bladders de vulcanização, histórico temporal de utilizações, agregação multi-segmento por identidade física (BLA + Lote), captura resiliente do motivo de descarte/troca e validação automática de compatibilidade entre Matriz em operação e Bladder instalado (Anti-Flapping).
+
+Arquivos criados/modificados:
+- regras_programacao/SPEC_BLADDER_01_FUNDACAO_RASTREABILIDADE.md [NOVO]
+- regras_programacao/SPEC_BLADDER_02_TELAS_ATUAL_E_HISTORICO.md [NOVO]
+- regras_programacao/SPEC_BLADDER_03_VALIDACAO_SETUP_QUALIDADE.md [NOVO]
+- regras_programacao/SPEC_BLADDER_04_HARDENING_TESTES_E_DEPLOY.md [NOVO]
+- production/models.py (Campos xid_bla_real e xid_motivo_troca_bladder em ProductionCavityConfig; classes ProductionBladderChangeReason, ProductionBladderUsage e ProductionBladderSetupMismatchEvent)
+- production/routers.py (Registrados productionbladderusage e productionbladdersetupmismatchevent em LOCAL_MANAGED_MODELS)
+- production/migrations/0021_productioncavityconfig_xid_bla_real_and_more.py [NOVO]
+- production/migrations/0022_productionbladdersetupmismatchevent.py [NOVO]
+- production/services.py (Funções normalize_bladder_code, get_expected_bladders_for_matrix, buffer de motivos pendentes, process_bladder_tracking, process_bladder_setup_validation e classe BladderTrackingService)
+- production/views.py (Views bladder_list, bladder_history e bladder_detail com controle de permissão @lider_producao_required)
+- production/urls.py (Rotas /producao/bladders/, /producao/bladders/historico/, /producao/bladders/detalhe/, /producao/bladders/<id>/)
+- production/admin.py (Registrados ProductionBladderUsageAdmin e ProductionBladderSetupMismatchEventAdmin)
+- production/templates/production/base_production.html (Menu dropdown "Bladders")
+- production/templates/production/bladder_list.html [NOVO]
+- production/templates/production/bladder_history.html [NOVO]
+- production/templates/production/bladder_detail.html [NOVO]
+- production/templates/production/dashboard.html (Banner de alerta em tempo real para divergências de setup)
+- production/test_bladder_system.py [NOVO] (Testes automatizados completos das 4 SPECs)
+- .env.example (Variáveis de configuração do módulo de bladders)
+- Instrucoes.txt
+
+Detalhamento Técnico e Regras de Negócio:
+1. Identidade e Normalização do Bladder:
+   - Identidade física: Código BLA normalizado (ex: 'BLA003') + Lote Completo (Prefixo / xid_produto + Número / xid_lote_bladder).
+   - Normalizador normalize_bladder_code: Converte 3, 3.0, "003", "bla003", "BLA 3", "BLA-03" -> "BLA003". Valores nulos ou 0 retornam "".
+2. Independência em Relação ao Contador SCADA e Resets:
+   - Reset do contador PLC/SCADA fecha ProductionCycle, mas NÃO fecha ProductionBladderUsage.
+   - As passadas acumuladas do bladder continuam crescendo de forma contínua através de múltiplos resets e turnos até que o lote/BLA físico seja substituído.
+3. Resiliência e Buffer de Motivo da Troca:
+   - Buffer em memória (_pending_bladder_reasons) com janela configurável de 15 minutos.
+   - Permite que o operador insira o motivo da troca na IHM antes ou logo após a alteração do lote/BLA no SCADA sem perda de contexto.
+   - Motivos mapeados: 0 (Nenhum), 1 (Vazamento), 2 (Bladder estourou), 3 (Deformação no bladder), 4 (Troca de matriz), 5 (Problemas dimensionais), 6 (Contaminação), 7 (Desgaste natural), 8 (Outros).
+4. Motor Anti-Flapping e Validação de Setup de Matriz:
+   - Consulta a matriz instalada (ProductionMatrixCatalog -> medida_size -> bladders).
+   - Se o BLA instalado for diferente dos BLAs autorizados, o motor aguarda 3 leituras consecutivas (15s) antes de abrir o evento de divergência (ProductionBladderSetupMismatchEvent).
+   - Contabiliza todas as passadas produzidas sob divergência para fins de qualidade e auditoria.
+   - Fecha automaticamente o evento quando o operador corrige o setup da máquina ou troca a matriz.
+5. Telas e Visualização:
+   - /producao/bladders/ : Lista em tempo real de todas as cavidades com % de vida útil (Normal <80%, Atenção 80-94%, Crítico >=95%), status de setup e filtros rápidos.
+   - /producao/bladders/historico/ : Histórico paginado no backend com filtros por data, prensa, cavidade, BLA, lote, motivo e KPIs consolidados do período com gráfico de Pareto de motivos.
+   - /producao/bladders/detalhe/ : Ficha consolidada agregando todos os segmentos de instalação do bladder (mesma identidade BLA + Lote) com histórico completo de passadas.
+   - /producao/ (Dashboard) : Banner vermelho de advertência destacado no topo sempre que houver cavidades operando em divergência de setup.
+
+
+
 

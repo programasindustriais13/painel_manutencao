@@ -31,6 +31,9 @@ from .models import (
     ProductionPCPPlan,
     ProductionPCPPlanShiftTarget,
     ProductionPCPPlanHistory,
+    ProductionBladderChangeReason,
+    ProductionBladderUsage,
+    ProductionBladderSetupMismatchEvent,
     ScadaDataPoint,
     ScadaPointValue,
     ScadaPointValueAnnotation,
@@ -277,6 +280,55 @@ def resolve_matrix_product_display(raw_matriz: Any) -> Dict[str, Any]:
             "is_unregistered": True,
         }
 
+
+def normalize_bladder_code(raw_val: Any) -> str:
+    """
+    Normaliza o código do bladder de forma idempotente e canônica para o formato BLA### (ex: BLA003).
+    Suporta:
+      - Inteiro / Float: 3, 3.0, 6 -> 'BLA003', 'BLA006'
+      - Texto com zeros: '003', '03', '3' -> 'BLA003'
+      - Texto com prefixo: 'bla003', 'BLA003', 'bla 3', 'BLA-03' -> 'BLA003'
+      - Inválidos, zero, nulos ou vazios: 0, '0', '', None, 'N/A' -> ''
+    """
+    if raw_val is None:
+        return ""
+    s_val = str(raw_val).strip().upper()
+    if not s_val or s_val in ("0", "0.0", "NONE", "NULL", "N/A", "NENHUM", "-"):
+        return ""
+
+    import re
+    digits_match = re.search(r"(?:BLA\s*[-_]?\s*)?(\d+)(?:\.0+)?$", s_val)
+    if digits_match:
+        num = int(digits_match.group(1))
+        if num > 0:
+            return f"BLA{num:03d}"
+        return ""
+
+    if s_val.startswith("BLA"):
+        clean_bla = re.sub(r"\s+", "", s_val)
+        return clean_bla
+
+    return ""
+
+
+def get_expected_bladders_for_matrix(raw_matriz: Any) -> List[str]:
+    """
+    Retorna a lista canônica de códigos BLA autorizados/compatíveis para a matriz informada.
+    Autoridade: ProductionMatrixCatalog -> medida_size -> bladders.
+    """
+    mat_info = resolve_matrix_product_display(raw_matriz)
+    catalog_obj = mat_info.get("catalog_obj")
+    if not catalog_obj or not catalog_obj.medida_size:
+        return []
+
+    bladders_qs = catalog_obj.medida_size.bladders.filter(ativo=True).values_list("codigo_bladder", flat=True)
+    expected_list = [normalize_bladder_code(b) for b in bladders_qs if normalize_bladder_code(b)]
+    return sorted(list(set(expected_list)))
+
+
+_pending_bladder_reasons: Dict[int, Dict[str, Any]] = {}
+BLADDER_REASON_WINDOW_SECONDS = 15 * 60  # 15 minutos
+_setup_divergence_counter: Dict[int, int] = {}
 
 
 class ScadaReaderService:
@@ -970,6 +1022,11 @@ class ProductionStateService:
             )
         )
 
+        if is_counter_reset:
+            increment = c_prod
+        else:
+            increment = max(0, c_prod - last_counter)
+
         if is_counter_reset or is_matrix_changed or is_bladder_changed:
             close_reason = "TROCA_MATRIZ" if is_matrix_changed else ("TROCA_BLADDER" if is_bladder_changed else "RESET_CONTADOR")
             if active_cycle:
@@ -1005,7 +1062,6 @@ class ProductionStateService:
                 )
                 accumulated.quantity_accumulated += c_prod
             else:
-                increment = c_prod - last_counter
                 if increment > 0:
                     active_cycle.quantity_produced += increment
                     active_cycle.last_scada_ts = ts_ms
@@ -1018,6 +1074,267 @@ class ProductionStateService:
         accumulated.last_scada_counter = c_prod
         accumulated.last_scada_ts = ts_ms
         accumulated.save()
+
+        # Rastreabilidade e Vida Útil do Bladder (SPEC 01)
+        cls.process_bladder_tracking(
+            cav=cav,
+            scada_values=scada_values,
+            c_prod=c_prod,
+            increment=increment,
+            is_counter_reset=is_counter_reset,
+            ts_ms=ts_ms,
+            now=now
+        )
+
+        # Validação Automática de Setup e Auditoria de Divergência (SPEC 03)
+        cls.process_bladder_setup_validation(
+            cav=cav,
+            scada_values=scada_values,
+            increment=increment,
+            now=now
+        )
+
+    @classmethod
+    def process_bladder_tracking(
+        cls,
+        cav: ProductionCavityConfig,
+        scada_values: Dict[str, Any],
+        c_prod: int,
+        increment: int,
+        is_counter_reset: bool,
+        ts_ms: Optional[int] = None,
+        now: Optional[datetime] = None
+    ) -> Optional[ProductionBladderUsage]:
+        """
+        Gerencia o ciclo de vida físico e a contagem de passadas de cada utilização de bladder
+        (ProductionBladderUsage) por cavidade de forma idempotente, transacional e resistente a resets.
+        """
+        if now is None:
+            now = timezone.now()
+        now_ts = now.timestamp()
+
+        raw_bla = ""
+        if cav.xid_bla_real:
+            bla_entry = scada_values.get(cav.xid_bla_real)
+            if bla_entry:
+                raw_bla = str(bla_entry.get("str_value", bla_entry.get("value", ""))).strip()
+
+        norm_bla = normalize_bladder_code(raw_bla)
+
+        prod_entry = scada_values.get(cav.xid_produto) if cav.xid_produto else None
+        prod_val = str(prod_entry.get("str_value", prod_entry.get("value", ""))).strip() if prod_entry else ""
+
+        lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
+        lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else ""
+
+        lot_info = compose_bladder_lot(prod_val, lote_val)
+
+        # Captura e buffer do motivo da troca
+        if cav.xid_motivo_troca_bladder:
+            mot_entry = scada_values.get(cav.xid_motivo_troca_bladder)
+            if mot_entry:
+                raw_mot = str(mot_entry.get("str_value", mot_entry.get("value", ""))).strip()
+                try:
+                    mot_code = int(float(raw_mot))
+                    if 1 <= mot_code <= 8:
+                        _pending_bladder_reasons[cav.id] = {
+                            "code": mot_code,
+                            "raw": raw_mot,
+                            "timestamp": now_ts,
+                        }
+                except (ValueError, TypeError):
+                    pass
+
+        limite_entry = scada_values.get(cav.xid_meta) if cav.xid_meta else None
+        limite_val = None
+        if limite_entry and isinstance(limite_entry.get("value"), (int, float)):
+            limite_val = int(limite_entry["value"])
+        elif limite_entry and limite_entry.get("str_value") and str(limite_entry["str_value"]).isdigit():
+            limite_val = int(limite_entry["str_value"])
+
+        active_usage = ProductionBladderUsage.objects.filter(
+            cavity_config=cav, status="EM_USO", ended_at__isnull=True
+        ).order_by("-started_at").first()
+
+        is_complete_identity = bool(norm_bla and lot_info["is_complete"])
+
+        if is_complete_identity:
+            p_name = cav.machine_config.machine.nome if cav.machine_config and cav.machine_config.machine else ""
+            c_name = cav.nome
+
+            if not active_usage:
+                active_usage = ProductionBladderUsage.objects.create(
+                    cavity_config=cav,
+                    machine_name_snapshot=p_name,
+                    cavity_name_snapshot=c_name,
+                    codigo_bla_real=norm_bla,
+                    raw_bla_value=raw_bla,
+                    lote_prefixo=lot_info["prefix"],
+                    lote_numero=lot_info["number"],
+                    lote_completo_snapshot=lot_info["display"],
+                    started_at=now,
+                    timestamp_scada_inicio=ts_ms,
+                    passadas_acumuladas=0,
+                    limite_vida_snapshot=limite_val,
+                    status="EM_USO",
+                    last_scada_counter=c_prod,
+                    last_scada_ts=ts_ms,
+                )
+            else:
+                is_changed = (
+                    active_usage.codigo_bla_real != norm_bla or
+                    active_usage.lote_prefixo != lot_info["prefix"] or
+                    active_usage.lote_numero != lot_info["number"]
+                )
+                if is_changed:
+                    # Encerra o active_usage anterior
+                    reason_info = _pending_bladder_reasons.pop(cav.id, None)
+                    reason_code = ProductionBladderChangeReason.NENHUM
+                    reason_raw = ""
+                    if reason_info and (now_ts - reason_info.get("timestamp", 0) <= BLADDER_REASON_WINDOW_SECONDS):
+                        reason_code = reason_info.get("code", ProductionBladderChangeReason.NENHUM)
+                        reason_raw = reason_info.get("raw", "")
+
+                    active_usage.ended_at = now
+                    active_usage.timestamp_scada_fim = ts_ms
+                    active_usage.status = "FINALIZADO"
+                    active_usage.motivo_troca = reason_code
+                    active_usage.motivo_troca_raw = reason_raw
+                    active_usage.save()
+
+                    # Abre novo segmento de utilização para o novo bladder
+                    active_usage = ProductionBladderUsage.objects.create(
+                        cavity_config=cav,
+                        machine_name_snapshot=p_name,
+                        cavity_name_snapshot=c_name,
+                        codigo_bla_real=norm_bla,
+                        raw_bla_value=raw_bla,
+                        lote_prefixo=lot_info["prefix"],
+                        lote_numero=lot_info["number"],
+                        lote_completo_snapshot=lot_info["display"],
+                        started_at=now,
+                        timestamp_scada_inicio=ts_ms,
+                        passadas_acumuladas=0,
+                        limite_vida_snapshot=limite_val,
+                        status="EM_USO",
+                        last_scada_counter=c_prod,
+                        last_scada_ts=ts_ms,
+                    )
+                else:
+                    # Mesma identidade: incrementa passadas
+                    if increment > 0:
+                        active_usage.passadas_acumuladas += increment
+                    active_usage.last_scada_counter = c_prod
+                    active_usage.last_scada_ts = ts_ms
+                    if limite_val is not None and not active_usage.limite_vida_snapshot:
+                        active_usage.limite_vida_snapshot = limite_val
+                    active_usage.save(update_fields=[
+                        "passadas_acumuladas", "last_scada_counter", "last_scada_ts", "limite_vida_snapshot", "updated_at"
+                    ])
+        else:
+            # Identidade incompleta: se já houver active_usage, não encerra; apenas acumula passadas
+            if active_usage and increment > 0:
+                active_usage.passadas_acumuladas += increment
+                active_usage.last_scada_counter = c_prod
+                active_usage.last_scada_ts = ts_ms
+                active_usage.save(update_fields=["passadas_acumuladas", "last_scada_counter", "last_scada_ts", "updated_at"])
+
+        return active_usage
+
+    @classmethod
+    def process_bladder_setup_validation(
+        cls,
+        cav: ProductionCavityConfig,
+        scada_values: Dict[str, Any],
+        increment: int,
+        now: Optional[datetime] = None
+    ) -> Optional[ProductionBladderSetupMismatchEvent]:
+        """
+        Valida a compatibilidade física entre a Matriz instalada e o Bladder real em operação na cavidade.
+        Utiliza motor de estabilização contra falsos positivos transitórios (3 ciclos consecutivos).
+        Registra e audita ProductionBladderSetupMismatchEvent contabilizando passadas produzidas sob divergência.
+        """
+        if now is None:
+            now = timezone.now()
+
+        raw_mat = ""
+        if cav.xid_matriz:
+            mat_entry = scada_values.get(cav.xid_matriz)
+            if mat_entry:
+                raw_mat = str(mat_entry.get("str_value", mat_entry.get("value", ""))).strip()
+
+        raw_bla = ""
+        if cav.xid_bla_real:
+            bla_entry = scada_values.get(cav.xid_bla_real)
+            if bla_entry:
+                raw_bla = str(bla_entry.get("str_value", bla_entry.get("value", ""))).strip()
+
+        prod_entry = scada_values.get(cav.xid_produto) if cav.xid_produto else None
+        prod_val = str(prod_entry.get("str_value", prod_entry.get("value", ""))).strip() if prod_entry else ""
+
+        lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
+        lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else ""
+
+        lot_info = compose_bladder_lot(prod_val, lote_val)
+
+        norm_bla = normalize_bladder_code(raw_bla)
+        mat_info = resolve_matrix_product_display(raw_mat)
+        expected_bladders = get_expected_bladders_for_matrix(raw_mat)
+
+        # Avaliação de incompatibilidade
+        is_mismatch = False
+        if mat_info["matrix_identified"] and expected_bladders and norm_bla:
+            if norm_bla not in expected_bladders:
+                is_mismatch = True
+
+        open_event = ProductionBladderSetupMismatchEvent.objects.filter(
+            cavity_config=cav, status="EM_ABERTO", ended_at__isnull=True
+        ).order_by("-started_at").first()
+
+        current_count = _setup_divergence_counter.get(cav.id, 0)
+
+        if is_mismatch:
+            _setup_divergence_counter[cav.id] = current_count + 1
+
+            # Abertura após estabilização (3 ciclos)
+            if _setup_divergence_counter[cav.id] >= 3:
+                p_name = cav.machine_config.machine.nome if cav.machine_config and cav.machine_config.machine else ""
+                c_name = cav.nome
+                mat_name = mat_info["display"]
+                exp_str = ", ".join(expected_bladders)
+
+                if not open_event:
+                    open_event = ProductionBladderSetupMismatchEvent.objects.create(
+                        cavity_config=cav,
+                        machine_name_snapshot=p_name,
+                        cavity_name_snapshot=c_name,
+                        matriz_instalada_raw=raw_mat,
+                        matriz_nome_snapshot=mat_name,
+                        codigo_bla_instalado=norm_bla,
+                        lote_bladder_snapshot=lot_info["display"],
+                        bladders_esperados_snapshot=exp_str,
+                        started_at=now,
+                        passadas_produzidas_em_divergencia=increment if increment > 0 else 0,
+                        status="EM_ABERTO",
+                    )
+                else:
+                    # Acumula passadas produzidas sob divergência
+                    if increment > 0:
+                        open_event.passadas_produzidas_em_divergencia += increment
+                        open_event.save(update_fields=["passadas_produzidas_em_divergencia", "updated_at"])
+        else:
+            _setup_divergence_counter[cav.id] = 0
+
+            # Se houver evento em aberto e a divergência cessou, finaliza o evento
+            if open_event:
+                dur = max(0, int((now - open_event.started_at).total_seconds()))
+                open_event.ended_at = now
+                open_event.duracao_segundos = dur
+                open_event.status = "FINALIZADO"
+                open_event.resolvido_por = "SETUP_CORRIGIDO"
+                open_event.save()
+
+        return open_event
 
     @classmethod
     @transaction.atomic
@@ -1054,6 +1371,10 @@ class ProductionStateService:
                         all_xids.add(cav.xid_meta)
                     if cav.xid_motivo_parada:
                         all_xids.add(cav.xid_motivo_parada)
+                    if cav.xid_bla_real:
+                        all_xids.add(cav.xid_bla_real)
+                    if cav.xid_motivo_troca_bladder:
+                        all_xids.add(cav.xid_motivo_troca_bladder)
             for p_cfg in ProductionParameterConfig.objects.filter(ativo=True):
                 if p_cfg.xid:
                     all_xids.add(p_cfg.xid)
@@ -1397,6 +1718,10 @@ class ProductionStateService:
                     all_xids.add(cav.xid_meta)
                 if cav.xid_motivo_parada:
                     all_xids.add(cav.xid_motivo_parada)
+                if cav.xid_bla_real:
+                    all_xids.add(cav.xid_bla_real)
+                if cav.xid_motivo_troca_bladder:
+                    all_xids.add(cav.xid_motivo_troca_bladder)
 
         for p in global_params:
             if p.xid:
@@ -1651,6 +1976,12 @@ class ProductionStateService:
         cavidades_paradas_count = sum(1 for m in machines_data for c in m["cavidades"] if c["status_code"] == "PARADA")
         pcp_plan_summary = cls.get_pcp_plan_summary(date=timezone.now().date(), shift_obj=active_shift_info.get("shift_obj") if active_shift_info else None)
 
+        active_mismatch_events = list(
+            ProductionBladderSetupMismatchEvent.objects.filter(status="EM_ABERTO", ended_at__isnull=True)
+            .select_related("cavity_config", "cavity_config__machine_config", "cavity_config__machine_config__machine")
+            .order_by("-started_at")
+        )
+
         return {
             "active_shift": active_shift_info,
             "machines": machines_data,
@@ -1665,7 +1996,9 @@ class ProductionStateService:
             "matrix_history": matrix_history,
             "matrix_history_error": matrix_history_error,
             "pcp_plan_summary": pcp_plan_summary,
-"matrix_filters": {
+            "active_mismatch_events": active_mismatch_events,
+            "mismatch_count": len(active_mismatch_events),
+            "matrix_filters": {
                 "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
                 "data_final_str": end_dt.strftime("%Y-%m-%d"),
                 "periodo_ativo": periodo_ativo,
@@ -1832,6 +2165,10 @@ class ProductionStateService:
                 all_xids.add(cav.xid_meta)
             if cav.xid_motivo_parada:
                 all_xids.add(cav.xid_motivo_parada)
+            if cav.xid_bla_real:
+                all_xids.add(cav.xid_bla_real)
+            if cav.xid_motivo_troca_bladder:
+                all_xids.add(cav.xid_motivo_troca_bladder)
 
         scada_values = scada_reader.get_last_values_batch(list(all_xids))
 
@@ -3357,4 +3694,502 @@ class PCPCalculationService:
 
             plan_locked.delete()
             return True
+
+
+class BladderTrackingService:
+    @classmethod
+    def get_active_bladders_context(cls, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Retorna a lista de todos os bladders atualmente em uso nas cavidades configuradas,
+        com cálculo de % de vida útil, tempo em uso, matriz instalada e status de compatibilidade.
+        """
+        if filters is None:
+            filters = {}
+
+        q_search = filters.get("q", "").strip().lower()
+        prensa_filter = filters.get("prensa_id", "").strip()
+        setup_filter = filters.get("setup_status", "").strip().upper()
+        near_limit_only = filters.get("near_limit", "") == "1"
+
+        cavities_qs = (
+            ProductionCavityConfig.objects.select_related(
+                "machine_config", "machine_config__machine", "machine_config__machine__setor"
+            )
+            .order_by("machine_config__ordem_exibicao", "machine_config__machine__nome", "ordem", "nome")
+        )
+
+        now = timezone.now()
+
+        # Buscar todos os usos ativos
+        active_usages = {
+            u.cavity_config_id: u
+            for u in ProductionBladderUsage.objects.filter(status="EM_USO", ended_at__isnull=True).select_related(
+                "cavity_config", "cavity_config__machine_config", "cavity_config__machine_config__machine"
+            )
+        }
+
+        # Obter últimos valores do SCADA
+        all_fetch_xids = []
+        for cav in cavities_qs:
+            if cav.xid_matriz:
+                all_fetch_xids.append(cav.xid_matriz)
+            if cav.xid_bla_real:
+                all_fetch_xids.append(cav.xid_bla_real)
+            if cav.xid_produto:
+                all_fetch_xids.append(cav.xid_produto)
+            if cav.xid_lote_bladder:
+                all_fetch_xids.append(cav.xid_lote_bladder)
+            if cav.xid_meta:
+                all_fetch_xids.append(cav.xid_meta)
+
+        scada_values = scada_reader.get_last_values_batch(all_fetch_xids)
+
+        bladders_data = []
+        total_em_uso = 0
+        total_atencao = 0
+        total_critico = 0
+        total_incorreto = 0
+
+        for cav in cavities_qs:
+            usage = active_usages.get(cav.id)
+
+            # Leituras atuais
+            mat_entry = scada_values.get(cav.xid_matriz) if cav.xid_matriz else None
+            raw_mat = str(mat_entry.get("str_value", mat_entry.get("value", ""))).strip() if mat_entry else ""
+            mat_info = resolve_matrix_product_display(raw_mat)
+
+            bla_entry = scada_values.get(cav.xid_bla_real) if cav.xid_bla_real else None
+            raw_bla = str(bla_entry.get("str_value", bla_entry.get("value", ""))).strip() if bla_entry else ""
+            norm_bla = normalize_bladder_code(raw_bla) or (usage.codigo_bla_real if usage else "")
+
+            prod_entry = scada_values.get(cav.xid_produto) if cav.xid_produto else None
+            prod_val = str(prod_entry.get("str_value", prod_entry.get("value", ""))).strip() if prod_entry else (usage.lote_prefixo if usage else "")
+
+            lote_entry = scada_values.get(cav.xid_lote_bladder) if cav.xid_lote_bladder else None
+            lote_val = str(lote_entry.get("str_value", lote_entry.get("value", ""))).strip() if lote_entry else (usage.lote_numero if usage else "")
+
+            lot_info = compose_bladder_lot(prod_val, lote_val)
+            lot_display = lot_info["display"] if lot_info["status"] != "AUSENTE" else (usage.lote_completo_snapshot if usage else "Não informado")
+
+            passadas = usage.passadas_acumuladas if usage else 0
+            limite = usage.limite_vida_snapshot if usage and usage.limite_vida_snapshot else None
+            if limite is None and cav.xid_meta:
+                meta_entry = scada_values.get(cav.xid_meta)
+                if meta_entry and isinstance(meta_entry.get("value"), (int, float)) and meta_entry["value"] > 0:
+                    limite = int(meta_entry["value"])
+
+            pct_vida = round((passadas / limite * 100), 1) if limite and limite > 0 else None
+
+            # Faixas visuais de vida útil
+            if pct_vida is None:
+                vida_badge = "secondary"
+                vida_status = "INDETERMINADO"
+                vida_label = "Limite não informado"
+            elif pct_vida < 80.0:
+                vida_badge = "success"
+                vida_status = "NORMAL"
+                vida_label = f"{pct_vida}%"
+            elif pct_vida < 95.0:
+                vida_badge = "warning"
+                vida_status = "ATENCAO"
+                vida_label = f"{pct_vida}%"
+                total_atencao += 1
+            else:
+                vida_badge = "danger"
+                vida_status = "CRITICO"
+                vida_label = f"{pct_vida}%"
+                total_critico += 1
+
+            # Validação de setup
+            expected_bladders = get_expected_bladders_for_matrix(raw_mat)
+            if not norm_bla or not mat_info["matrix_identified"]:
+                setup_status = "NAO_VERIFICAVEL"
+                setup_label = "Não Verificado"
+                setup_badge = "secondary"
+                setup_icon = "bi-question-circle"
+            elif not expected_bladders:
+                setup_status = "NAO_VERIFICAVEL"
+                setup_label = "Sem BLA Cadastrado"
+                setup_badge = "secondary"
+                setup_icon = "bi-exclamation-circle"
+            elif norm_bla in expected_bladders:
+                setup_status = "CORRETO"
+                setup_label = "✓ Setup Correto"
+                setup_badge = "success"
+                setup_icon = "bi-check-circle-fill"
+            else:
+                setup_status = "INCORRETO"
+                setup_label = "Setup Incorreto"
+                setup_badge = "danger"
+                setup_icon = "bi-x-circle-fill"
+                total_incorreto += 1
+
+            if usage:
+                total_em_uso += 1
+                tempo_segundos = max(0, int((now - usage.started_at).total_seconds()))
+                tempo_str = ProductionStateService.format_elapsed_seconds(tempo_segundos)
+                inicio_str = usage.started_at.strftime("%d/%m/%Y %H:%M")
+            else:
+                tempo_str = "—"
+                inicio_str = "Sem registro"
+
+            p_id = cav.machine_config.machine.id if cav.machine_config and cav.machine_config.machine else 0
+            p_nome = cav.machine_config.machine.nome if cav.machine_config and cav.machine_config.machine else "Prensa"
+
+            item = {
+                "usage_id": usage.id if usage else None,
+                "cavity_id": cav.id,
+                "prensa_id": p_id,
+                "prensa_nome": p_nome,
+                "cavidade_nome": cav.nome,
+                "codigo_bla": norm_bla or "Não informado",
+                "raw_bla": raw_bla,
+                "lote_completo": lot_display,
+                "matriz_nome": mat_info["display"],
+                "matriz_raw": raw_mat,
+                "passadas": passadas,
+                "limite": limite,
+                "limite_str": str(limite) if limite else "Não informado",
+                "pct_vida": pct_vida,
+                "pct_bar": min(100, max(0, round(pct_vida))) if pct_vida is not None else 0,
+                "vida_badge": vida_badge,
+                "vida_label": vida_label,
+                "vida_status": vida_status,
+                "setup_status": setup_status,
+                "setup_label": setup_label,
+                "setup_badge": setup_badge,
+                "setup_icon": setup_icon,
+                "expected_bladders": ", ".join(expected_bladders) if expected_bladders else "N/A",
+                "inicio_str": inicio_str,
+                "tempo_uso_str": tempo_str,
+                "has_usage": bool(usage),
+            }
+
+            # Filtros em memória
+            if q_search:
+                match_bla = q_search in (norm_bla or "").lower()
+                match_lote = q_search in (lot_display or "").lower()
+                match_prensa = q_search in p_nome.lower()
+                if not (match_bla or match_lote or match_prensa):
+                    continue
+
+            if prensa_filter and prensa_filter.isdigit():
+                if p_id != int(prensa_filter):
+                    continue
+
+            if setup_filter:
+                if setup_status != setup_filter:
+                    continue
+
+            if near_limit_only:
+                if pct_vida is None or pct_vida < 80.0:
+                    continue
+
+            bladders_data.append(item)
+
+        machines = Machine.objects.filter(production_config__isnull=False).order_by("nome")
+
+        return {
+            "bladders": bladders_data,
+            "total_em_uso": total_em_uso,
+            "total_atencao": total_atencao,
+            "total_critico": total_critico,
+            "total_incorreto": total_incorreto,
+            "machines": machines,
+            "filters": {
+                "q": filters.get("q", ""),
+                "prensa_id": prensa_filter,
+                "setup_status": setup_filter,
+                "near_limit": filters.get("near_limit", ""),
+            },
+            "last_updated_str": now.strftime("%d/%m/%Y %H:%M:%S"),
+        }
+
+    @classmethod
+    def get_bladder_history_context(cls, filters: Optional[Dict[str, Any]] = None, page: Any = 1) -> Dict[str, Any]:
+        """
+        Retorna o histórico de utilizações de bladders com sobreposição temporal de período,
+        filtros por prensa, cavidade, BLA, lote, motivo de troca, paginação backend e KPIs consolidados.
+        """
+        from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+
+        if filters is None:
+            filters = {}
+
+        now = timezone.now()
+
+        # Resolução de intervalo de datas (default: últimos 30 dias)
+        data_ini_str = filters.get("data_inicio", "").strip()
+        data_fim_str = filters.get("data_fim", "").strip()
+
+        def parse_dt(dt_str, is_end=False):
+            if not dt_str:
+                return None
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+                try:
+                    dt = datetime.strptime(dt_str, fmt)
+                    if timezone.is_naive(dt):
+                        if is_end and fmt == "%Y-%m-%d":
+                            dt = dt.replace(hour=23, minute=59, second=59)
+                        dt = timezone.make_aware(dt)
+                    return dt
+                except ValueError:
+                    pass
+            return None
+
+        start_dt = parse_dt(data_ini_str, is_end=False)
+        end_dt = parse_dt(data_fim_str, is_end=True)
+
+        if not start_dt:
+            start_dt = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+        if not end_dt:
+            end_dt = now
+
+        # Regra de sobreposição temporal
+        qs = ProductionBladderUsage.objects.select_related(
+            "cavity_config", "cavity_config__machine_config", "cavity_config__machine_config__machine"
+        ).filter(
+            Q(started_at__lte=end_dt) & (Q(ended_at__isnull=True) | Q(ended_at__gte=start_dt))
+        )
+
+        bla_filter = filters.get("bla", "").strip().upper()
+        if bla_filter:
+            norm_filter = normalize_bladder_code(bla_filter) or bla_filter
+            qs = qs.filter(codigo_bla_real__icontains=norm_filter)
+
+        lote_filter = filters.get("lote", "").strip()
+        if lote_filter:
+            qs = qs.filter(lote_completo_snapshot__icontains=lote_filter)
+
+        prensa_filter = filters.get("prensa_id", "").strip()
+        if prensa_filter and prensa_filter.isdigit():
+            qs = qs.filter(cavity_config__machine_config__machine_id=int(prensa_filter))
+
+        cavidade_filter = filters.get("cavidade_id", "").strip()
+        if cavidade_filter and cavidade_filter.isdigit():
+            qs = qs.filter(cavity_config_id=int(cavidade_filter))
+
+        motivo_filter = filters.get("motivo_troca", "").strip()
+        if motivo_filter and motivo_filter.isdigit():
+            qs = qs.filter(motivo_troca=int(motivo_filter))
+
+        status_filter = filters.get("status", "").strip().upper()
+        if status_filter in ["EM_USO", "FINALIZADO"]:
+            qs = qs.filter(status=status_filter)
+
+        qs = qs.order_by("-started_at")
+
+        # KPIs do Período Filtrado
+        all_records = list(qs)
+        total_utilizacoes = len(all_records)
+        total_passadas = sum(r.passadas_acumuladas for r in all_records)
+        bladders_em_uso = sum(1 for r in all_records if r.status == "EM_USO")
+        total_trocas = sum(1 for r in all_records if r.status == "FINALIZADO")
+        media_passadas = round(total_passadas / total_utilizacoes) if total_utilizacoes > 0 else 0
+
+        # Breakdown de motivos de troca
+        reason_counts = {}
+        for r in all_records:
+            if r.status == "FINALIZADO" and r.motivo_troca > 0:
+                label = r.get_motivo_troca_display()
+                reason_counts[label] = reason_counts.get(label, 0) + 1
+
+        principal_motivo = max(reason_counts, key=reason_counts.get) if reason_counts else "Nenhum no período"
+        motivos_breakdown = [
+            {"motivo": k, "qtd": v, "pct": round(v / total_trocas * 100, 1) if total_trocas > 0 else 0}
+            for k, v in sorted(reason_counts.items(), key=lambda x: -x[1])
+        ]
+
+        # Paginação no Backend (15 por página)
+        paginator = Paginator(qs, 15)
+        try:
+            page_obj = paginator.page(page)
+        except PageNotAnInteger:
+            page_obj = paginator.page(1)
+        except EmptyPage:
+            page_obj = paginator.page(paginator.num_pages)
+
+        # Montagem dos itens da página
+        items_data = []
+        for u in page_obj:
+            dur_end = u.ended_at or now
+            dur_secs = max(0, int((dur_end - u.started_at).total_seconds()))
+            dur_str = ProductionStateService.format_elapsed_seconds(dur_secs)
+
+            pct_vida = round((u.passadas_acumuladas / u.limite_vida_snapshot * 100), 1) if u.limite_vida_snapshot and u.limite_vida_snapshot > 0 else None
+            if pct_vida is None:
+                vida_badge = "secondary"
+            elif pct_vida < 80.0:
+                vida_badge = "success"
+            elif pct_vida < 95.0:
+                vida_badge = "warning"
+            else:
+                vida_badge = "danger"
+
+            items_data.append({
+                "id": u.id,
+                "codigo_bla": u.codigo_bla_real,
+                "lote_completo": u.lote_completo_snapshot,
+                "prensa_nome": u.machine_name_snapshot or (u.cavity_config.machine_config.machine.nome if u.cavity_config and u.cavity_config.machine_config else "Prensa"),
+                "cavidade_nome": u.cavity_name_snapshot or (u.cavity_config.nome if u.cavity_config else "Cavidade"),
+                "passadas": u.passadas_acumuladas,
+                "limite": u.limite_vida_snapshot or "—",
+                "pct_vida": pct_vida,
+                "vida_badge": vida_badge,
+                "started_at_str": u.started_at.strftime("%d/%m/%Y %H:%M"),
+                "ended_at_str": u.ended_at.strftime("%d/%m/%Y %H:%M") if u.ended_at else "Em uso",
+                "duracao_str": dur_str,
+                "motivo_troca_display": u.get_motivo_troca_display(),
+                "motivo_troca_code": u.motivo_troca,
+                "status_display": u.get_status_display(),
+                "is_active": (u.status == "EM_USO"),
+            })
+
+        # Preservação de querystring
+        query_params = []
+        if data_ini_str:
+            query_params.append(f"data_inicio={data_ini_str}")
+        if data_fim_str:
+            query_params.append(f"data_fim={data_fim_str}")
+        if bla_filter:
+            query_params.append(f"bla={bla_filter}")
+        if lote_filter:
+            query_params.append(f"lote={lote_filter}")
+        if prensa_filter:
+            query_params.append(f"prensa_id={prensa_filter}")
+        if cavidade_filter:
+            query_params.append(f"cavidade_id={cavidade_filter}")
+        if motivo_filter:
+            query_params.append(f"motivo_troca={motivo_filter}")
+        if status_filter:
+            query_params.append(f"status={status_filter}")
+
+        querystring = "&".join(query_params)
+        machines = Machine.objects.filter(production_config__isnull=False).order_by("nome")
+        reasons_list = [
+            {"code": c.value, "label": c.label} for c in ProductionBladderChangeReason
+        ]
+
+        return {
+            "page_obj": page_obj,
+            "items": items_data,
+            "total_utilizacoes": total_utilizacoes,
+            "total_passadas": total_passadas,
+            "bladders_em_uso": bladders_em_uso,
+            "total_trocas": total_trocas,
+            "media_passadas": media_passadas,
+            "principal_motivo": principal_motivo,
+            "motivos_breakdown": motivos_breakdown,
+            "machines": machines,
+            "reasons": reasons_list,
+            "filters": {
+                "data_inicio": start_dt.strftime("%Y-%m-%d"),
+                "data_fim": end_dt.strftime("%Y-%m-%d"),
+                "bla": filters.get("bla", ""),
+                "lote": filters.get("lote", ""),
+                "prensa_id": prensa_filter,
+                "cavidade_id": cavidade_filter,
+                "motivo_troca": motivo_filter,
+                "status": status_filter,
+            },
+            "querystring": querystring,
+        }
+
+    @classmethod
+    def get_bladder_consolidated_detail(
+        cls,
+        bla_code: Optional[str] = None,
+        lot_str: Optional[str] = None,
+        usage_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retorna a ficha consolidada detalhada de uma identidade de bladder (BLA + Lote),
+        somando todas as passadas de múltiplos segmentos sem duplicação.
+        """
+        target_usage = None
+        if usage_id:
+            target_usage = ProductionBladderUsage.objects.filter(pk=usage_id).first()
+            if target_usage:
+                bla_code = target_usage.codigo_bla_real
+                lot_str = target_usage.lote_completo_snapshot
+
+        if not bla_code or not lot_str:
+            return None
+
+        norm_bla = normalize_bladder_code(bla_code) or bla_code
+
+        segments_qs = ProductionBladderUsage.objects.select_related(
+            "cavity_config", "cavity_config__machine_config", "cavity_config__machine_config__machine"
+        ).filter(
+            codigo_bla_real=norm_bla,
+            lote_completo_snapshot=lot_str
+        ).order_by("started_at")
+
+        segments = list(segments_qs)
+        if not segments:
+            return None
+
+        total_passadas = sum(s.passadas_acumuladas for s in segments)
+        primeira_observacao = min(s.started_at for s in segments)
+        ultima_observacao = max(s.ended_at or timezone.now() for s in segments)
+
+        active_segment = next((s for s in segments if s.status == "EM_USO"), None)
+        is_em_uso = active_segment is not None
+
+        if is_em_uso:
+            p_nome = active_segment.machine_name_snapshot or active_segment.cavity_config.machine_config.machine.nome
+            c_nome = active_segment.cavity_name_snapshot or active_segment.cavity_config.nome
+            situacao_str = f"Em uso na {p_nome} — {c_nome}"
+            situacao_badge = "success"
+        else:
+            situacao_str = "Finalizado / Fora de uso"
+            situacao_badge = "secondary"
+
+        limite = next((s.limite_vida_snapshot for s in reversed(segments) if s.limite_vida_snapshot), None)
+        pct_total = round((total_passadas / limite * 100), 1) if limite and limite > 0 else None
+
+        if pct_total is None:
+            pct_badge = "secondary"
+        elif pct_total < 80.0:
+            pct_badge = "success"
+        elif pct_total < 95.0:
+            pct_badge = "warning"
+        else:
+            pct_badge = "danger"
+
+        now = timezone.now()
+        segments_data = []
+        for s in segments:
+            dur_end = s.ended_at or now
+            dur_secs = max(0, int((dur_end - s.started_at).total_seconds()))
+            dur_str = ProductionStateService.format_elapsed_seconds(dur_secs)
+
+            segments_data.append({
+                "id": s.id,
+                "prensa_nome": s.machine_name_snapshot or s.cavity_config.machine_config.machine.nome,
+                "cavidade_nome": s.cavity_name_snapshot or s.cavity_config.nome,
+                "started_at_str": s.started_at.strftime("%d/%m/%Y %H:%M"),
+                "ended_at_str": s.ended_at.strftime("%d/%m/%Y %H:%M") if s.ended_at else "Em andamento",
+                "duracao_str": dur_str,
+                "passadas": s.passadas_acumuladas,
+                "motivo_troca_display": s.get_motivo_troca_display(),
+                "status_display": s.get_status_display(),
+                "is_active": (s.status == "EM_USO"),
+            })
+
+        return {
+            "codigo_bla": norm_bla,
+            "lote_completo": lot_str,
+            "primeira_observacao_str": primeira_observacao.strftime("%d/%m/%Y %H:%M"),
+            "ultima_observacao_str": ultima_observacao.strftime("%d/%m/%Y %H:%M"),
+            "is_em_uso": is_em_uso,
+            "situacao_str": situacao_str,
+            "situacao_badge": situacao_badge,
+            "total_passadas": total_passadas,
+            "limite": limite or "Não informado",
+            "pct_total": pct_total,
+            "pct_badge": pct_badge,
+            "total_instalacoes": len(segments),
+            "segments": segments_data,
+        }
 

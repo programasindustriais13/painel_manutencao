@@ -23,6 +23,8 @@ from .models import (
     ProductionPCPPlan,
     ProductionPCPPlanShiftTarget,
     ProductionPCPPlanHistory,
+    ProductionBladderUsage,
+    ProductionBladderSetupMismatchEvent,
 )
 
 
@@ -72,10 +74,12 @@ class ProductionCavityConfigInline(admin.TabularInline):
         "xid_matriz",
         "xid_produto",
         "xid_lote_bladder",
+        "xid_bla_real",
         "xid_producao",
         "meta_producao_manual",
         "xid_meta",
         "xid_motivo_parada",
+        "xid_motivo_troca_bladder",
     )
 
 
@@ -89,10 +93,12 @@ class ProductionCavityConfigAdmin(admin.ModelAdmin):
         "xid_matriz",
         "xid_produto",
         "xid_lote_bladder",
+        "xid_bla_real",
         "xid_producao",
         "meta_producao_manual",
         "xid_meta",
         "xid_motivo_parada",
+        "xid_motivo_troca_bladder",
     )
     list_editable = ("ordem", "meta_producao_manual")
     search_fields = (
@@ -101,6 +107,7 @@ class ProductionCavityConfigAdmin(admin.ModelAdmin):
         "xid_matriz",
         "xid_produto",
         "xid_lote_bladder",
+        "xid_bla_real",
         "xid_producao",
         "xid_meta",
     )
@@ -114,8 +121,10 @@ class ProductionCavityConfigAdmin(admin.ModelAdmin):
                 "xid_matriz",
                 "xid_produto",
                 "xid_lote_bladder",
+                "xid_bla_real",
                 "xid_producao",
                 "xid_motivo_parada",
+                "xid_motivo_troca_bladder",
             )
         }),
         ("Metas e Limites de Produção", {
@@ -281,6 +290,55 @@ class ProductionPCPPlanHistoryAdmin(admin.ModelAdmin):
     list_display = ("id", "pcp_plan", "action_type", "user", "created_at")
     list_filter = ("action_type", "created_at")
     search_fields = ("pcp_plan__id", "reason")
+
+
+@admin.register(ProductionBladderUsage)
+class ProductionBladderUsageAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "codigo_bla_real",
+        "lote_completo_snapshot",
+        "cavity_config",
+        "started_at",
+        "ended_at",
+        "passadas_acumuladas",
+        "limite_vida_snapshot",
+        "motivo_troca",
+        "status",
+    )
+    list_filter = ("status", "motivo_troca", "started_at", "ended_at", "codigo_bla_real")
+    search_fields = (
+        "codigo_bla_real",
+        "lote_completo_snapshot",
+        "cavity_config__nome",
+        "cavity_config__machine_config__machine__nome",
+    )
+    date_hierarchy = "started_at"
+
+
+@admin.register(ProductionBladderSetupMismatchEvent)
+class ProductionBladderSetupMismatchEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "cavity_config",
+        "codigo_bla_instalado",
+        "bladders_esperados_snapshot",
+        "started_at",
+        "ended_at",
+        "duracao_segundos",
+        "passadas_produzidas_em_divergencia",
+        "status",
+        "resolvido_por",
+    )
+    list_filter = ("status", "resolvido_por", "started_at", "codigo_bla_instalado")
+    search_fields = (
+        "codigo_bla_instalado",
+        "bladders_esperados_snapshot",
+        "cavity_config__nome",
+        "cavity_config__machine_config__machine__nome",
+    )
+    date_hierarchy = "started_at"
+
 
 
 

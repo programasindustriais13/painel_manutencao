@@ -133,6 +133,23 @@
                             <i class="bi bi-calendar-check me-1"></i> Programação PCP
                         </a>
                     </li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link nav-link-custom dropdown-toggle" href="#" id="bladdersDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="bi bi-disc me-1"></i> Bladders
+                        </a>
+                        <ul class="dropdown-menu dropdown-menu-dark shadow" aria-labelledby="bladdersDropdown">
+                            <li>
+                                <a class="dropdown-item py-2" href="{% url 'production:bladder_list' %}">
+                                    <i class="bi bi-disc-fill text-info me-2"></i> Bladders em Uso
+                                </a>
+                            </li>
+                            <li>
+                                <a class="dropdown-item py-2" href="{% url 'production:bladder_history' %}">
+                                    <i class="bi bi-clock-history text-warning me-2"></i> Histórico de Bladders
+                                </a>
+                            </li>
+                        </ul>
+                    </li>
                     {% if user.is_superuser or user.is_staff or request.user.groups.all.0.name == 'Operadores' or request.user.groups.all.1.name == 'Operadores' or request.user.groups.all.0.name == 'Tecnicos_Lideres' or request.user.groups.all.1.name == 'Tecnicos_Lideres' or request.user.groups.all.0.name == 'Tecnicos' or request.user.groups.all.1.name == 'Tecnicos' or request.user.groups.all.0.name == 'Operador' or request.user.groups.all.1.name == 'Operador' or request.user.technician_profile %}
                     <li class="nav-item">
                         <a class="nav-link nav-link-custom" href="{% url 'technician_management' %}">
