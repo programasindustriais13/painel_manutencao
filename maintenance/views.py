@@ -16,6 +16,9 @@ from django.db.models import Prefetch, Q, Case, When, Value, IntegerField
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 from .models import (
@@ -1693,23 +1696,36 @@ def serve_allocation_attachment(request, allocation_id):
     return response
 
 
-@login_required
 def extrair_dados_os_foto_api(request):
     """
     Endpoint de API interno para processar imagem da folha física de OS via Gemini Vision.
-    Recebe requisição POST com arquivo multipart 'foto_os'.
+    Recebe requisição POST com arquivo multipart 'foto_os' ou 'foto_abertura'.
     """
+    if not request.user.is_authenticated:
+        return JsonResponse({
+            "sucesso": False,
+            "motivo": "NAO_AUTENTICADO",
+            "mensagem": "Sessão não autenticada ou expirada. Por favor, recarregue a página ou faça login."
+        }, status=401)
+
     if request.method != "POST":
         return JsonResponse({"sucesso": False, "mensagem": "Método não permitido. Utilize POST."}, status=405)
 
-    foto_os = request.FILES.get("foto_os")
+    foto_os = request.FILES.get("foto_os") or request.FILES.get("foto_abertura")
     if not foto_os:
-        return JsonResponse({"sucesso": False, "mensagem": "Nenhum arquivo de imagem 'foto_os' foi enviado."}, status=400)
+        return JsonResponse({"sucesso": False, "mensagem": "Nenhum arquivo de imagem foi enviado."}, status=400)
 
-    from .services.os_ocr_service import extrair_dados_os_por_foto
-    resultado = extrair_dados_os_por_foto(foto_os)
-
-    return JsonResponse(resultado)
+    try:
+        from .services.os_ocr_service import extrair_dados_os_por_foto
+        resultado = extrair_dados_os_por_foto(foto_os)
+        return JsonResponse(resultado)
+    except Exception as e:
+        logger.exception(f"Erro inesperado no processamento da foto de OS: {e}")
+        return JsonResponse({
+            "sucesso": False,
+            "motivo": "ERRO_INTERNO",
+            "mensagem": f"Erro interno no servidor ao ler imagem: {str(e)}"
+        }, status=500)
 
 
 @login_required

@@ -170,7 +170,8 @@ def extrair_dados_os_por_foto(
     Envia a foto da OS para a API do Google Gemini Vision e extrai os campos estruturados em JSON.
     """
     # 1. Obter chave de API
-    api_key = api_key or getattr(settings, "GEMINI_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
+    if api_key is None:
+        api_key = getattr(settings, "GEMINI_API_KEY", "") or os.environ.get("GEMINI_API_KEY", "")
     api_key = api_key.strip()
     if not api_key:
         logger.warning("GEMINI_API_KEY não configurada no servidor.")
@@ -221,9 +222,10 @@ def extrair_dados_os_por_foto(
             "mensagem": f"Erro ao preparar imagem para leitura: {str(e)}"
         }
 
-    # 3. Chamar API REST do Google Gemini
-    model = model_name or getattr(settings, "GEMINI_MODEL", "") or os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    # 3. Chamar API REST do Google Gemini (com fallback inteligente de modelos)
+    primary_model = (model_name or getattr(settings, "GEMINI_MODEL", "") or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")).strip() or "gemini-3.5-flash"
+    fallback_pool = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-flash-latest"]
+    models_to_try = [primary_model] + [m for m in fallback_pool if m != primary_model]
 
     payload = {
         "contents": [
@@ -245,17 +247,47 @@ def extrair_dados_os_por_foto(
         }
     }
 
-    try:
-        resp = requests.post(url, json=payload, timeout=timeout)
-        if resp.status_code != 200:
-            logger.error(f"Gemini API retornou status {resp.status_code}: {resp.text}")
+    resp = None
+    last_error_status = 500
+    last_error_text = ""
+
+    for current_model in models_to_try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent?key={api_key}"
+        try:
+            r = requests.post(url, json=payload, timeout=timeout)
+            if r.status_code == 200:
+                resp = r
+                break
+            else:
+                last_error_status = r.status_code
+                last_error_text = r.text
+                logger.warning(f"Modelo Gemini '{current_model}' retornou status {r.status_code}. Tentando modelo alternativo se disponível...")
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout ao consultar modelo Gemini '{current_model}'.")
             return {
                 "sucesso": False,
-                "motivo": "ERRO_API",
-                "status_code": resp.status_code,
-                "mensagem": f"Falha na comunicação com o serviço de IA (código {resp.status_code}). Preencha os campos manualmente."
+                "motivo": "TIMEOUT",
+                "mensagem": "Tempo limite excedido ao consultar o serviço de IA. Preencha os campos manualmente."
+            }
+        except requests.exceptions.RequestException as net_err:
+            logger.warning(f"Erro de conexão com Gemini API ({current_model}): {net_err}")
+            return {
+                "sucesso": False,
+                "motivo": "FALHA_CONEXAO",
+                "mensagem": "Não foi possível conectar ao serviço de IA. Verifique sua conexão à internet."
             }
 
+    if resp is None:
+        logger.error(f"Todos os modelos Gemini falharam. Último status {last_error_status}: {last_error_text}")
+        return {
+            "sucesso": False,
+            "motivo": "ERRO_API",
+            "status_code": last_error_status,
+            "mensagem": f"Falha na comunicação com o serviço de IA (código {last_error_status}). Preencha os campos manualmente."
+        }
+
+
+    try:
         resp_data = resp.json()
         candidates = resp_data.get("candidates", [])
         if not candidates:

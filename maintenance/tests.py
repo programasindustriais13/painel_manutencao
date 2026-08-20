@@ -1369,6 +1369,30 @@ class OrdemServicoOCRTestCase(TestCase):
             self.assertFalse(res["sucesso"])
             self.assertEqual(res["motivo"], "FALHA_CONEXAO")
 
+    def test_os_ocr_model_fallback_on_404(self):
+        """Valida que quando um modelo antigo (ex: 1.5-flash) retorna 404, o serviço tenta o modelo fallback com sucesso."""
+        from unittest.mock import patch, MagicMock
+        from maintenance.services.os_ocr_service import extrair_dados_os_por_foto
+
+        mock_resp_404 = MagicMock()
+        mock_resp_404.status_code = 404
+        mock_resp_404.text = '{"error": {"code": 404, "message": "model not found"}}'
+
+        mock_resp_200 = MagicMock()
+        mock_resp_200.status_code = 200
+        mock_resp_200.json.return_value = {
+            "candidates": [
+                {"content": {"parts": [{"text": '{"numero_os": "9999", "descricao_equipamento": "Torno 01"}'}]}}
+            ]
+        }
+
+        # Simula: primeiro modelo dá 404, segundo modelo (fallback) dá 200
+        with patch("requests.post", side_effect=[mock_resp_404, mock_resp_200]):
+            res = extrair_dados_os_por_foto(b"fake_image_bytes", model_name="gemini-1.5-flash", api_key="test_key")
+            self.assertTrue(res["sucesso"])
+            self.assertEqual(res["dados"]["numero_os"], "9999")
+
+
     def test_api_extrair_dados_os_foto_endpoint(self):
         """Valida o endpoint HTTP /api/os/extrair-foto/."""
         from unittest.mock import patch
@@ -1376,9 +1400,10 @@ class OrdemServicoOCRTestCase(TestCase):
 
         client = Client()
 
-        # 1. Bloqueio para usuário não logado
+        # 1. Bloqueio para usuário não logado (Retorna 401 JSON em vez de 302 HTML)
         res_anon = client.post(reverse('api_extrair_dados_os_foto'))
-        self.assertEqual(res_anon.status_code, 302)
+        self.assertEqual(res_anon.status_code, 401)
+        self.assertEqual(json.loads(res_anon.content)["motivo"], "NAO_AUTENTICADO")
 
         # 2. Usuário autenticado enviando GET
         client.force_login(self.user)

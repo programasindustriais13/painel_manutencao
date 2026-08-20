@@ -153,15 +153,23 @@
 
                     <!-- Botões de Ação Rápida Mobile/Desktop -->
                     <div class="d-flex flex-wrap gap-2">
-                        <label for="id_foto_abertura" class="btn btn-light rounded-pill px-4 py-2 fw-semibold d-inline-flex align-items-center gap-2 shadow-sm cursor-pointer mb-0">
+                        <button type="button" id="btnCaptureCamera" class="btn btn-light rounded-pill px-3 py-2 fw-semibold d-inline-flex align-items-center gap-2 shadow-sm mb-0">
                             <i class="bi bi-camera-fill fs-5 text-primary"></i>
-                            <span>Tirar Foto / Selecionar Imagem</span>
-                        </label>
+                            <span>Tirar Foto (Câmera)</span>
+                        </button>
+                        <button type="button" id="btnSelectGallery" class="btn btn-outline-light rounded-pill px-3 py-2 fw-semibold d-inline-flex align-items-center gap-2 shadow-sm mb-0">
+                            <i class="bi bi-images fs-5 text-warning"></i>
+                            <span>Galeria / Arquivo</span>
+                        </button>
                         <button type="button" id="btnScanAI" class="btn btn-ai-scan rounded-pill px-4 py-2 d-inline-flex align-items-center gap-2" disabled>
                             <i class="bi bi-magic fs-5"></i>
                             <span>Escanear com IA</span>
                         </button>
                     </div>
+
+                    <!-- Hidden native inputs para Câmera e Galeria -->
+                    <input type="file" id="id_camera_capture" accept="image/*" capture="environment" class="d-none">
+                    <input type="file" id="id_gallery_pick" accept="image/*" class="d-none">
 
                     <div id="aiStatusBox" class="mt-3 d-none">
                         <div class="d-flex align-items-center gap-2 text-warning fw-semibold small">
@@ -183,10 +191,18 @@
                         <p id="imageFileInfo" class="small text-white-50 m-0"></p>
                     </div>
 
-                    <div id="dropzoneEmpty" class="upload-dropzone" onclick="document.getElementById('id_foto_abertura').click();">
-                        <i class="bi bi-cloud-arrow-up-fill text-indigo-400 fs-1 mb-2 d-block text-primary"></i>
-                        <span class="fw-semibold text-light">Nenhuma foto selecionada</span>
-                        <div class="small text-white-50">Clique para abrir a câmera ou galeria</div>
+                    <div id="dropzoneEmpty" class="upload-dropzone p-3">
+                        <i class="bi bi-cloud-arrow-up-fill text-primary fs-1 mb-2 d-block"></i>
+                        <span class="fw-semibold text-light d-block mb-1">Nenhuma foto selecionada</span>
+                        <div class="small text-white-50 mb-3">Tire uma foto ou escolha da galeria</div>
+                        <div class="d-flex justify-content-center gap-2 flex-wrap">
+                            <button type="button" class="btn btn-sm btn-light rounded-pill px-3 fw-semibold shadow-sm" onclick="document.getElementById('id_camera_capture').click();">
+                                <i class="bi bi-camera-fill me-1 text-primary"></i> Usar Câmera
+                            </button>
+                            <button type="button" class="btn btn-sm btn-outline-light rounded-pill px-3 fw-semibold shadow-sm" onclick="document.getElementById('id_gallery_pick').click();">
+                                <i class="bi bi-images me-1 text-warning"></i> Galeria
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -404,6 +420,10 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const fileInput = document.getElementById('id_foto_abertura');
+    const cameraInput = document.getElementById('id_camera_capture');
+    const galleryInput = document.getElementById('id_gallery_pick');
+    const btnCaptureCamera = document.getElementById('btnCaptureCamera');
+    const btnSelectGallery = document.getElementById('btnSelectGallery');
     const btnScanAI = document.getElementById('btnScanAI');
     const dropzoneEmpty = document.getElementById('dropzoneEmpty');
     const previewContainer = document.getElementById('previewContainer');
@@ -418,6 +438,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const maquinaSelect = document.getElementById('id_maquina');
     const setorSelect = document.getElementById('id_setor');
 
+    let currentSelectedFile = null;
+
     let machinesData = [];
     try {
         machinesData = {{ machines_json|safe }};
@@ -425,28 +447,78 @@ document.addEventListener('DOMContentLoaded', function() {
         console.error('Erro ao carregar dados de máquinas:', e);
     }
 
-    // 1. Preview da Imagem selecionada
-    fileInput.addEventListener('change', function(e) {
-        const file = fileInput.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onload = function(evt) {
-                imagePreview.src = evt.target.result;
-                previewContainer.classList.remove('d-none');
-                dropzoneEmpty.classList.add('d-none');
-                btnScanAI.removeAttribute('disabled');
-                imageFileInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-            };
-            reader.readAsDataURL(file);
-        } else {
-            resetImagePreview();
+    // 1. Triggers de Câmera e Galeria
+    if (btnCaptureCamera && cameraInput) {
+        btnCaptureCamera.addEventListener('click', function() {
+            cameraInput.click();
+        });
+    }
+
+    if (btnSelectGallery && galleryInput) {
+        btnSelectGallery.addEventListener('click', function() {
+            galleryInput.click();
+        });
+    }
+
+    function processSelectedFile(file) {
+        if (!file) return;
+        currentSelectedFile = file;
+
+        // Sincronizar com o input oficial do formulário Django
+        if (fileInput) {
+            try {
+                if (typeof DataTransfer !== 'undefined') {
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    fileInput.files = dt.files;
+                }
+            } catch (err) {
+                console.warn('DataTransfer sync notice:', err);
+            }
         }
-    });
+
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            imagePreview.src = evt.target.result;
+            previewContainer.classList.remove('d-none');
+            dropzoneEmpty.classList.add('d-none');
+            btnScanAI.removeAttribute('disabled');
+            imageFileInfo.textContent = `${file.name || 'foto_os.jpg'} (${(file.size / 1024).toFixed(1)} KB)`;
+        };
+        reader.readAsDataURL(file);
+    }
+
+    if (cameraInput) {
+        cameraInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                processSelectedFile(this.files[0]);
+            }
+        });
+    }
+
+    if (galleryInput) {
+        galleryInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                processSelectedFile(this.files[0]);
+            }
+        });
+    }
+
+    if (fileInput) {
+        fileInput.addEventListener('change', function() {
+            if (this.files && this.files[0]) {
+                processSelectedFile(this.files[0]);
+            }
+        });
+    }
 
     // 2. Remover imagem
     btnRemoveImage.addEventListener('click', function(e) {
         e.preventDefault();
-        fileInput.value = '';
+        if (fileInput) fileInput.value = '';
+        if (cameraInput) cameraInput.value = '';
+        if (galleryInput) galleryInput.value = '';
+        currentSelectedFile = null;
         resetImagePreview();
     });
 
@@ -456,6 +528,23 @@ document.addEventListener('DOMContentLoaded', function() {
         dropzoneEmpty.classList.remove('d-none');
         btnScanAI.setAttribute('disabled', 'disabled');
         imageFileInfo.textContent = '';
+        currentSelectedFile = null;
+    }
+
+    // Garantir envio do arquivo no submit do form caso o navegador não suporte DataTransfer
+    const formNovaOS = document.getElementById('formNovaOS');
+    if (formNovaOS) {
+        formNovaOS.addEventListener('submit', function() {
+            if (fileInput && fileInput.files.length === 0 && currentSelectedFile) {
+                if (cameraInput && cameraInput.files.length > 0) {
+                    cameraInput.name = 'foto_abertura';
+                    fileInput.removeAttribute('name');
+                } else if (galleryInput && galleryInput.files.length > 0) {
+                    galleryInput.name = 'foto_abertura';
+                    fileInput.removeAttribute('name');
+                }
+            }
+        });
     }
 
     // 3. Casamento automático Máquina <-> Setor no Dropdown
@@ -477,9 +566,78 @@ document.addEventListener('DOMContentLoaded', function() {
         el.classList.add('field-highlight');
     }
 
+    // Utilitário para compressão client-side de fotos de smartphone (reduz 12MB para ~400KB em 40ms)
+    function compressImageForOCR(file, maxDimension = 1600, quality = 0.85) {
+        return new Promise((resolve) => {
+            if (!file || file.size < 400 * 1024) {
+                resolve(file);
+                return;
+            }
+
+            const img = new Image();
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                img.onload = function() {
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > maxDimension) {
+                            height = Math.round((height * maxDimension) / width);
+                            width = maxDimension;
+                        }
+                    } else {
+                        if (height > maxDimension) {
+                            width = Math.round((width * maxDimension) / height);
+                            height = maxDimension;
+                        }
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+
+                    canvas.toBlob((blob) => {
+                        if (blob) {
+                            const optimizedFile = new File([blob], file.name || "foto_os_otimizada.jpg", {
+                                type: 'image/jpeg',
+                                lastModified: Date.now()
+                            });
+                            resolve(optimizedFile);
+                        } else {
+                            resolve(file);
+                        }
+                    }, 'image/jpeg', quality);
+                };
+                img.onerror = () => resolve(file);
+                img.src = e.target.result;
+            };
+            reader.onerror = () => resolve(file);
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function getCsrfToken() {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, 10) === 'csrftoken=') {
+                    cookieValue = decodeURIComponent(cookie.substring(10));
+                    break;
+                }
+            }
+        }
+        return cookieValue || '{{ csrf_token }}';
+    }
+
     // 5. Escaneamento com IA via Gemini Vision
     btnScanAI.addEventListener('click', async function() {
-        const file = fileInput.files[0];
+        const file = currentSelectedFile || (fileInput && fileInput.files[0]) || (cameraInput && cameraInput.files[0]) || (galleryInput && galleryInput.files[0]);
         if (!file) {
             alert('Selecione ou tire uma foto da folha física de OS primeiro.');
             return;
@@ -487,22 +645,46 @@ document.addEventListener('DOMContentLoaded', function() {
 
         btnScanAI.setAttribute('disabled', 'disabled');
         aiStatusBox.classList.remove('d-none');
-        aiStatusText.textContent = 'Enviando foto e analisando caligrafia com IA Gemini...';
-
-        const formData = new FormData();
-        formData.append('foto_os', file);
-        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+        aiStatusText.textContent = 'Otimizando foto para envio rápido...';
 
         try {
+            const optimizedFile = await compressImageForOCR(file);
+            aiStatusText.textContent = 'Enviando foto e analisando caligrafia com IA Gemini...';
+
+            const csrf = getCsrfToken();
+            const formData = new FormData();
+            formData.append('foto_os', optimizedFile);
+            formData.append('csrfmiddlewaretoken', csrf);
+
             const response = await fetch('{% url "api_extrair_dados_os_foto" %}', {
                 method: 'POST',
                 body: formData,
                 headers: {
-                    'X-CSRFToken': '{{ csrf_token }}'
+                    'X-CSRFToken': csrf,
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
             });
 
+            if (!response.ok) {
+                let errorMsg = `Erro na comunicação com o servidor (código ${response.status}).`;
+                try {
+                    const errJson = await response.json();
+                    if (errJson && errJson.mensagem) {
+                        errorMsg = errJson.mensagem;
+                    }
+                } catch (_) {
+                    if (response.status === 401 || response.status === 403) {
+                        errorMsg = 'Sua sessão expirou ou não está autorizada. Por favor, recarregue a página.';
+                    }
+                }
+                aiStatusBox.classList.add('d-none');
+                btnScanAI.removeAttribute('disabled');
+                alert(errorMsg);
+                return;
+            }
+
             const result = await response.json();
+
 
             if (result.sucesso && result.dados) {
                 const d = result.dados;
@@ -605,8 +787,9 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Erro na chamada OCR:', err);
             aiStatusBox.classList.add('d-none');
             btnScanAI.removeAttribute('disabled');
-            alert('Falha na comunicação com o servidor. Você pode preencher os campos manualmente.');
+            alert('Falha na comunicação com o servidor (' + (err.message || 'Erro de rede') + '). Você pode preencher os campos manualmente.');
         }
+
     });
 
     // 6. Verificação Anti-Duplicidade Instantânea (Debounced)
