@@ -9,6 +9,7 @@ urlpatterns = [
     
     # Home redirect based on role
     path('', views.home_redirect, name='home_redirect'),
+    path('portal/', views.portal_select, name='portal_select'),
     
     # Authentication views
     path('login/', auth_views.LoginView.as_view(template_name='maintenance/login.html'), name='login'),
@@ -55,5 +56,23 @@ urlpatterns = [
     path('technicians/create/', views.technician_create, name='technician_create'),
     path('technicians/<int:pk>/edit/', views.technician_edit, name='technician_edit'),
     path('technicians/<int:pk>/delete/', views.technician_delete, name='technician_delete'),
+
+    # AI / Vision OCR API
+    path('api/os/extrair-foto/', views.extrair_dados_os_foto_api, name='api_extrair_dados_os_foto'),
+    path('api/os/verificar-numero/', views.api_verificar_numero_os, name='api_verificar_numero_os'),
+
+    # Ordem de Serviço (Quadro, Criação por Foto & Ações de Atendimento)
+    path('ordens-servico/', views.os_board, name='os_board'),
+    path('ordens-servico/<int:pk>/', views.os_detail, name='os_detail'),
+    path('ordens-servico/nova/', views.os_create, name='os_create'),
+    path('ordens-servico/<int:os_id>/atribuir/', views.os_assign_technician, name='os_assign_technician'),
+    path('ordens-servico/<int:os_id>/iniciar/', views.os_start_service, name='os_start_service'),
+    path('ordens-servico/<int:os_id>/entrar-equipe/', views.os_join_team, name='os_join_team'),
+    path('ordens-servico/<int:os_id>/cancelar/', views.os_cancel, name='os_cancel'),
+    path('allocations/<int:allocation_id>/vincular-os/', views.link_allocation_os, name='link_allocation_os'),
 ]
+
+
+
+
 

@@ -20,11 +20,22 @@ body {
     padding: 0 !important;
 }
 
-/* Oculta navbar herdada do base */
-nav.navbar { display: none !important; }
+/* Oculta navbar e sidebar herdadas do base */
+nav.navbar, .sidebar-desktop, .sidebar-offcanvas, .mobile-header { display: none !important; }
 
 /* Oculta footer herdado do base */
 footer { display: none !important; }
+
+/* Reseta containers do base para controle total da TV */
+.app-layout, .main-wrapper {
+    display: block !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    min-height: 100vh !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+}
 
 /* Remove o container-fluid do base para controle total */
 .tv-wrapper-outer {

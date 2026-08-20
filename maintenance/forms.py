@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth.models import User
-from .models import Sector, Machine, Technician, Allocation
+from .models import Sector, Machine, Technician, Allocation, OrdemServico
 
 class SectorForm(forms.ModelForm):
     class Meta:
@@ -148,6 +148,67 @@ class PauseServiceForm(forms.ModelForm):
 
 
 class FinishServiceForm(forms.ModelForm):
+    foto_conclusao = forms.ImageField(
+        required=False,
+        label="Foto da Folha de OS Concluída e Assinada",
+        widget=forms.FileInput(attrs={
+            'class': 'form-control', 
+            'accept': 'image/*', 
+            'capture': 'environment',
+            'id': 'id_foto_conclusao'
+        })
+    )
+    foto_verso = forms.ImageField(
+        required=False,
+        label="Foto do Verso da OS (Opcional)",
+        widget=forms.FileInput(attrs={
+            'class': 'form-control', 
+            'accept': 'image/*', 
+            'capture': 'environment',
+            'id': 'id_foto_verso'
+        })
+    )
+    lider_assinatura_nome = forms.CharField(
+        required=False,
+        max_length=120,
+        label="Nome do Líder que Assinou a OS",
+        widget=forms.TextInput(attrs={
+            'class': 'form-control',
+            'placeholder': 'Ex: Líder Roberto Santos',
+            'id': 'id_lider_assinatura_nome'
+        })
+    )
+    causa = forms.CharField(
+        required=False,
+        label="Causa Raiz / Defeito Identificado",
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 2,
+            'placeholder': 'Descreva a causa encontrada na máquina...',
+            'id': 'id_causa'
+        })
+    )
+    descricao_servico_realizado = forms.CharField(
+        required=False,
+        label="Descrição do Serviço Realizado",
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 3,
+            'placeholder': 'Descreva o serviço executado detalhadamente...',
+            'id': 'id_descricao_servico_realizado'
+        })
+    )
+    pecas_utilizadas_texto = forms.CharField(
+        required=False,
+        label="Peças / Materiais Utilizados",
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 2,
+            'placeholder': 'Ex: 2x Rolamento 6204 DDU, 1x Retentor 35x50x8',
+            'id': 'id_pecas_utilizadas_texto'
+        })
+    )
+
     class Meta:
         model = Allocation
         fields = ['observacao_conclusao', 'foto_anexo']
@@ -167,3 +228,143 @@ class FinishServiceForm(forms.ModelForm):
         self.fields['observacao_conclusao'].error_messages = {
             'required': 'A observação de conclusão é obrigatória para encerrar o serviço.'
         }
+
+
+
+class OrdemServicoCreateForm(forms.ModelForm):
+    """
+    Formulário de abertura/cadastro de Ordem de Serviço física com suporte a
+    captura de foto obrigatória, validação estrita anti-duplicidade e campos da folha industrial.
+    """
+    parou_maquina = forms.TypedChoiceField(
+        coerce=lambda x: str(x).lower() in ['true', '1', 'sim'],
+        choices=[(True, 'SIM — Máquina Parada / Inoperante'), (False, 'NÃO — Em Operação / Rodando')],
+        widget=forms.Select(attrs={'class': 'form-select', 'id': 'id_parou_maquina'}),
+        initial=True,
+        required=False,
+        label="Parou a Máquina?"
+    )
+
+    class Meta:
+        model = OrdemServico
+        fields = [
+            'numero_os',
+            'tag',
+            'descricao_equipamento',
+            'setor',
+            'maquina',
+            'solicitante',
+            'motivo',
+            'tipo_manutencao',
+            'parou_maquina',
+            'criticidade',
+            'descricao_falha',
+            'data_hora_inicio_ocorrencia',
+            'tecnico_designado',
+            'foto_abertura',
+        ]
+        widgets = {
+            'numero_os': forms.TextInput(attrs={
+                'class': 'form-control form-control-lg font-monospace fw-bold',
+                'placeholder': 'Ex: 10216',
+                'autocomplete': 'off',
+                'id': 'id_numero_os'
+            }),
+            'tag': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Ex: PREN-01 ou 102',
+                'id': 'id_tag'
+            }),
+            'descricao_equipamento': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Ex: Prensa Vulcanizadora 10',
+                'id': 'id_descricao_equipamento'
+            }),
+            'setor': forms.Select(attrs={
+                'class': 'form-select',
+                'id': 'id_setor'
+            }),
+            'maquina': forms.Select(attrs={
+                'class': 'form-select',
+                'id': 'id_maquina'
+            }),
+            'solicitante': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Nome do líder / solicitante',
+                'id': 'id_solicitante'
+            }),
+            'motivo': forms.TextInput(attrs={
+                'class': 'form-control',
+                'placeholder': 'Ex: Vazamento de vapor, esteira travada',
+                'id': 'id_motivo'
+            }),
+            'tipo_manutencao': forms.Select(attrs={
+                'class': 'form-select',
+                'id': 'id_tipo_manutencao'
+            }),
+
+            'criticidade': forms.Select(attrs={
+                'class': 'form-select',
+                'id': 'id_criticidade'
+            }),
+            'descricao_falha': forms.Textarea(attrs={
+                'class': 'form-control',
+                'rows': 4,
+                'placeholder': 'Descreva detalhadamente o serviço a ser realizado e o defeito relatado...',
+                'id': 'id_descricao_falha'
+            }),
+            'data_hora_inicio_ocorrencia': forms.DateTimeInput(
+                attrs={
+                    'class': 'form-control',
+                    'type': 'datetime-local',
+                    'id': 'id_data_hora_inicio_ocorrencia'
+                },
+                format='%Y-%m-%dT%H:%M'
+            ),
+            'tecnico_designado': forms.Select(attrs={
+                'class': 'form-select',
+                'id': 'id_tecnico_designado'
+            }),
+            'foto_abertura': forms.FileInput(attrs={
+                'class': 'form-control',
+                'accept': 'image/*',
+                'id': 'id_foto_abertura'
+            }),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['numero_os'].required = True
+        self.fields['solicitante'].required = True
+        self.fields['descricao_falha'].required = True
+        self.fields['foto_abertura'].required = True
+        self.fields['foto_abertura'].error_messages['required'] = 'A foto da folha física de abertura da OS é obrigatória.'
+
+        self.fields['maquina'].queryset = Machine.objects.select_related('setor').order_by('nome')
+        self.fields['maquina'].label_from_instance = lambda obj: f"{obj.nome} [{obj.setor.nome}]"
+        self.fields['setor'].queryset = Sector.objects.all().order_by('nome')
+        self.fields['tecnico_designado'].queryset = Technician.objects.filter(is_active=True).order_by('nome')
+        self.fields['data_hora_inicio_ocorrencia'].input_formats = [
+            '%Y-%m-%dT%H:%M', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%d/%m/%Y %H:%M'
+        ]
+
+    def clean_numero_os(self):
+        numero = self.cleaned_data.get('numero_os', '').strip().upper()
+        if not numero:
+            raise forms.ValidationError("O número da Ordem de Serviço física é obrigatório.")
+        qs = OrdemServico.objects.filter(numero_os__iexact=numero)
+        if self.instance.pk:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            os_existente = qs.first()
+            raise forms.ValidationError(
+                f"A OS nº {numero} já está cadastrada (Criada em {os_existente.data_abertura.strftime('%d/%m/%Y')} - Status: {os_existente.get_status_display()})."
+            )
+        return numero
+
+    def clean_foto_abertura(self):
+        foto = self.cleaned_data.get('foto_abertura')
+        if not foto:
+            raise forms.ValidationError("A foto da folha física de abertura da OS é obrigatória.")
+        return foto
+

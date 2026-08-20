@@ -289,6 +289,18 @@
                                 <div class="col-6">
                                     <span class="text-muted small d-block">Máquina</span>
                                     <strong class="text-dark">{{ alloc.maquina.nome }}</strong>
+                                    {% if alloc.ordem_servico %}
+                                    <div class="mt-1 d-flex flex-wrap gap-1">
+                                        <a href="{% url 'os_board' %}?busca={{ alloc.ordem_servico.numero_os }}" class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill text-decoration-none" title="Ver Ordem de Serviço no Quadro">
+                                            <i class="bi bi-file-earmark-text-fill me-1"></i>OS #{{ alloc.ordem_servico.numero_os }}
+                                        </a>
+                                        {% if alloc.ordem_servico.alocacoes_ativas.count > 1 %}
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill" title="Múltiplos técnicos trabalhando nesta OS">
+                                            <i class="bi bi-people-fill me-1"></i>Equipe ({{ alloc.ordem_servico.alocacoes_ativas.count }})
+                                        </span>
+                                        {% endif %}
+                                    </div>
+                                    {% endif %}
                                 </div>
                                 <div class="col-6 text-end">
                                     <span class="text-muted small d-block">Criticidade</span>
@@ -323,11 +335,80 @@
                             {% endif %}
 
                             {% if user_can_manage or tech.id == technician_proprio_id %}
-                            <div class="mt-2 text-end">
+                            <div class="mt-2 d-flex justify-content-end gap-1 flex-wrap">
+                                {% if not alloc.ordem_servico %}
+                                <button type="button" class="btn btn-outline-warning text-dark btn-sm rounded-pill py-1 px-2" data-bs-toggle="modal" data-bs-target="#linkOSModal-{{ alloc.id }}" title="Vincular folha de OS física a este atendimento">
+                                    <i class="bi bi-paperclip me-1"></i>Vincular OS
+                                </button>
+                                {% endif %}
                                 <button type="button" class="btn btn-outline-info btn-sm rounded-pill py-1 px-3" data-bs-toggle="modal" data-bs-target="#progressUpdateModal-{{ alloc.id }}">
                                     <i class="bi bi-plus-circle me-1"></i>Nota Parcial
                                 </button>
                             </div>
+
+                            {% if not alloc.ordem_servico %}
+                            <!-- MODAL: VINCULAR OS FÍSICA -->
+                            <div class="modal fade" id="linkOSModal-{{ alloc.id }}" tabindex="-1" aria-hidden="true">
+                                <div class="modal-dialog modal-dialog-centered">
+                                    <div class="modal-content border-0 shadow-lg text-start" style="border-radius: 16px;">
+                                        <div class="modal-header bg-warning text-dark border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                                            <h5 class="modal-title fw-bold"><i class="bi bi-paperclip me-2"></i>Vincular OS Física ao Atendimento</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body p-4">
+                                            <div class="alert alert-info border-info-subtle mb-3 py-2 small">
+                                                <strong>Máquina:</strong> {{ alloc.maquina.nome }} — <strong>Técnico:</strong> {{ tech.nome }}
+                                            </div>
+
+                                            <!-- OPÇÃO A: SELECIONAR OS PENDENTE DA LISTA -->
+                                            <div class="p-3 bg-light rounded-3 border mb-3">
+                                                <h6 class="fw-bold text-dark mb-2 small text-uppercase">
+                                                    <i class="bi bi-list-check text-primary me-1"></i> Opção A: Selecionar OS Pendente
+                                                </h6>
+                                                <form method="post" action="{% url 'link_allocation_os' alloc.id %}">
+                                                    {% csrf_token %}
+                                                    <div class="mb-3">
+                                                        <select name="os_id" class="form-select" required>
+                                                            <option value="">-- Selecione a OS física recebida --</option>
+                                                            {% for pos in pending_os_list %}
+                                                            <option value="{{ pos.id }}">
+                                                                OS #{{ pos.numero_os }} - {{ pos.maquina.nome|default:pos.descricao_equipamento }} ({{ pos.motivo|default:pos.descricao_falha|truncatechars:35 }})
+                                                            </option>
+                                                            {% endfor %}
+                                                        </select>
+                                                    </div>
+                                                    <button type="submit" class="btn btn-warning text-dark rounded-pill px-4 fw-semibold w-100">
+                                                        <i class="bi bi-link-45deg me-1"></i> Vincular OS Selecionada
+                                                    </button>
+                                                </form>
+                                            </div>
+
+                                            <!-- DIVISOR OU -->
+                                            <div class="d-flex align-items-center my-3">
+                                                <hr class="flex-grow-1 my-0">
+                                                <span class="px-3 text-muted small fw-bold">OU</span>
+                                                <hr class="flex-grow-1 my-0">
+                                            </div>
+
+                                            <!-- OPÇÃO B: ESCANEAR NOVA FOLHA DE OS COM A CÂMERA -->
+                                            <div class="p-3 bg-light rounded-3 border text-center">
+                                                <h6 class="fw-bold text-dark mb-2 small text-uppercase">
+                                                    <i class="bi bi-camera-fill text-purple me-1"></i> Opção B: Escanear / Cadastrar Nova OS
+                                                </h6>
+                                                <p class="text-muted small mb-3">Tire a foto da folha física agora. A IA lerá os dados e vinculará a este atendimento automaticamente.</p>
+                                                <a href="{% url 'os_create' %}?vincular_alocacao={{ alloc.id }}" class="btn btn-primary rounded-pill px-4 fw-semibold w-100">
+                                                    <i class="bi bi-camera me-1"></i> Escanear Folha com Câmera
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer bg-light border-0 py-2" style="border-radius: 0 0 16px 16px;">
+                                            <button type="button" class="btn btn-outline-secondary rounded-pill px-3" data-bs-dismiss="modal">Fechar</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% endif %}
+
 
                             <!-- MODAL: REGISTRAR NOTA PARCIAL -->
                             <div class="modal fade" id="progressUpdateModal-{{ alloc.id }}" tabindex="-1" aria-labelledby="progressUpdateModalLabel-{{ alloc.id }}" aria-hidden="true">
@@ -367,6 +448,7 @@
                             </div>
                             {% endif %}
                         </div>
+
                     {% elif tech.status == 'EM_PAUSA' and paused.count > 0 %}
                         <!-- Sem ativo, mas tem pausados -->
                         <div class="text-center py-3 bg-warning bg-opacity-10 border border-warning border-opacity-25 rounded-3 text-warning-emphasis mb-2">
@@ -399,6 +481,11 @@
                                         <div class="d-flex justify-content-between align-items-start mb-1">
                                             <div>
                                                 <span class="fw-bold text-dark">{{ p_alloc.maquina.nome }}</span>
+                                                {% if p_alloc.ordem_servico %}
+                                                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill ms-1" style="font-size:.65rem;">
+                                                        OS #{{ p_alloc.ordem_servico.numero_os }}
+                                                    </span>
+                                                {% endif %}
                                                 {% if p_alloc.maquina %}
                                                     <span class="badge bg-{{ p_alloc.maquina.bootstrap_color }} ms-1" style="font-size:.65rem;">{{ p_alloc.maquina.get_criticidade_display }}</span>
                                                 {% endif %}
@@ -406,6 +493,7 @@
                                             <span class="badge bg-dark font-monospace px-1" style="font-size:.65rem;"><i class="bi bi-stopwatch me-1"></i>{{ p_alloc.tempo_decorrido_str }}</span>
                                         </div>
                                         <p class="mb-1 text-muted" style="font-size:.78rem; word-break:break-word;">{{ p_alloc.atividade_observacao|truncatechars:80 }}</p>
+
                                         {% if p_alloc.motivo_pausa %}
                                             <p class="mb-2 text-warning-emphasis" style="font-size:.75rem;"><i class="bi bi-info-circle-fill me-1"></i>{{ p_alloc.motivo_pausa|truncatechars:60 }}</p>
                                         {% endif %}
@@ -741,7 +829,30 @@
                         {{ finish_form.foto_anexo }}
                         <div class="form-text text-muted">Ideal para registrar o estado pós-manutenção via smartphone ou PC.</div>
                     </div>
+
+                    <!-- Seção de Fechamento de OS Física -->
+                    <div class="border-top pt-3 mt-3">
+                        <h6 class="fw-bold text-dark mb-2"><i class="bi bi-file-earmark-check text-primary me-1"></i>Fechamento de Folha de OS Física (Se aplicável)</h6>
+                        <div class="mb-2">
+                            <label for="id_lider_assinatura_nome" class="form-label fw-semibold">Nome do Líder que Assinou a OS</label>
+                            <input type="text" name="lider_assinatura_nome" id="id_lider_assinatura_nome" class="form-control" placeholder="Ex: Líder Roberto Santos">
+                        </div>
+                        <div class="mb-2">
+                            <label for="id_foto_conclusao" class="form-label fw-semibold">Foto da OS Finalizada e Assinada</label>
+                            <input type="file" name="foto_conclusao" id="id_foto_conclusao" class="form-control" accept="image/*" capture="environment">
+                            <div class="form-text text-muted">Fotografe a folha física com visto executante e visto responsável.</div>
+                        </div>
+                        <div class="mb-2">
+                            <label for="id_causa" class="form-label fw-semibold">Causa Raiz Identificada</label>
+                            <textarea name="causa" id="id_causa" class="form-control" rows="2" placeholder="Ex: Rolamento travado por falta de lubrificação"></textarea>
+                        </div>
+                        <div class="mb-2">
+                            <label for="id_pecas_utilizadas_texto" class="form-label fw-semibold">Peças / Materiais Utilizados</label>
+                            <textarea name="pecas_utilizadas_texto" id="id_pecas_utilizadas_texto" class="form-control" rows="2" placeholder="Ex: 1x Rolamento 6204 DDU, 1x Retentor 35x50"></textarea>
+                        </div>
+                    </div>
                 </div>
+
                 <div class="modal-footer border-0 p-4 pt-0">
                     <button type="button" class="btn btn-light rounded-pill px-4" data-bs-dismiss="modal">Cancelar</button>
                     <button type="submit" class="btn btn-danger rounded-pill px-4">Concluir Ordem</button>

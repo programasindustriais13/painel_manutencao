@@ -150,6 +150,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "maintenance.context_processors.module_access_context",
             ],
         },
     },
@@ -309,4 +310,8 @@ LOGOUT_REDIRECT_URL = "login"
 
 # Microserviços Auxiliares
 WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://localhost:3000/send")
+
+# AI & OCR Settings (Google Gemini Vision)
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash").strip()
 

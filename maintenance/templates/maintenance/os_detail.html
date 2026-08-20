@@ -1,0 +1,381 @@
+{% extends "maintenance/base.html" %}
+{% load static %}
+
+{% block title %}OS #{{ os.numero_os }} — Detalhes & Auditoria | Gestão de Manutenção{% endblock %}
+
+{% block extra_css %}
+<style>
+    .evidence-card {
+        border-radius: 16px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        transition: all 0.25s ease;
+        overflow: hidden;
+    }
+    .evidence-card:hover {
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+    .evidence-img-container {
+        position: relative;
+        height: 280px;
+        background: #0f172a;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        overflow: hidden;
+    }
+    .evidence-img {
+        max-height: 100%;
+        max-width: 100%;
+        object-fit: contain;
+        transition: transform 0.3s ease;
+    }
+    .evidence-img-container:hover .evidence-img {
+        transform: scale(1.04);
+    }
+    .zoom-overlay-badge {
+        position: absolute;
+        bottom: 12px;
+        right: 12px;
+        background: rgba(15, 23, 42, 0.75);
+        color: #ffffff;
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        backdrop-filter: blur(4px);
+    }
+    .timeline-item {
+        position: relative;
+        padding-left: 28px;
+        padding-bottom: 20px;
+        border-left: 2px solid #e2e8f0;
+    }
+    .timeline-item:last-child {
+        border-left: 2px solid transparent;
+        padding-bottom: 0;
+    }
+    .timeline-dot {
+        position: absolute;
+        left: -7px;
+        top: 0;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #3b82f6;
+        border: 2px solid #ffffff;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+
+    <!-- Header & Navegação Superior -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+        <div class="d-flex align-items-center gap-3">
+            <a href="{% url 'os_board' %}" class="btn btn-outline-secondary rounded-pill px-3 py-1">
+                <i class="bi bi-arrow-left me-1"></i> Voltar ao Quadro
+            </a>
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <h3 class="fw-bold m-0 font-monospace text-dark">OS #{{ os.numero_os }}</h3>
+                    {% if os.status == 'CONCLUIDA' %}
+                    <span class="badge bg-success-subtle text-success border border-success-subtle rounded-pill px-3 py-1">CONCLUÍDA</span>
+                    {% elif os.status == 'EM_ANDAMENTO' %}
+                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle rounded-pill px-3 py-1">EM ANDAMENTO</span>
+                    {% elif os.status == 'PENDENTE' %}
+                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill px-3 py-1">PENDENTE</span>
+                    {% else %}
+                    <span class="badge bg-secondary rounded-pill px-3 py-1">{{ os.get_status_display }}</span>
+                    {% endif %}
+                    <span class="badge bg-{{ os.criticidade_badge_class }} rounded-pill">{{ os.get_criticidade_display }}</span>
+                </div>
+                <small class="text-muted">
+                    {{ os.maquina.nome|default:os.descricao_equipamento }} • {{ os.setor.nome|default:os.maquina.setor.nome|default:"Setor Geral" }}
+                </small>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'technician_management' %}" class="btn btn-outline-primary rounded-pill px-3">
+                <i class="bi bi-people me-1"></i> Painel de Técnicos
+            </a>
+        </div>
+    </div>
+
+    <!-- Linha 1: Resumo Operacional & Métricas de Tempo -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-md-4 col-xl-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100 p-3 bg-white">
+                <span class="text-muted small fw-semibold text-uppercase">Tempo Homem-Hora (HH)</span>
+                <h2 class="fw-bold text-primary font-monospace mt-1 mb-0">{{ os.tempo_total_homem_hora_str }}</h2>
+                <small class="text-muted mt-2">Soma total de tempo dedicado por todos os técnicos.</small>
+            </div>
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100 p-3 bg-white">
+                <span class="text-muted small fw-semibold text-uppercase">Duração do Conserto</span>
+                <h2 class="fw-bold text-success font-monospace mt-1 mb-0">{{ os.tempo_conserto_str }}</h2>
+                <small class="text-muted mt-2">Intervalo do início ao término físico do conserto.</small>
+            </div>
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100 p-3 bg-white">
+                <span class="text-muted small fw-semibold text-uppercase">Parada de Máquina</span>
+                <h2 class="fw-bold {% if os.parou_maquina %}text-danger{% else %}text-muted{% endif %} font-monospace mt-1 mb-0">
+                    {% if os.parou_maquina %}{{ os.tempo_liquido_parada_str }}{% else %}0m (Rodando){% endif %}
+                </h2>
+                <small class="text-muted mt-2">Impacto total no fluxo de produção da fábrica.</small>
+            </div>
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100 p-3 bg-white">
+                <span class="text-muted small fw-semibold text-uppercase">Liderança Responsável</span>
+                <div class="fw-bold text-dark mt-2" style="font-size:1rem;">
+                    <i class="bi bi-person-check-fill text-primary me-1"></i>
+                    {{ os.lider_assinatura_nome|default:os.solicitante|default:"Liderança de Turno" }}
+                </div>
+                <small class="text-muted mt-1 d-block">Abertura: {{ os.data_abertura|date:"d/m/Y H:i" }}</small>
+                {% if os.data_conclusao %}
+                <small class="text-muted d-block">Conclusão: {{ os.data_conclusao|date:"d/m/Y H:i" }}</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Linha 2: Galeria de Comprovação Visual (Abertura x Fechamento) -->
+    <div class="row g-4 mb-4">
+        <!-- Foto de Abertura -->
+        <div class="col-12 col-lg-6">
+            <div class="evidence-card h-100 shadow-sm">
+                <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="fw-bold m-0 text-dark">
+                            <i class="bi bi-camera-fill text-warning me-1"></i> Folha Física na Abertura
+                        </h6>
+                        <small class="text-muted">Preenchida pelo Líder na solicitação</small>
+                    </div>
+                    <span class="badge bg-light text-dark border">Foto 1 (Abertura)</span>
+                </div>
+                <div class="evidence-img-container" data-bs-toggle="modal" data-bs-target="#modalZoomAbertura">
+                    {% if os.foto_abertura %}
+                    <img src="{{ os.foto_abertura.url }}" alt="Folha de Abertura da OS" class="evidence-img">
+                    <span class="zoom-overlay-badge"><i class="bi bi-zoom-in me-1"></i> Clique para ampliar</span>
+                    {% else %}
+                    <div class="text-center text-muted p-4">
+                        <i class="bi bi-camera-slash fs-1 d-block mb-2"></i>
+                        <span>Nenhuma foto anexada na abertura</span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="p-3 bg-light bg-opacity-50">
+                    <div class="row g-2 small">
+                        <div class="col-6"><strong>Solicitante:</strong> {{ os.solicitante|default:"-" }}</div>
+                        <div class="col-6"><strong>Motivo:</strong> {{ os.motivo|default:"-" }}</div>
+                        <div class="col-12 text-secondary" style="word-break:break-word;">
+                            <strong>Descrição do Defeito:</strong> {{ os.descricao_falha|default:"-" }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Foto de Conclusão Assinada -->
+        <div class="col-12 col-lg-6">
+            <div class="evidence-card h-100 shadow-sm">
+                <div class="p-3 border-bottom d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="fw-bold m-0 text-dark">
+                            <i class="bi bi-patch-check-fill text-success me-1"></i> Folha Final Assinada
+                        </h6>
+                        <small class="text-muted">Preenchida pelo Técnico e validada pelo Líder</small>
+                    </div>
+                    <span class="badge bg-light text-dark border">Foto 2 (Conclusão)</span>
+                </div>
+                <div class="evidence-img-container" data-bs-toggle="modal" data-bs-target="#modalZoomConclusao">
+                    {% if os.foto_conclusao %}
+                    <img src="{{ os.foto_conclusao.url }}" alt="Folha de Conclusão da OS" class="evidence-img">
+                    <span class="zoom-overlay-badge"><i class="bi bi-zoom-in me-1"></i> Clique para ampliar</span>
+                    {% else %}
+                    <div class="text-center text-muted p-4">
+                        <i class="bi bi-hourglass-split fs-1 d-block mb-2 text-warning"></i>
+                        <span>Aguardando conclusão do serviço para foto final</span>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="p-3 bg-light bg-opacity-50">
+                    <div class="row g-2 small">
+                        <div class="col-6"><strong>Líder que Assinou:</strong> {{ os.lider_assinatura_nome|default:"Aguardando assinatura" }}</div>
+                        <div class="col-6"><strong>Causa Raiz:</strong> {{ os.causa|default:"-" }}</div>
+                        <div class="col-12 text-secondary" style="word-break:break-word;">
+                            <strong>Serviço Realizado:</strong> {{ os.descricao_servico_realizado|default:os.observacao_fechamento|default:"-" }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Linha 3: Auditoria de Mão de Obra / Equipe & Timeline de Progresso -->
+    <div class="row g-4 mb-4">
+        <!-- Tabela de Alocações & Mão de Obra -->
+        <div class="col-12 col-xl-8">
+            <div class="card border-0 shadow-sm rounded-4 overflow-hidden h-100">
+                <div class="card-header bg-white py-3 border-bottom d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0 text-dark">
+                        <i class="bi bi-people-fill text-primary me-2"></i>Auditoria de Mão de Obra & Equipe
+                    </h6>
+                    <span class="badge bg-primary rounded-pill">{{ os.allocations.count }} Alocação(ões)</span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light small text-uppercase text-secondary">
+                            <tr>
+                                <th class="ps-3">Técnico</th>
+                                <th>Início</th>
+                                <th>Fim</th>
+                                <th>Pausas</th>
+                                <th>Tempo Líquido</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for alloc in os.allocations.all %}
+                            <tr>
+                                <td class="ps-3">
+                                    <div class="fw-bold text-dark">{{ alloc.tecnico.nome }}</div>
+                                    <small class="text-muted">Matrícula: {{ alloc.tecnico.matricula|default:"-" }}</small>
+                                </td>
+                                <td>{{ alloc.data_inicio|date:"d/m H:i" }}</td>
+                                <td>{{ alloc.data_fim|date:"d/m H:i"|default:"Em curso" }}</td>
+                                <td>
+                                    {% if alloc.pausas.count > 0 %}
+                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle rounded-pill">
+                                        {{ alloc.pausas.count }} pausa(s)
+                                    </span>
+                                    {% else %}
+                                    <span class="text-muted small">Sem pausas</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <span class="badge bg-dark font-monospace px-2 py-1">
+                                        {{ alloc.tempo_decorrido_str }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if alloc.status == 'CONCLUIDO' %}
+                                    <span class="badge bg-success-subtle text-success border border-success-subtle">Concluído</span>
+                                    {% elif alloc.status == 'EM_PAUSA' %}
+                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">Pausado</span>
+                                    {% else %}
+                                    <span class="badge bg-primary-subtle text-primary border border-primary-subtle">Ativo</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="text-center py-4 text-muted">Nenhum apontamento de técnico registrado.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Peças e Materiais Utilizados -->
+        <div class="col-12 col-xl-4">
+            <div class="card border-0 shadow-sm rounded-4 h-100 p-3 bg-white">
+                <div class="border-bottom pb-2 mb-3 d-flex justify-content-between align-items-center">
+                    <h6 class="fw-bold m-0 text-dark">
+                        <i class="bi bi-box-seam text-info me-2"></i>Peças / Materiais
+                    </h6>
+                    <span class="badge bg-light text-dark border rounded-pill">{{ os.pecas_utilizadas.count }}</span>
+                </div>
+                <div class="d-flex flex-column gap-2 flex-grow-1">
+                    {% for peca in os.pecas_utilizadas.all %}
+                    <div class="p-2 rounded bg-light border small">
+                        <div class="d-flex justify-content-between">
+                            <strong>{{ peca.descricao }}</strong>
+                            <span class="badge bg-secondary">Qtd: {{ peca.quantidade }}</span>
+                        </div>
+                        {% if peca.codigo %}
+                        <small class="text-muted font-monospace">Cód: {{ peca.codigo }}</small>
+                        {% endif %}
+                    </div>
+                    {% empty %}
+                    <div class="text-center text-muted py-4">
+                        <i class="bi bi-inbox fs-2 d-block mb-1"></i>
+                        <span>Nenhuma peça cadastrada</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Linha 4: Linha do Tempo de Notas Parciais de Progresso -->
+    <div class="card border-0 shadow-sm rounded-4 overflow-hidden mb-4 p-4 bg-white">
+        <div class="border-bottom pb-3 mb-3 d-flex justify-content-between align-items-center">
+            <h6 class="fw-bold m-0 text-dark">
+                <i class="bi bi-clock-history text-info me-2"></i>Linha do Tempo de Atualizações de Progresso
+            </h6>
+        </div>
+        <div class="ps-2">
+            {% for alloc in os.allocations.all %}
+                {% for pu in alloc.progresso_updates.all %}
+                <div class="timeline-item">
+                    <div class="timeline-dot"></div>
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <strong class="text-dark small">{{ alloc.tecnico.nome }}</strong>
+                        <span class="badge bg-light text-muted border small">{{ pu.criado_em|date:"d/m/Y H:i" }}</span>
+                    </div>
+                    <div class="p-3 bg-light rounded-3 text-secondary" style="font-size: 0.9rem;">
+                        {{ pu.descricao }}
+                    </div>
+                </div>
+                {% empty %}
+                {% endfor %}
+            {% empty %}
+                <div class="text-muted text-center py-3">Nenhum apontamento registrado.</div>
+            {% endfor %}
+        </div>
+    </div>
+
+</div>
+
+
+<!-- MODAIS DE ZOOM DE IMAGEM -->
+{% if os.foto_abertura %}
+<div class="modal fade" id="modalZoomAbertura" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content border-0 bg-dark text-white shadow-lg">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">Foto de Abertura — OS #{{ os.numero_os }}</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-2 text-center">
+                <img src="{{ os.foto_abertura.url }}" class="img-fluid rounded" alt="Foto Abertura">
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if os.foto_conclusao %}
+<div class="modal fade" id="modalZoomConclusao" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-xl">
+        <div class="modal-content border-0 bg-dark text-white shadow-lg">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title">Foto de Conclusão Assinada — OS #{{ os.numero_os }} (Líder: {{ os.lider_assinatura_nome }})</h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-2 text-center">
+                <img src="{{ os.foto_conclusao.url }}" class="img-fluid rounded" alt="Foto Conclusão">
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

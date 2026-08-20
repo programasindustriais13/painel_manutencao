@@ -1,0 +1,665 @@
+{% extends "maintenance/base.html" %}
+{% load static %}
+
+{% block title %}Nova Ordem de Serviço | Gestão de Manutenção{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --os-primary: #4f46e5;
+        --os-primary-dark: #3730a3;
+        --os-accent: #06b6d4;
+        --os-ai-gradient: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+        --os-card-bg: #ffffff;
+        --os-border-subtle: #e2e8f0;
+    }
+
+    .os-hero-card {
+        background: linear-gradient(145deg, #1e1b4b 0%, #1e293b 100%);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        color: #f8fafc;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+    }
+
+    .os-form-card {
+        background-color: var(--os-card-bg);
+        border: 1px solid var(--os-border-subtle);
+        border-radius: 16px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+
+    .upload-dropzone {
+        border: 2px dashed #6366f1;
+        background-color: rgba(99, 102, 241, 0.05);
+        border-radius: 12px;
+        padding: 24px;
+        text-align: center;
+        transition: all 0.25s ease;
+        cursor: pointer;
+    }
+
+    .upload-dropzone:hover, .upload-dropzone.dragover {
+        background-color: rgba(99, 102, 241, 0.12);
+        border-color: #a855f7;
+        transform: translateY(-2px);
+    }
+
+    .btn-ai-scan {
+        background: var(--os-ai-gradient);
+        color: #ffffff;
+        border: none;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        box-shadow: 0 4px 15px rgba(168, 85, 247, 0.35);
+        transition: all 0.25s ease;
+    }
+
+    .btn-ai-scan:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(168, 85, 247, 0.5);
+        color: #ffffff;
+    }
+
+    .btn-ai-scan:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+    }
+
+    .preview-image-box {
+        max-height: 280px;
+        border-radius: 10px;
+        object-fit: contain;
+        background: #0f172a;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+
+    .field-highlight {
+        animation: pulseField 2.2s cubic-bezier(0.4, 0, 0.6, 1);
+    }
+
+    @keyframes pulseField {
+        0% { background-color: rgba(254, 240, 138, 0.9); border-color: #eab308; }
+        50% { background-color: rgba(217, 249, 157, 0.6); border-color: #84cc16; }
+        100% { background-color: #ffffff; }
+    }
+
+    .badge-duplicate-check {
+        font-size: 0.8rem;
+        padding: 4px 10px;
+        border-radius: 20px;
+        transition: all 0.2s ease;
+    }
+
+    .section-divider {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 24px 0 16px 0;
+        font-weight: 700;
+        font-size: 0.95rem;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .section-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: #e2e8f0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-xl-10">
+
+        <!-- Breadcrumb & Header -->
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+            <div>
+                <nav aria-label="breadcrumb">
+                    <ol class="breadcrumb mb-1">
+                        <li class="breadcrumb-item"><a href="{% url 'technician_management' %}" class="text-decoration-none">Painel</a></li>
+                        <li class="breadcrumb-item active" aria-current="page">Nova Ordem de Serviço</li>
+                    </ol>
+                </nav>
+                <h2 class="fw-bold m-0 d-flex align-items-center gap-2">
+                    <i class="bi bi-file-earmark-plus-fill text-primary"></i>
+                    Abertura de Ordem de Serviço
+                </h2>
+                <p class="text-muted small m-0">Digitalize a folha física com a câmera ou preencha os dados do chamado.</p>
+            </div>
+            <div>
+                <a href="{% url 'technician_management' %}" class="btn btn-outline-secondary rounded-pill px-3">
+                    <i class="bi bi-arrow-left me-1"></i> Voltar ao Painel
+                </a>
+            </div>
+        </div>
+
+        <!-- HERO CARD: Captura & IA Vision OCR -->
+        <div class="os-hero-card p-4 p-md-5 mb-4 position-relative overflow-hidden">
+            <div class="row align-items-center g-4">
+                <div class="col-12 col-lg-7">
+                    <div class="d-inline-flex align-items-center gap-2 px-3 py-1 rounded-pill bg-white bg-opacity-10 text-cyan mb-3">
+                        <i class="bi bi-stars text-warning"></i>
+                        <span class="small fw-semibold text-light">Assistência por Visão Computacional (IA)</span>
+                    </div>
+                    <h3 class="fw-bold mb-2">Escaneie a folha de OS física</h3>
+                    <p class="text-slate-300 text-light text-opacity-75 mb-4">
+                        Tire uma foto nítida da folha preenchida à caneta. O sistema fará a leitura da caligrafia, identificará o número da OS, equipamento, defeito e preencherá os campos automaticamente.
+                    </p>
+
+                    <!-- Botões de Ação Rápida Mobile/Desktop -->
+                    <div class="d-flex flex-wrap gap-2">
+                        <label for="id_foto_abertura" class="btn btn-light rounded-pill px-4 py-2 fw-semibold d-inline-flex align-items-center gap-2 shadow-sm cursor-pointer mb-0">
+                            <i class="bi bi-camera-fill fs-5 text-primary"></i>
+                            <span>Tirar Foto / Selecionar Imagem</span>
+                        </label>
+                        <button type="button" id="btnScanAI" class="btn btn-ai-scan rounded-pill px-4 py-2 d-inline-flex align-items-center gap-2" disabled>
+                            <i class="bi bi-magic fs-5"></i>
+                            <span>Escanear com IA</span>
+                        </button>
+                    </div>
+
+                    <div id="aiStatusBox" class="mt-3 d-none">
+                        <div class="d-flex align-items-center gap-2 text-warning fw-semibold small">
+                            <div class="spinner-border spinner-border-sm text-warning" role="status"></div>
+                            <span id="aiStatusText">Lendo folha física e interpretando caligrafia...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview da Imagem -->
+                <div class="col-12 col-lg-5 text-center">
+                    <div id="previewContainer" class="d-none">
+                        <div class="position-relative d-inline-block">
+                            <img id="imagePreview" src="" alt="Pré-visualização da folha de OS" class="img-fluid preview-image-box border border-light border-opacity-25 mb-2">
+                            <button type="button" id="btnRemoveImage" class="btn btn-sm btn-danger position-absolute top-0 end-0 m-2 rounded-circle shadow" title="Remover imagem">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                        <p id="imageFileInfo" class="small text-white-50 m-0"></p>
+                    </div>
+
+                    <div id="dropzoneEmpty" class="upload-dropzone" onclick="document.getElementById('id_foto_abertura').click();">
+                        <i class="bi bi-cloud-arrow-up-fill text-indigo-400 fs-1 mb-2 d-block text-primary"></i>
+                        <span class="fw-semibold text-light">Nenhuma foto selecionada</span>
+                        <div class="small text-white-50">Clique para abrir a câmera ou galeria</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- FORMULÁRIO DE CADASTRO -->
+        <div class="os-form-card p-4 p-md-5 mb-5">
+            <form method="post" enctype="multipart/form-data" id="formNovaOS" novalidate>
+                {% csrf_token %}
+
+                {% if vincular_alocacao_id %}
+                <input type="hidden" name="vincular_alocacao" value="{{ vincular_alocacao_id }}">
+                <div class="alert alert-warning border-0 border-start border-4 border-warning shadow-sm mb-4">
+                    <i class="bi bi-paperclip me-2"></i>
+                    <strong>Vínculo Emergencial:</strong> Esta OS será vinculada imediatamente ao seu atendimento ativo ao salvar!
+                </div>
+                {% endif %}
+
+                {% if form.non_field_errors %}
+                <div class="alert alert-danger shadow-sm border-0 border-start border-4 border-danger mb-4">
+
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-exclamation-octagon-fill fs-5"></i>
+                        <div>
+                            {% for error in form.non_field_errors %}
+                            <div>{{ error }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- INPUT FILE ESCONDIDO OU SINCRONIZADO -->
+                <div class="mb-4 d-none">
+                    {{ form.foto_abertura }}
+                </div>
+                {% if form.foto_abertura.errors %}
+                <div class="alert alert-warning d-flex align-items-center gap-2 py-2 mb-4">
+                    <i class="bi bi-camera-fill text-danger fs-5"></i>
+                    <div>{{ form.foto_abertura.errors|striptags }}</div>
+                </div>
+                {% endif %}
+
+                <!-- SEÇÃO 1: CABEÇALHO & NÚMERO DA OS -->
+                <div class="section-divider">
+                    <i class="bi bi-hash text-primary"></i>
+                    1. Identificação & Número da OS
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12 col-md-6">
+                        <label for="id_numero_os" class="form-label fw-bold d-flex justify-content-between align-items-center">
+                            <span>Número da OS Física <span class="text-danger">*</span></span>
+                            <span id="badgeDuplicidade" class="badge bg-secondary badge-duplicate-check d-none">
+                                <i class="bi bi-search me-1"></i> Verificando...
+                            </span>
+                        </label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light text-muted fw-bold">Nº</span>
+                            {{ form.numero_os }}
+                        </div>
+                        <div id="duplicateAlertBox" class="small mt-1 d-none"></div>
+                        {% if form.numero_os.errors %}
+                        <div class="text-danger small mt-1 fw-semibold">{{ form.numero_os.errors|striptags }}</div>
+                        {% endif %}
+                        <div class="form-text small">Número impresso em vermelho no cabeçalho da folha (ex: 10216).</div>
+                    </div>
+
+                    <div class="col-12 col-md-6">
+                        <label for="id_data_hora_inicio_ocorrencia" class="form-label fw-bold">
+                            Data e Hora de Início da Ocorrência <span class="text-danger">*</span>
+                        </label>
+                        {{ form.data_hora_inicio_ocorrencia }}
+                        {% if form.data_hora_inicio_ocorrencia.errors %}
+                        <div class="text-danger small mt-1">{{ form.data_hora_inicio_ocorrencia.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- SEÇÃO 2: EQUIPAMENTO & LOCALIZAÇÃO -->
+                <div class="section-divider">
+                    <i class="bi bi-gear-wide-connected text-primary"></i>
+                    2. Equipamento & Localização
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12 col-md-3">
+                        <label for="id_tag" class="form-label fw-semibold">TAG do Equipamento</label>
+                        {{ form.tag }}
+                        {% if form.tag.errors %}
+                        <div class="text-danger small mt-1">{{ form.tag.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-5">
+                        <label for="id_descricao_equipamento" class="form-label fw-semibold">Descrição do Equipamento (Folha)</label>
+                        {{ form.descricao_equipamento }}
+                        {% if form.descricao_equipamento.errors %}
+                        <div class="text-danger small mt-1">{{ form.descricao_equipamento.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label for="id_maquina" class="form-label fw-semibold">Máquina Cadastrada no Sistema</label>
+                        {{ form.maquina }}
+                        {% if form.maquina.errors %}
+                        <div class="text-danger small mt-1">{{ form.maquina.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label for="id_setor" class="form-label fw-semibold">Setor da Fábrica</label>
+                        {{ form.setor }}
+                        {% if form.setor.errors %}
+                        <div class="text-danger small mt-1">{{ form.setor.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label for="id_solicitante" class="form-label fw-bold">Solicitante / Líder de Produção <span class="text-danger">*</span></label>
+                        {{ form.solicitante }}
+                        {% if form.solicitante.errors %}
+                        <div class="text-danger small mt-1">{{ form.solicitante.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label for="id_motivo" class="form-label fw-semibold">Motivo do Chamado</label>
+                        {{ form.motivo }}
+                        {% if form.motivo.errors %}
+                        <div class="text-danger small mt-1">{{ form.motivo.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- SEÇÃO 3: DETALHES OPERACIONAIS & IMPACTO -->
+                <div class="section-divider">
+                    <i class="bi bi-activity text-primary"></i>
+                    3. Detalhes Operacionais & Criticidade
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12 col-md-4">
+                        <label for="id_tipo_manutencao" class="form-label fw-semibold">Tipo de Serviço</label>
+                        {{ form.tipo_manutencao }}
+                        {% if form.tipo_manutencao.errors %}
+                        <div class="text-danger small mt-1">{{ form.tipo_manutencao.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label for="id_parou_maquina" class="form-label fw-bold">Parou a Máquina?</label>
+                        {{ form.parou_maquina }}
+                        {% if form.parou_maquina.errors %}
+                        <div class="text-danger small mt-1">{{ form.parou_maquina.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label for="id_criticidade" class="form-label fw-semibold">Criticidade do Atendimento</label>
+                        {{ form.criticidade }}
+                        {% if form.criticidade.errors %}
+                        <div class="text-danger small mt-1">{{ form.criticidade.errors|striptags }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- SEÇÃO 4: DESCRIÇÃO DO SERVIÇO & DESIGNAÇÃO -->
+                <div class="section-divider">
+                    <i class="bi bi-card-text text-primary"></i>
+                    4. Descrição do Serviço & Atribuição
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label for="id_descricao_falha" class="form-label fw-bold">
+                            Descrição do Serviço a ser Realizado (Defeito Relatado) <span class="text-danger">*</span>
+                        </label>
+                        {{ form.descricao_falha }}
+                        {% if form.descricao_falha.errors %}
+                        <div class="text-danger small mt-1">{{ form.descricao_falha.errors|striptags }}</div>
+                        {% endif %}
+                        <div class="form-text small">Detalhe o sintoma do defeito ou a necessidade da intervenção.</div>
+                    </div>
+
+                    <div class="col-12 col-md-6">
+                        <label for="id_tecnico_designado" class="form-label fw-semibold">Técnico Designado (Opcional)</label>
+                        {{ form.tecnico_designado }}
+                        {% if form.tecnico_designado.errors %}
+                        <div class="text-danger small mt-1">{{ form.tecnico_designado.errors|striptags }}</div>
+                        {% endif %}
+                        <div class="form-text small">Pode ser definido agora ou no momento do início do conserto pelo técnico.</div>
+                    </div>
+                </div>
+
+                <!-- BOTÕES DE SUBMIT -->
+                <div class="d-flex flex-wrap align-items-center justify-content-end gap-3 mt-5 pt-3 border-top">
+                    <a href="{% url 'technician_management' %}" class="btn btn-light rounded-pill px-4 py-2">
+                        Cancelar
+                    </a>
+                    <button type="submit" id="btnSubmitOS" class="btn btn-primary rounded-pill px-5 py-2 fw-bold d-inline-flex align-items-center gap-2 shadow">
+                        <i class="bi bi-check2-circle fs-5"></i>
+                        <span>Confirmar e Abrir Ordem de Serviço</span>
+                    </button>
+                </div>
+
+            </form>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const fileInput = document.getElementById('id_foto_abertura');
+    const btnScanAI = document.getElementById('btnScanAI');
+    const dropzoneEmpty = document.getElementById('dropzoneEmpty');
+    const previewContainer = document.getElementById('previewContainer');
+    const imagePreview = document.getElementById('imagePreview');
+    const btnRemoveImage = document.getElementById('btnRemoveImage');
+    const imageFileInfo = document.getElementById('imageFileInfo');
+    const aiStatusBox = document.getElementById('aiStatusBox');
+    const aiStatusText = document.getElementById('aiStatusText');
+    const numeroOsInput = document.getElementById('id_numero_os');
+    const badgeDuplicidade = document.getElementById('badgeDuplicidade');
+    const duplicateAlertBox = document.getElementById('duplicateAlertBox');
+    const maquinaSelect = document.getElementById('id_maquina');
+    const setorSelect = document.getElementById('id_setor');
+
+    let machinesData = [];
+    try {
+        machinesData = {{ machines_json|safe }};
+    } catch(e) {
+        console.error('Erro ao carregar dados de máquinas:', e);
+    }
+
+    // 1. Preview da Imagem selecionada
+    fileInput.addEventListener('change', function(e) {
+        const file = fileInput.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                imagePreview.src = evt.target.result;
+                previewContainer.classList.remove('d-none');
+                dropzoneEmpty.classList.add('d-none');
+                btnScanAI.removeAttribute('disabled');
+                imageFileInfo.textContent = `${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+            };
+            reader.readAsDataURL(file);
+        } else {
+            resetImagePreview();
+        }
+    });
+
+    // 2. Remover imagem
+    btnRemoveImage.addEventListener('click', function(e) {
+        e.preventDefault();
+        fileInput.value = '';
+        resetImagePreview();
+    });
+
+    function resetImagePreview() {
+        imagePreview.src = '';
+        previewContainer.classList.add('d-none');
+        dropzoneEmpty.classList.remove('d-none');
+        btnScanAI.setAttribute('disabled', 'disabled');
+        imageFileInfo.textContent = '';
+    }
+
+    // 3. Casamento automático Máquina <-> Setor no Dropdown
+    maquinaSelect.addEventListener('change', function() {
+        const selectedId = parseInt(this.value);
+        if (selectedId && machinesData.length > 0) {
+            const found = machinesData.find(m => m.id === selectedId);
+            if (found && found.setor_id) {
+                setorSelect.value = found.setor_id;
+            }
+        }
+    });
+
+    // 4. Efeito visual de destaque nos campos autopreenchidos
+    function highlightField(el) {
+        if (!el) return;
+        el.classList.remove('field-highlight');
+        void el.offsetWidth; // Trigger reflow
+        el.classList.add('field-highlight');
+    }
+
+    // 5. Escaneamento com IA via Gemini Vision
+    btnScanAI.addEventListener('click', async function() {
+        const file = fileInput.files[0];
+        if (!file) {
+            alert('Selecione ou tire uma foto da folha física de OS primeiro.');
+            return;
+        }
+
+        btnScanAI.setAttribute('disabled', 'disabled');
+        aiStatusBox.classList.remove('d-none');
+        aiStatusText.textContent = 'Enviando foto e analisando caligrafia com IA Gemini...';
+
+        const formData = new FormData();
+        formData.append('foto_os', file);
+        formData.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+
+        try {
+            const response = await fetch('{% url "api_extrair_dados_os_foto" %}', {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}'
+                }
+            });
+
+            const result = await response.json();
+
+            if (result.sucesso && result.dados) {
+                const d = result.dados;
+                aiStatusText.textContent = 'Dados extraídos com sucesso!';
+                
+                // Preencher campos
+                if (d.numero_os) {
+                    numeroOsInput.value = d.numero_os;
+                    highlightField(numeroOsInput);
+                    verificarDuplicidadeOS(d.numero_os);
+                }
+
+                if (d.tag) {
+                    const tagEl = document.getElementById('id_tag');
+                    if (tagEl) { tagEl.value = d.tag; highlightField(tagEl); }
+                }
+
+                if (d.descricao_equipamento) {
+                    const descEl = document.getElementById('id_descricao_equipamento');
+                    if (descEl) { descEl.value = d.descricao_equipamento; highlightField(descEl); }
+                }
+
+                if (d.motivo) {
+                    const motEl = document.getElementById('id_motivo');
+                    if (motEl) { motEl.value = d.motivo; highlightField(motEl); }
+                }
+
+                if (d.solicitante) {
+                    const solEl = document.getElementById('id_solicitante');
+                    if (solEl) { solEl.value = d.solicitante; highlightField(solEl); }
+                }
+
+                if (d.descricao_falha) {
+                    const falhaEl = document.getElementById('id_descricao_falha');
+                    if (falhaEl) { falhaEl.value = d.descricao_falha; highlightField(falhaEl); }
+                }
+
+                if (d.tipo_manutencao) {
+                    const tipoEl = document.getElementById('id_tipo_manutencao');
+                    if (tipoEl) {
+                        for (let opt of tipoEl.options) {
+                            if (opt.value.toUpperCase() === d.tipo_manutencao.toUpperCase()) {
+                                tipoEl.value = opt.value;
+                                highlightField(tipoEl);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (d.parou_maquina !== undefined && d.parou_maquina !== null) {
+                    const parouEl = document.getElementById('id_parou_maquina');
+                    if (parouEl) {
+                        parouEl.value = d.parou_maquina ? "True" : "False";
+                        highlightField(parouEl);
+                    }
+                }
+
+                // Sugestão de Máquina e Setor do Backend
+                if (result.maquina_sugerida_id) {
+                    maquinaSelect.value = result.maquina_sugerida_id;
+                    highlightField(maquinaSelect);
+                }
+                if (result.setor_sugerido_id) {
+                    setorSelect.value = result.setor_sugerido_id;
+                    highlightField(setorSelect);
+                }
+
+                // Data e Hora de Início
+                if (d.data_inicio_ocorrencia || d.hora_inicio_ocorrencia) {
+                    const dtEl = document.getElementById('id_data_hora_inicio_ocorrencia');
+                    if (dtEl) {
+                        let dateStr = d.data_inicio_ocorrencia || new Date().toISOString().split('T')[0];
+                        let timeStr = d.hora_inicio_ocorrencia || "08:00";
+                        // Se veio no formato DD/MM/AAAA, converter para AAAA-MM-DD
+                        if (dateStr.includes('/')) {
+                            const parts = dateStr.split('/');
+                            if (parts.length === 3) {
+                                dateStr = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                            }
+                        }
+                        if (timeStr.length === 5) {
+                            dtEl.value = `${dateStr}T${timeStr}`;
+                            highlightField(dtEl);
+                        }
+                    }
+                }
+
+                setTimeout(() => {
+                    aiStatusBox.classList.add('d-none');
+                    btnScanAI.removeAttribute('disabled');
+                }, 3000);
+
+            } else {
+                aiStatusBox.classList.add('d-none');
+                btnScanAI.removeAttribute('disabled');
+                alert(result.mensagem || 'Não foi possível ler a folha automaticamente. Por favor, preencha manualmente.');
+            }
+        } catch (err) {
+            console.error('Erro na chamada OCR:', err);
+            aiStatusBox.classList.add('d-none');
+            btnScanAI.removeAttribute('disabled');
+            alert('Falha na comunicação com o servidor. Você pode preencher os campos manualmente.');
+        }
+    });
+
+    // 6. Verificação Anti-Duplicidade Instantânea (Debounced)
+    let debounceTimer = null;
+
+    async function verificarDuplicidadeOS(numero) {
+        if (!numero || numero.trim() === '') {
+            badgeDuplicidade.classList.add('d-none');
+            duplicateAlertBox.classList.add('d-none');
+            return;
+        }
+
+        badgeDuplicidade.className = 'badge bg-secondary badge-duplicate-check';
+        badgeDuplicidade.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Checando...';
+        badgeDuplicidade.classList.remove('d-none');
+
+        try {
+            const resp = await fetch(`{% url "api_verificar_numero_os" %}?numero=${encodeURIComponent(numero.trim())}`);
+            const data = await resp.json();
+
+            if (data.existe) {
+                badgeDuplicidade.className = 'badge bg-danger badge-duplicate-check';
+                badgeDuplicidade.innerHTML = '<i class="bi bi-x-circle-fill me-1"></i> Já Cadastrada!';
+                
+                duplicateAlertBox.className = 'small mt-1 text-danger fw-bold alert alert-danger py-2 px-3';
+                duplicateAlertBox.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-1"></i> A OS nº ${data.os.numero} já existe no sistema (Status: ${data.os.status} | Data: ${data.os.data} | Máquina: ${data.os.maquina}).`;
+                duplicateAlertBox.classList.remove('d-none');
+            } else {
+                badgeDuplicidade.className = 'badge bg-success badge-duplicate-check';
+                badgeDuplicidade.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i> Número Disponível';
+                duplicateAlertBox.classList.add('d-none');
+            }
+        } catch(e) {
+            badgeDuplicidade.classList.add('d-none');
+            duplicateAlertBox.classList.add('d-none');
+        }
+    }
+
+    numeroOsInput.addEventListener('input', function() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            verificarDuplicidadeOS(this.value);
+        }, 400);
+    });
+
+    numeroOsInput.addEventListener('blur', function() {
+        verificarDuplicidadeOS(this.value);
+    });
+
+    // Checagem inicial caso venha preenchido
+    if (numeroOsInput.value) {
+        verificarDuplicidadeOS(numeroOsInput.value);
+    }
+});
+</script>
+{% endblock %}

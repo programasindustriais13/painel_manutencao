@@ -3,23 +3,32 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
 from django.utils import timezone
-from django.http import HttpResponse, FileResponse, Http404, HttpResponseForbidden
+from django.http import HttpResponse, FileResponse, Http404, HttpResponseForbidden, JsonResponse
 from functools import wraps
 import json
 import io
 import datetime
 import os
 import mimetypes
-from django.db.models import Prefetch, Q
+from django.urls import reverse
+from django.db import models
+from django.db.models import Prefetch, Q, Case, When, Value, IntegerField
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup, AllocationProgressUpdate
+
+from .models import (
+    Sector, Machine, Technician, Allocation, 
+    HistoricoPausa, HistoricoEscala, WhatsAppGroup, AllocationProgressUpdate,
+    OrdemServico, OrdemServicoPeca
+)
 from .forms import (
     SectorForm, MachineForm, TechnicianForm,
-    StartServiceForm, PauseServiceForm, FinishServiceForm
+    StartServiceForm, PauseServiceForm, FinishServiceForm,
+    OrdemServicoCreateForm
 )
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -50,17 +59,73 @@ def _get_technician_proprio(user):
         return None
 
 
-def _user_has_maintenance_access(user):
-    """Retorna True se o usuário pertence a algum grupo de manutenção, é superuser/staff ou tem perfil de técnico."""
+def _user_can_access_maintenance(user):
+    """Retorna True se for superuser, staff, pertencer aos grupos de manutenção ou possuir technician_profile."""
     if not user.is_authenticated:
         return False
     if user.is_superuser or user.is_staff:
         return True
-    if user.groups.filter(name__in=['Operadores', 'Tecnicos_Lideres', 'Tecnicos', 'Operador']).exists():
+    if user.groups.filter(name__in=['Operadores', 'Operador', 'Tecnicos_Lideres', 'Tecnicos']).exists():
         return True
     if _get_technician_proprio(user):
         return True
     return False
+
+
+def _user_can_access_production(user):
+    """Retorna True se for superuser, staff, pertencer ao grupo 'Liderança de Produção', 'Operadores', 'Operador' ou grupo PCP."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    if user.groups.filter(name__in=['Liderança de Produção', 'Operadores', 'Operador', 'PCP']).exists():
+        return True
+    if user.has_perm('production.add_productiontarget') or user.has_perm('production.view_productiontarget'):
+        return True
+    return False
+
+
+def _user_has_dual_access(user):
+    """Retorna True se o usuário tem permissão para AMBOS os módulos (Manutenção e Produção)."""
+    return _user_can_access_maintenance(user) and _user_can_access_production(user)
+
+
+def _user_has_maintenance_access(user):
+    """Alias para compatibilidade retroativa com verificações existentes."""
+    return _user_can_access_maintenance(user)
+
+
+def _user_can_create_os(user):
+    """
+    Retorna True se o usuário pode abrir novas Ordens de Serviço:
+    Operadores, Técnicos Líderes, Liderança de Produção, PCP, Superuser ou Staff.
+    """
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    if user.groups.filter(name__in=[
+        'Operadores', 'Operador', 'Tecnicos_Lideres', 
+        'Liderança de Produção', 'Lideres_Producao', 'Lideranca_Producao', 'Producao', 'PCP'
+    ]).exists():
+        return True
+    tech = _get_technician_proprio(user)
+    if tech and tech.perfil in ['OPERADOR', 'TECNICO_LIDER']:
+        return True
+    return False
+
+
+def os_creation_required(view_func):
+    """Decorator que protege a tela de abertura de novas Ordens de Serviço."""
+    @login_required
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if _user_can_create_os(request.user):
+            return view_func(request, *args, **kwargs)
+        messages.error(request, "Acesso restrito. Você não possui permissão para abrir novas Ordens de Serviço.")
+        return redirect('technician_management')
+    return wrapper
+
 
 
 # Decorator para views que exigem Operador/Admin COMPLETO (cadastros, etc.).
@@ -71,7 +136,7 @@ def operador_required(view_func):
     def wrapper(request, *args, **kwargs):
         if _user_is_operador(request.user):
             return view_func(request, *args, **kwargs)
-        if request.user.groups.filter(name="Liderança de Produção").exists() and not _user_has_maintenance_access(request.user):
+        if request.user.groups.filter(name="Liderança de Produção").exists() and not _user_can_access_maintenance(request.user):
             messages.error(request, "Acesso restrito. Esta seção não está disponível para o seu perfil.")
             return redirect("production:dashboard")
         messages.error(
@@ -90,7 +155,7 @@ def lider_ou_operador_required(view_func):
     def wrapper(request, *args, **kwargs):
         if _user_is_lider_ou_operador(request.user):
             return view_func(request, *args, **kwargs)
-        if request.user.groups.filter(name="Liderança de Produção").exists() and not _user_has_maintenance_access(request.user):
+        if request.user.groups.filter(name="Liderança de Produção").exists() and not _user_can_access_maintenance(request.user):
             messages.error(request, "Acesso restrito. Esta página requer perfil de Técnico Líder ou superior.")
             return redirect("production:dashboard")
         messages.error(
@@ -107,7 +172,7 @@ def tecnico_or_operador_required(view_func):
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
         user = request.user
-        if _user_has_maintenance_access(user):
+        if _user_can_access_maintenance(user):
             return view_func(request, *args, **kwargs)
         if user.groups.filter(name="Liderança de Produção").exists():
             messages.error(request, "Acesso restrito. Esta área é exclusiva para a Manutenção.")
@@ -120,28 +185,67 @@ def tecnico_or_operador_required(view_func):
 @login_required
 def home_redirect(request):
     user = request.user
-    # Liderança de Produção → painel de produção
-    if user.groups.filter(name="Liderança de Produção").exists():
-        return redirect("production:dashboard")
-    # Visualizador / usuário 'tv' → painel TV
-    if user.groups.filter(name='Visualizador').exists() or user.username == 'tv':
+    # 1. Usuário de TV ('tv' ou grupo 'Visualizador')
+    if user.username == 'tv' or user.groups.filter(name='Visualizador').exists():
         return redirect('tv_dashboard')
-    # Técnico Líder → painel de controle de técnicos (/management/)
-    if user.groups.filter(name='Tecnicos_Lideres').exists():
-        return redirect('technician_management')
-    # Técnico comum (se estiver no grupo Tecnicos) → painel de controle de técnicos
-    if user.groups.filter(name='Tecnicos').exists():
-        return redirect('technician_management')
-        
-    # Fallback para perfis legados / técnicos vinculados
-    tecnico = _get_technician_proprio(user)
-    if tecnico and tecnico.perfil == 'TECNICO_LIDER':
-        return redirect('technician_management')
-    if tecnico and tecnico.perfil == 'TECNICO':
-        return redirect('technician_management')
-        
-    # Operadores, staff, superuser, técnicos OPERADOR → dashboard
-    return redirect('dashboard')
+
+    # 2. Usuário com Acesso Duplo (Manutenção + Produção) -> Portal de Escolha
+    if _user_has_dual_access(user):
+        return redirect('portal_select')
+
+    # 3. Usuário com Acesso Apenas à Produção
+    if _user_can_access_production(user) and not _user_can_access_maintenance(user):
+        return redirect('production:dashboard')
+
+    # 4. Usuário com Acesso Apenas à Manutenção
+    if _user_can_access_maintenance(user):
+        # Técnico Líder ou Técnico comum -> tela de gerenciamento de técnicos (/management/)
+        if (
+            user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
+            or _get_technician_proprio(user)
+        ):
+            return redirect('technician_management')
+        # Operadores puros de manutenção -> dashboard
+        return redirect('dashboard')
+
+    # 5. Fallback para usuários sem permissões válidas
+    messages.error(request, "Acesso restrito. Seu usuário não possui permissão para acessar os módulos.")
+    return redirect('login')
+
+
+@login_required
+def portal_select(request):
+    """
+    Tela de Seleção de Módulos (Hub / Portal de Entrada).
+    Se o usuário não possuir acesso duplo, redireciona-o automaticamente
+    para o único módulo ao qual tem direito.
+    """
+    user = request.user
+    if not _user_has_dual_access(user):
+        if _user_can_access_production(user):
+            return redirect('production:dashboard')
+        if _user_can_access_maintenance(user):
+            if (
+                user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
+                or _get_technician_proprio(user)
+            ):
+                return redirect('technician_management')
+            return redirect('dashboard')
+        if user.username == 'tv' or user.groups.filter(name='Visualizador').exists():
+            return redirect('tv_dashboard')
+        messages.error(request, "Acesso restrito. Seu usuário não possui módulos atribuídos.")
+        return redirect('login')
+
+    # Destino do botão de manutenção no portal
+    if _user_is_operador(user) or _user_is_lider_ou_operador(user):
+        maintenance_url = 'dashboard'
+    else:
+        maintenance_url = 'technician_management'
+
+    context = {
+        'maintenance_url': maintenance_url,
+    }
+    return render(request, 'maintenance/portal_select.html', context)
 
 
 # ----------------------------------------------------
@@ -185,6 +289,7 @@ def tv_dashboard(request):
 @tecnico_or_operador_required
 def technician_management(request):
     technicians = Technician.objects.filter(is_active=True).order_by('nome')
+    pending_os_list = OrdemServico.objects.filter(status='PENDENTE').select_related('maquina', 'setor').order_by('-criticidade', 'data_abertura')
 
     # Instantiate blank forms to render in the modals
     start_form = StartServiceForm()
@@ -199,6 +304,7 @@ def technician_management(request):
 
     context = {
         'technicians': technicians,
+        'pending_os_list': pending_os_list,
         'start_form': start_form,
         'pause_form': pause_form,
         'finish_form': finish_form,
@@ -207,6 +313,7 @@ def technician_management(request):
         'technician_proprio_id': technician_proprio_id,
     }
     return render(request, 'maintenance/technician_management.html', context)
+
 
 
 # Action: Start Service
@@ -447,6 +554,36 @@ def finish_service(request, technician_id):
                 
             active_alloc.save()
             
+            # Fechamento de Ordem de Serviço vinculada se este for o último técnico concluindo
+            if active_alloc.ordem_servico:
+                os_obj = active_alloc.ordem_servico
+                outras_ativas = os_obj.allocations.filter(data_fim__isnull=True).exclude(id=active_alloc.id)
+                if not outras_ativas.exists():
+                    if 'foto_conclusao' in request.FILES:
+                        os_obj.foto_conclusao = request.FILES['foto_conclusao']
+                    if 'foto_verso' in request.FILES:
+                        os_obj.foto_verso = request.FILES['foto_verso']
+                    if request.POST.get('lider_assinatura_nome'):
+                        os_obj.lider_assinatura_nome = request.POST['lider_assinatura_nome'].strip()
+                    if request.POST.get('causa'):
+                        os_obj.causa = request.POST['causa'].strip()
+                    if request.POST.get('descricao_servico_realizado'):
+                        os_obj.descricao_servico_realizado = request.POST['descricao_servico_realizado'].strip()
+                    if request.POST.get('observacao_fechamento'):
+                        os_obj.observacao_fechamento = request.POST['observacao_fechamento'].strip()
+                    
+                    pecas_txt = request.POST.get('pecas_utilizadas_texto', '').strip()
+                    if pecas_txt:
+                        for p_line in pecas_txt.splitlines():
+                            if p_line.strip():
+                                OrdemServicoPeca.objects.create(ordem_servico=os_obj, descricao=p_line.strip(), quantidade=1.0)
+
+                    os_obj.data_hora_fim_conserto = os_obj.data_hora_fim_conserto or now_time
+                    os_obj.data_hora_fim_ocorrencia = os_obj.data_hora_fim_ocorrencia or now_time
+                    os_obj.data_conclusao = now_time
+                    os_obj.status = 'CONCLUIDA'
+                    os_obj.save()
+
             # Recalcula status do técnico
             if technician.active_allocation is None:
                 remaining_paused = technician.paused_allocations.exists()
@@ -497,6 +634,36 @@ def finish_allocation(request, allocation_id):
                 
             alloc.status = 'CONCLUIDO'
             alloc.save()
+
+            # Fechamento de Ordem de Serviço vinculada se este for o último técnico concluindo
+            if alloc.ordem_servico:
+                os_obj = alloc.ordem_servico
+                outras_ativas = os_obj.allocations.filter(data_fim__isnull=True).exclude(id=alloc.id)
+                if not outras_ativas.exists():
+                    if 'foto_conclusao' in request.FILES:
+                        os_obj.foto_conclusao = request.FILES['foto_conclusao']
+                    if 'foto_verso' in request.FILES:
+                        os_obj.foto_verso = request.FILES['foto_verso']
+                    if request.POST.get('lider_assinatura_nome'):
+                        os_obj.lider_assinatura_nome = request.POST['lider_assinatura_nome'].strip()
+                    if request.POST.get('causa'):
+                        os_obj.causa = request.POST['causa'].strip()
+                    if request.POST.get('descricao_servico_realizado'):
+                        os_obj.descricao_servico_realizado = request.POST['descricao_servico_realizado'].strip()
+                    if request.POST.get('observacao_fechamento'):
+                        os_obj.observacao_fechamento = request.POST['observacao_fechamento'].strip()
+                    
+                    pecas_txt = request.POST.get('pecas_utilizadas_texto', '').strip()
+                    if pecas_txt:
+                        for p_line in pecas_txt.splitlines():
+                            if p_line.strip():
+                                OrdemServicoPeca.objects.create(ordem_servico=os_obj, descricao=p_line.strip(), quantidade=1.0)
+
+                    os_obj.data_hora_fim_conserto = os_obj.data_hora_fim_conserto or now_time
+                    os_obj.data_hora_fim_ocorrencia = os_obj.data_hora_fim_ocorrencia or now_time
+                    os_obj.data_conclusao = now_time
+                    os_obj.status = 'CONCLUIDA'
+                    os_obj.save()
             
             # Recalcula status do técnico com base nas alocações abertas restantes
             if technician.active_allocation is not None:
@@ -515,6 +682,7 @@ def finish_allocation(request, allocation_id):
             return redirect(f'/management/?open_modal=finish_alloc&alloc_id={allocation_id}')
                     
     return redirect('technician_management')
+
 
 
 # Action: Add Progress Update (adiciona nota de progresso parcial a uma alocação)
@@ -1523,3 +1691,449 @@ def serve_allocation_attachment(request, allocation_id):
     response['X-Content-Type-Options'] = 'nosniff'
 
     return response
+
+
+@login_required
+def extrair_dados_os_foto_api(request):
+    """
+    Endpoint de API interno para processar imagem da folha física de OS via Gemini Vision.
+    Recebe requisição POST com arquivo multipart 'foto_os'.
+    """
+    if request.method != "POST":
+        return JsonResponse({"sucesso": False, "mensagem": "Método não permitido. Utilize POST."}, status=405)
+
+    foto_os = request.FILES.get("foto_os")
+    if not foto_os:
+        return JsonResponse({"sucesso": False, "mensagem": "Nenhum arquivo de imagem 'foto_os' foi enviado."}, status=400)
+
+    from .services.os_ocr_service import extrair_dados_os_por_foto
+    resultado = extrair_dados_os_por_foto(foto_os)
+
+    return JsonResponse(resultado)
+
+
+@login_required
+def api_verificar_numero_os(request):
+    """
+    Verifica instantaneamente se um número de OS física já existe no banco.
+    Usado para feedback anti-duplicidade em tempo real no frontend.
+    """
+    numero = request.GET.get("numero", "").strip().upper()
+    if not numero:
+        return JsonResponse({"existe": False})
+
+    os_existente = OrdemServico.objects.filter(numero_os__iexact=numero).first()
+    if os_existente:
+        maquina_str = os_existente.descricao_equipamento or (os_existente.maquina.nome if os_existente.maquina else "Não especificada")
+        return JsonResponse({
+            "existe": True,
+            "os": {
+                "id": os_existente.id,
+                "numero": os_existente.numero_os,
+                "data": os_existente.data_abertura.strftime('%d/%m/%Y %H:%M'),
+                "status": os_existente.get_status_display(),
+                "solicitante": os_existente.solicitante or "",
+                "maquina": maquina_str,
+            }
+        })
+    return JsonResponse({"existe": False})
+
+
+@os_creation_required
+def os_create(request):
+    """
+    Tela de abertura de nova Ordem de Serviço física com suporte a captura de foto,
+    reconhecimento assistido por IA e prevenção estrita de duplicidade.
+    Suporta o parâmetro vincular_alocacao para vincular imediatamente a um atendimento emergencial.
+    """
+    vincular_alocacao_id = request.POST.get('vincular_alocacao') or request.GET.get('vincular_alocacao')
+
+    if request.method == "POST":
+        form = OrdemServicoCreateForm(request.POST, request.FILES)
+        if form.is_valid():
+            os_obj = form.save(commit=False)
+            os_obj.criado_por = request.user
+            if not os_obj.data_hora_inicio_ocorrencia:
+                os_obj.data_hora_inicio_ocorrencia = timezone.now()
+            os_obj.status = 'PENDENTE'
+            os_obj.save()
+
+            if vincular_alocacao_id:
+                try:
+                    alloc_to_link = Allocation.objects.get(id=vincular_alocacao_id)
+                    alloc_to_link.ordem_servico = os_obj
+                    alloc_to_link.save()
+                    os_obj.status = 'EM_ANDAMENTO'
+                    if not os_obj.data_hora_inicio_conserto:
+                        os_obj.data_hora_inicio_conserto = alloc_to_link.data_inicio
+                    os_obj.save()
+                    messages.success(
+                        request,
+                        f"Ordem de Serviço nº {os_obj.numero_os} aberta e vinculada com sucesso ao atendimento do técnico {alloc_to_link.tecnico.nome}!"
+                    )
+                    return redirect('technician_management')
+                except Allocation.DoesNotExist:
+                    pass
+
+            messages.success(
+                request,
+                f"Ordem de Serviço nº {os_obj.numero_os} aberta com sucesso! Foto da folha física registrada."
+            )
+            return redirect('technician_management')
+        else:
+            messages.error(request, "Por favor, corrija os erros indicados no formulário abaixo.")
+    else:
+        # Inicializa com solicitante padrão baseado no usuário logado
+        solicitante_inicial = request.user.get_full_name() or request.user.username
+        initial_data = {
+            'solicitante': solicitante_inicial,
+            'data_hora_inicio_ocorrencia': timezone.localtime().strftime('%Y-%m-%dT%H:%M'),
+            'parou_maquina': True,
+            'criticidade': 'MEDIA',
+            'tipo_manutencao': 'CORRETIVA',
+        }
+        form = OrdemServicoCreateForm(initial=initial_data)
+
+    machines_json = [
+        {"id": m.id, "nome": m.nome, "setor_id": m.setor_id, "setor_nome": m.setor.nome}
+        for m in Machine.objects.select_related('setor').all()
+    ]
+
+    return render(request, "maintenance/os_create.html", {
+        "form": form,
+        "machines_json": json.dumps(machines_json),
+        "vincular_alocacao_id": vincular_alocacao_id,
+    })
+
+
+
+@login_required
+def os_board(request):
+    """
+    Quadro visual de Ordens de Serviço (Kanban/Abas):
+    - Aba 1: Pendentes (Na fila para atendimento)
+    - Aba 2: Em Andamento (Atendimento com suporte a multi-técnicos)
+    - Aba 3: Concluídas (Histórico recente com fotos de conclusão)
+    - Aba 4: Canceladas
+    """
+    search = request.GET.get('busca', '').strip()
+    setor_id = request.GET.get('setor', '').strip()
+    criticidade = request.GET.get('criticidade', '').strip()
+    active_tab = request.GET.get('tab', 'pendentes').strip()
+
+    qs = OrdemServico.objects.select_related('maquina', 'setor', 'tecnico_designado', 'criado_por').prefetch_related('allocations__tecnico', 'pecas_utilizadas')
+
+    if search:
+        qs = qs.filter(
+            Q(numero_os__icontains=search) |
+            Q(solicitante__icontains=search) |
+            Q(descricao_falha__icontains=search) |
+            Q(descricao_equipamento__icontains=search) |
+            Q(tag__icontains=search) |
+            Q(motivo__icontains=search) |
+            Q(maquina__nome__icontains=search) |
+            Q(setor__nome__icontains=search)
+        )
+
+    if setor_id:
+        qs = qs.filter(Q(setor_id=setor_id) | Q(maquina__setor_id=setor_id))
+
+    if criticidade:
+        qs = qs.filter(criticidade=criticidade)
+
+    # Separação por status
+    pendentes = qs.filter(status='PENDENTE').order_by(
+        models.Case(
+            models.When(criticidade='ALTA', then=models.Value(1)),
+            models.When(criticidade='MEDIA', then=models.Value(2)),
+            default=models.Value(3),
+            output_field=models.IntegerField(),
+        ),
+        'data_abertura'
+    )
+
+    em_andamento = qs.filter(status='EM_ANDAMENTO').order_by(
+        models.Case(
+            models.When(criticidade='ALTA', then=models.Value(1)),
+            models.When(criticidade='MEDIA', then=models.Value(2)),
+            default=models.Value(3),
+            output_field=models.IntegerField(),
+        ),
+        '-data_abertura'
+    )
+
+    concluidas = qs.filter(status='CONCLUIDA').order_by('-data_conclusao', '-data_abertura')[:60]
+    canceladas = qs.filter(status='CANCELADA').order_by('-data_abertura')[:30]
+
+    # Contagens gerais (sem filtro de busca para os badges das abas)
+    counts = {
+        'pendentes': OrdemServico.objects.filter(status='PENDENTE').count(),
+        'em_andamento': OrdemServico.objects.filter(status='EM_ANDAMENTO').count(),
+        'concluidas': OrdemServico.objects.filter(status='CONCLUIDA').count(),
+        'canceladas': OrdemServico.objects.filter(status='CANCELADA').count(),
+    }
+
+    # Técnicos disponíveis para modais
+    active_technicians = Technician.objects.filter(is_active=True).order_by('nome')
+    available_technicians = Technician.objects.filter(is_active=True).exclude(status__startswith='AUSENTE').order_by('nome')
+    sectors = Sector.objects.all().order_by('nome')
+    technician_proprio = _get_technician_proprio(request.user)
+
+    return render(request, "maintenance/os_board.html", {
+        "pendentes": pendentes,
+        "em_andamento": em_andamento,
+        "concluidas": concluidas,
+        "canceladas": canceladas,
+        "counts": counts,
+        "active_tab": active_tab,
+        "search": search,
+        "setor_id": int(setor_id) if setor_id.isdigit() else "",
+        "criticidade": criticidade,
+        "sectors": sectors,
+        "active_technicians": active_technicians,
+        "available_technicians": available_technicians,
+        "technician_proprio": technician_proprio,
+        "technician_proprio_id": technician_proprio.id if technician_proprio else None,
+        "user_can_manage": _user_is_lider_ou_operador(request.user),
+        "user_can_create_os": _user_can_create_os(request.user),
+    })
+
+
+@login_required
+def os_assign_technician(request, os_id):
+    """
+    Atribui ou altera o técnico designado para a Ordem de Serviço física.
+    """
+    if request.method != "POST":
+        return redirect('os_board')
+
+    if not (_user_is_lider_ou_operador(request.user) or _user_can_create_os(request.user)):
+        messages.error(request, "Acesso restrito. Você não possui permissão para atribuir técnicos.")
+        return redirect('os_board')
+
+    os_obj = get_object_or_404(OrdemServico, id=os_id)
+    technician_id = request.POST.get('technician_id', '').strip()
+
+    if not technician_id:
+        os_obj.tecnico_designado = None
+        os_obj.save()
+        messages.success(request, f"Atribuição de técnico removida da OS #{os_obj.numero_os}.")
+    else:
+        tech = get_object_or_404(Technician, id=technician_id)
+        if tech.is_ausente:
+            messages.warning(request, f"O técnico {tech.nome} está ausente ({tech.get_status_display()}) e não pode ser designado.")
+        else:
+            os_obj.tecnico_designado = tech
+            os_obj.save()
+            messages.success(request, f"Técnico {tech.nome} designado para a OS #{os_obj.numero_os}.")
+
+    return redirect(f"{reverse('os_board')}?tab=pendentes")
+
+
+@login_required
+def os_start_service(request, os_id):
+    """
+    Inicia o atendimento de uma OS física pela fila:
+    - Cria alocação individual
+    - Muda status da OS para EM_ANDAMENTO
+    - Muda status do técnico para EM_ATENDIMENTO
+    - Valida ausência e concorrência estrita (apenas 1 atendimento ativo por técnico)
+    """
+    if request.method != "POST":
+        return redirect('os_board')
+
+    os_obj = get_object_or_404(OrdemServico, id=os_id)
+
+    # Identificar técnico
+    tech_id = request.POST.get('technician_id', '').strip()
+    if tech_id and _user_is_lider_ou_operador(request.user):
+        tech = get_object_or_404(Technician, id=tech_id)
+    else:
+        tech = _get_technician_proprio(request.user)
+
+    if not tech:
+        messages.error(request, "Nenhum técnico selecionado ou vinculado ao seu usuário.")
+        return redirect('os_board')
+
+    # Validação 1: Ausência
+    if tech.is_ausente:
+        messages.error(request, f"O técnico {tech.nome} está ausente ({tech.get_status_display()}) e não pode iniciar atendimentos.")
+        return redirect('os_board')
+
+    # Validação 2: Concorrência estrita (apenas 1 alocação EM_ATENDIMENTO ativa por vez)
+    active_alloc = tech.active_allocation
+    if active_alloc:
+        maq_nome = active_alloc.maquina.nome if active_alloc.maquina else "outra máquina"
+        messages.error(
+            request, 
+            f"O técnico {tech.nome} já está em atendimento na {maq_nome}. É necessário pausar ou finalizar o atendimento atual antes de iniciar uma nova OS."
+        )
+        return redirect('os_board')
+
+    # Criação da Alocação
+    Allocation.objects.create(
+        tecnico=tech,
+        maquina=os_obj.maquina,
+        ordem_servico=os_obj,
+        atividade_observacao=f"OS #{os_obj.numero_os} - {os_obj.descricao_falha or os_obj.motivo or 'Atendimento de Manutenção'}",
+        data_inicio=timezone.now(),
+        status='EM_ATENDIMENTO',
+        usuario_operador=request.user
+    )
+
+    # Atualiza técnico e OS
+    tech.status = 'EM_ATENDIMENTO'
+    tech.save()
+
+    os_obj.status = 'EM_ANDAMENTO'
+    if not os_obj.data_hora_inicio_conserto:
+        os_obj.data_hora_inicio_conserto = timezone.now()
+    if not os_obj.tecnico_designado:
+        os_obj.tecnico_designado = tech
+    os_obj.save()
+
+    messages.success(request, f"Atendimento da OS #{os_obj.numero_os} iniciado pelo técnico {tech.nome} com sucesso!")
+    return redirect('technician_management')
+
+
+@login_required
+def os_join_team(request, os_id):
+    """
+    Permite que um 2º ou 3º técnico entre na equipe de uma OS já em andamento:
+    - Cria alocação individual vinculada à mesma OS
+    - Permite trabalho conjunto mantendo apontamentos de tempo e pausas individuais
+    """
+    if request.method != "POST":
+        return redirect('os_board')
+
+    os_obj = get_object_or_404(OrdemServico, id=os_id)
+
+    # Identificar técnico
+    tech_id = request.POST.get('technician_id', '').strip()
+    if tech_id and _user_is_lider_ou_operador(request.user):
+        tech = get_object_or_404(Technician, id=tech_id)
+    else:
+        tech = _get_technician_proprio(request.user)
+
+    if not tech:
+        messages.error(request, "Nenhum técnico selecionado ou vinculado ao seu usuário.")
+        return redirect('os_board')
+
+    # Validação 1: Ausência
+    if tech.is_ausente:
+        messages.error(request, f"O técnico {tech.nome} está ausente ({tech.get_status_display()}) e não pode entrar na equipe.")
+        return redirect('os_board')
+
+    # Validação 2: Já alocado nesta mesma OS
+    if os_obj.allocations.filter(tecnico=tech, data_fim__isnull=True).exists():
+        messages.warning(request, f"O técnico {tech.nome} já possui uma alocação ativa ou pausada nesta OS.")
+        return redirect(f"{reverse('os_board')}?tab=em_andamento")
+
+    # Validação 3: Concorrência
+    active_alloc = tech.active_allocation
+    if active_alloc:
+        maq_nome = active_alloc.maquina.nome if active_alloc.maquina else "outra máquina"
+        messages.error(
+            request, 
+            f"O técnico {tech.nome} já está em atendimento na {maq_nome}. É necessário pausar ou finalizar o atendimento atual antes de entrar nesta OS."
+        )
+        return redirect(f"{reverse('os_board')}?tab=em_andamento")
+
+    # Criação da Alocação de Trabalho em Equipe
+    Allocation.objects.create(
+        tecnico=tech,
+        maquina=os_obj.maquina,
+        ordem_servico=os_obj,
+        atividade_observacao=f"OS #{os_obj.numero_os} (Trabalho em Equipe) - {os_obj.descricao_falha or os_obj.motivo or 'Apoio Manutenção'}",
+        data_inicio=timezone.now(),
+        status='EM_ATENDIMENTO',
+        usuario_operador=request.user
+    )
+
+    tech.status = 'EM_ATENDIMENTO'
+    tech.save()
+
+    os_obj.status = 'EM_ANDAMENTO'
+    os_obj.save()
+
+    messages.success(request, f"Técnico {tech.nome} entrou na equipe da OS #{os_obj.numero_os} com sucesso!")
+    return redirect('technician_management')
+
+
+@login_required
+def os_cancel(request, os_id):
+    """
+    Cancela uma Ordem de Serviço física (desde que não possua atendimentos em andamento).
+    """
+    if request.method != "POST":
+        return redirect('os_board')
+
+    if not (_user_is_lider_ou_operador(request.user) or _user_can_create_os(request.user)):
+        messages.error(request, "Acesso restrito. Você não possui permissão para cancelar Ordens de Serviço.")
+        return redirect('os_board')
+
+    os_obj = get_object_or_404(OrdemServico, id=os_id)
+
+    # Bloqueia se houver alocações ativas
+    if os_obj.allocations.filter(data_fim__isnull=True).exists():
+        messages.error(
+            request, 
+            f"Não é possível cancelar a OS #{os_obj.numero_os} pois há técnicos com atendimento em andamento. Pause ou conclua os atendimentos primeiro."
+        )
+        return redirect(f"{reverse('os_board')}?tab=em_andamento")
+
+    os_obj.status = 'CANCELADA'
+    os_obj.save()
+
+    messages.success(request, f"Ordem de Serviço #{os_obj.numero_os} cancelada com sucesso.")
+    return redirect(f"{reverse('os_board')}?tab=canceladas")
+
+
+@login_required
+def os_detail(request, pk):
+    """
+    Tela de detalhes, auditoria visual e histórico completo da Ordem de Serviço física:
+    - Comparativo lado a lado da foto de abertura x foto de conclusão assinada
+    - Auditoria de mão de obra de todos os técnicos que atuaram
+    - Apontamentos de tempos líquidos, homem-hora, tempo de máquina parada
+    - Histórico de peças e notas parciais de progresso
+    """
+    os_obj = get_object_or_404(
+        OrdemServico.objects.select_related('maquina', 'setor', 'tecnico_designado', 'criado_por')
+        .prefetch_related('allocations__tecnico', 'allocations__pausas', 'pecas_utilizadas'),
+        pk=pk
+    )
+    return render(request, "maintenance/os_detail.html", {"os": os_obj})
+
+
+@login_required
+def link_allocation_os(request, allocation_id):
+    """
+    Permite vincular um atendimento emergencial (que foi iniciado avulso no sistema)
+    a uma folha de Ordem de Serviço física recebida posteriormente.
+    """
+    if request.method != "POST":
+        return redirect('technician_management')
+
+    alloc = get_object_or_404(Allocation, id=allocation_id)
+    os_id = request.POST.get('os_id', '').strip()
+
+    if not os_id:
+        messages.error(request, "Selecione uma Ordem de Serviço para vincular.")
+        return redirect('technician_management')
+
+    os_obj = get_object_or_404(OrdemServico, id=os_id)
+    alloc.ordem_servico = os_obj
+    alloc.save()
+
+    os_obj.status = 'EM_ANDAMENTO'
+    if not os_obj.data_hora_inicio_conserto:
+        os_obj.data_hora_inicio_conserto = alloc.data_inicio
+    os_obj.save()
+
+    messages.success(request, f"Atendimento da máquina {alloc.maquina.nome if alloc.maquina else ''} vinculado à OS #{os_obj.numero_os} com sucesso!")
+    return redirect('technician_management')
+
+
+
+

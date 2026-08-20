@@ -1,58 +1,82 @@
 {% extends 'maintenance/base.html' %}
+{% load static %}
 
-{% block title %}Entrar - Monitoramento de Manutenção{% endblock %}
+{% block title %}Pneus Freedom - Acesso ao Sistema{% endblock %}
 
-{% block container_class %}container d-flex align-items-center justify-content-center min-vh-75 py-5{% endblock %}
+{% block container_class_guest %}container d-flex align-items-center justify-content-center min-vh-100 py-4{% endblock %}
 
 {% block extra_css %}
 <style>
     body {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important;
+        background: radial-gradient(circle at 50% 30%, #161f30 0%, #0b0f17 80%) !important;
         color: #f8fafc !important;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
     .card-login {
-        background: rgba(30, 41, 59, 0.7);
-        backdrop-filter: blur(16px);
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 16px;
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
-        max-width: 450px;
+        background: rgba(18, 24, 36, 0.85);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(209, 156, 62, 0.25);
+        border-radius: 20px;
+        box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.5), 0 0 30px rgba(209, 156, 62, 0.1);
+        max-width: 440px;
         width: 100%;
         color: #f8fafc;
+        position: relative;
+        overflow: hidden;
+    }
+    .card-login::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #D19C3E, #B8842E, #F7DC9E);
+    }
+    .login-logo-img {
+        max-height: 80px;
+        width: auto;
+        max-width: 100%;
+        filter: drop-shadow(0 4px 14px rgba(209, 156, 62, 0.3));
+        transition: transform 0.3s ease;
     }
     .form-control-custom {
-        background-color: rgba(15, 23, 42, 0.6) !important;
-        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        background-color: rgba(11, 15, 23, 0.7) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
         color: #ffffff !important;
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 12px 16px;
         transition: all 0.2s ease;
     }
     .form-control-custom:focus {
-        border-color: #6366f1 !important;
-        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25) !important;
+        border-color: #D19C3E !important;
+        box-shadow: 0 0 0 3px rgba(209, 156, 62, 0.25) !important;
+        background-color: rgba(11, 15, 23, 0.95) !important;
     }
-    .login-logo {
-        font-size: 3rem;
-        background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+    .input-group-text-custom {
+        background-color: rgba(11, 15, 23, 0.7) !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        color: #94A3B8 !important;
+        border-radius: 10px 0 0 10px !important;
     }
 </style>
 {% endblock %}
 
-{% block content %}
+{% block content_guest %}
 <div class="card card-login p-4 p-md-5">
     <div class="text-center mb-4">
-        <div class="mb-2">
-            <i class="bi bi-ui-checks-grid login-logo"></i>
+        <div class="mb-3">
+            <img src="{% static 'maintenance/img/logo_pneus_freedom_gold.png' %}" alt="Pneus Freedom" class="login-logo-img">
         </div>
-        <h2 class="fw-bold mb-1">Painel Manutenção</h2>
-        <p class="text-white-50">Área de acesso restrito a funcionários</p>
+        <h3 class="fw-bold mb-1 text-white">Portal Industrial</h3>
+        <p class="text-white-50 small mb-0">Gestão Integrada de Manutenção & Produção</p>
     </div>
 
     {% if form.errors %}
-    <div class="alert alert-danger border-0 bg-danger bg-opacity-20 text-danger-emphasis py-2 px-3 rounded mb-4 text-center">
+    <div class="alert alert-danger border-0 bg-danger bg-opacity-20 text-danger-emphasis py-2 px-3 rounded-3 mb-4 text-center small">
         <i class="bi bi-exclamation-triangle-fill me-1"></i> Usuário ou senha incorretos.
     </div>
     {% endif %}
@@ -61,22 +85,22 @@
         {% csrf_token %}
         
         <div class="mb-3">
-            <label for="id_username" class="form-label small fw-semibold text-white-50">Nome de Usuário</label>
+            <label for="id_username" class="form-label small fw-semibold text-white-50">Usuário</label>
             <div class="input-group">
-                <span class="input-group-text bg-transparent border-end-0 border-white-15 text-white-50" style="border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px 0 0 8px;">
-                    <i class="bi bi-person"></i>
+                <span class="input-group-text input-group-text-custom border-end-0">
+                    <i class="bi bi-person text-warning"></i>
                 </span>
-                <input type="text" name="username" autofocus required id="id_username" class="form-control form-control-custom border-start-0" style="border-radius: 0 8px 8px 0;" placeholder="Digite seu usuário">
+                <input type="text" name="username" autofocus required id="id_username" class="form-control form-control-custom border-start-0" style="border-radius: 0 10px 10px 0;" placeholder="Digite seu usuário">
             </div>
         </div>
 
         <div class="mb-4">
             <label for="id_password" class="form-label small fw-semibold text-white-50">Senha</label>
             <div class="input-group">
-                <span class="input-group-text bg-transparent border-end-0 border-white-15 text-white-50" style="border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px 0 0 8px;">
-                    <i class="bi bi-lock"></i>
+                <span class="input-group-text input-group-text-custom border-end-0">
+                    <i class="bi bi-lock text-warning"></i>
                 </span>
-                <input type="password" name="password" required id="id_password" class="form-control form-control-custom border-start-0" style="border-radius: 0 8px 8px 0;" placeholder="Digite sua senha">
+                <input type="password" name="password" required id="id_password" class="form-control form-control-custom border-start-0" style="border-radius: 0 10px 10px 0;" placeholder="Digite sua senha">
             </div>
         </div>
 

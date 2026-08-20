@@ -1,0 +1,684 @@
+{% extends "maintenance/base.html" %}
+{% load static %}
+
+{% block title %}Quadro de Ordens de Serviço | Gestão de Manutenção{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --os-pendente-border: #f59e0b;
+        --os-andamento-border: #10b981;
+        --os-concluida-border: #64748b;
+    }
+
+    .os-card {
+        border-radius: 14px;
+        transition: all 0.25s ease;
+        border: 1px solid #e2e8f0;
+        background: #ffffff;
+    }
+
+    .os-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.08);
+    }
+
+    .os-card.pendente-alta {
+        border-left: 5px solid #ef4444;
+    }
+
+    .os-card.pendente-media {
+        border-left: 5px solid #f59e0b;
+    }
+
+    .os-card.pendente-baixa {
+        border-left: 5px solid #06b6d4;
+    }
+
+    .os-card.em-andamento {
+        border-left: 5px solid #10b981;
+        background: #fafdfb;
+    }
+
+    .os-badge-os {
+        font-family: monospace;
+        font-weight: 800;
+        font-size: 0.95rem;
+        letter-spacing: 0.5px;
+    }
+
+    .thumb-os {
+        width: 60px;
+        height: 60px;
+        object-fit: cover;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: transform 0.2s;
+    }
+
+    .thumb-os:hover {
+        transform: scale(1.08);
+    }
+
+    .pulse-dot-green {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        background-color: #10b981;
+        border-radius: 50%;
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+        animation: pulseGreen 1.8s infinite;
+    }
+
+    @keyframes pulseGreen {
+        0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+        70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+        100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    .pulse-badge-parada {
+        animation: pulseRedBadge 2s infinite;
+    }
+
+    @keyframes pulseRedBadge {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.65; }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-2">
+
+    <!-- Header & Ações -->
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-4">
+        <div>
+            <h2 class="fw-bold m-0 d-flex align-items-center gap-2">
+                <i class="bi bi-kanban text-primary"></i>
+                Quadro de Ordens de Serviço
+            </h2>
+            <p class="text-muted small m-0">Fila operacional de chamados físicos digitalizados e gestão de equipes.</p>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            {% if user_can_create_os %}
+            <a href="{% url 'os_create' %}" class="btn btn-warning text-dark fw-bold rounded-pill px-3 shadow-sm d-flex align-items-center gap-1">
+                <i class="bi bi-file-earmark-plus-fill"></i> + Nova OS
+            </a>
+            {% endif %}
+            <a href="{% url 'technician_management' %}" class="btn btn-outline-secondary rounded-pill px-3">
+                <i class="bi bi-people me-1"></i> Controle Técnico
+            </a>
+        </div>
+    </div>
+
+    <!-- Barra de Filtros & Abas -->
+    <div class="card border-0 shadow-sm rounded-4 mb-4">
+        <div class="card-body p-3">
+            <div class="row g-3 align-items-center justify-content-between">
+                <!-- Abas de Navegação -->
+                <div class="col-12 col-lg-7">
+                    <ul class="nav nav-pills gap-2" id="osTab" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link rounded-pill px-3 py-2 fw-semibold {% if active_tab == 'pendentes' %}active bg-warning text-dark{% else %}text-muted{% endif %}" 
+                               href="?tab=pendentes{% if search %}&busca={{ search }}{% endif %}{% if setor_id %}&setor={{ setor_id }}{% endif %}{% if criticidade %}&criticidade={{ criticidade }}{% endif %}">
+                                <i class="bi bi-hourglass-split me-1"></i> Na Fila (Pendentes)
+                                <span class="badge {% if active_tab == 'pendentes' %}bg-dark text-white{% else %}bg-secondary text-white{% endif %} rounded-pill ms-1">{{ counts.pendentes }}</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link rounded-pill px-3 py-2 fw-semibold {% if active_tab == 'em_andamento' %}active bg-success text-white{% else %}text-muted{% endif %}" 
+                               href="?tab=em_andamento{% if search %}&busca={{ search }}{% endif %}{% if setor_id %}&setor={{ setor_id }}{% endif %}{% if criticidade %}&criticidade={{ criticidade }}{% endif %}">
+                                <i class="bi bi-play-circle-fill me-1"></i> Em Andamento
+                                <span class="badge {% if active_tab == 'em_andamento' %}bg-dark text-white{% else %}bg-secondary text-white{% endif %} rounded-pill ms-1">{{ counts.em_andamento }}</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link rounded-pill px-3 py-2 fw-semibold {% if active_tab == 'concluidas' %}active bg-dark text-white{% else %}text-muted{% endif %}" 
+                               href="?tab=concluidas{% if search %}&busca={{ search }}{% endif %}{% if setor_id %}&setor={{ setor_id }}{% endif %}{% if criticidade %}&criticidade={{ criticidade }}{% endif %}">
+                                <i class="bi bi-check2-circle me-1"></i> Concluídas
+                                <span class="badge bg-secondary text-white rounded-pill ms-1">{{ counts.concluidas }}</span>
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link rounded-pill px-3 py-2 fw-semibold {% if active_tab == 'canceladas' %}active bg-secondary text-white{% else %}text-muted{% endif %}" 
+                               href="?tab=canceladas{% if search %}&busca={{ search }}{% endif %}{% if setor_id %}&setor={{ setor_id }}{% endif %}{% if criticidade %}&criticidade={{ criticidade }}{% endif %}">
+                                <i class="bi bi-x-circle me-1"></i> Canceladas
+                                <span class="badge bg-light text-dark rounded-pill ms-1">{{ counts.canceladas }}</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+
+                <!-- Formulário de Busca e Filtro de Setor -->
+                <div class="col-12 col-lg-5">
+                    <form method="get" class="d-flex flex-wrap gap-2 justify-content-lg-end m-0">
+                        <input type="hidden" name="tab" value="{{ active_tab }}">
+                        
+                        <div class="input-group input-group-sm flex-grow-1" style="max-width: 250px;">
+                            <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                            <input type="text" name="busca" value="{{ search }}" class="form-control border-start-0" placeholder="Buscar OS, máquina, líder...">
+                        </div>
+
+                        <select name="setor" class="form-select form-select-sm" style="max-width: 140px;" onchange="this.form.submit()">
+                            <option value="">Todos Setores</option>
+                            {% for sec in sectors %}
+                            <option value="{{ sec.id }}" {% if setor_id == sec.id %}selected{% endif %}>{{ sec.nome }}</option>
+                            {% endfor %}
+                        </select>
+
+                        <button type="submit" class="btn btn-sm btn-primary rounded-pill px-3">Filtrar</button>
+                        {% if search or setor_id or criticidade %}
+                        <a href="?tab={{ active_tab }}" class="btn btn-sm btn-outline-secondary rounded-pill" title="Limpar Filtros">
+                            <i class="bi bi-x-lg"></i>
+                        </a>
+                        {% endif %}
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CONTEÚDO DAS ABAS -->
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         ABA 1: NA FILA (PENDENTES)
+         ══════════════════════════════════════════════════════════════════════════ -->
+    {% if active_tab == 'pendentes' %}
+        <div class="row g-3">
+            {% for os in pendentes %}
+            <div class="col-12 col-md-6 col-xl-4">
+                <div class="os-card pendente-{{ os.criticidade|lower }} p-3 h-100 d-flex flex-column shadow-sm">
+                    <!-- Topo do Card -->
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div>
+                            <span class="badge bg-dark text-warning os-badge-os py-1 px-2">
+                                <i class="bi bi-file-earmark-text me-1"></i>OS #{{ os.numero_os }}
+                            </span>
+                            <span class="badge bg-{{ os.criticidade_badge_class }} ms-1">{{ os.get_criticidade_display }}</span>
+                        </div>
+                        <div>
+                            {% if os.parou_maquina %}
+                            <span class="badge bg-danger pulse-badge-parada" title="Máquina Parada">
+                                <i class="bi bi-exclamation-octagon-fill me-1"></i>PARADA
+                            </span>
+                            {% else %}
+                            <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                <i class="bi bi-check-circle me-1"></i>RODANDO
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Informações do Equipamento -->
+                    <div class="mb-2">
+                        <h5 class="fw-bold text-dark mb-0">
+                            {% if os.maquina %}{{ os.maquina.nome }}{% else %}{{ os.descricao_equipamento|default:"Máquina não especificada" }}{% endif %}
+                        </h5>
+                        <div class="text-muted small d-flex flex-wrap gap-2">
+                            <span><i class="bi bi-geo-alt me-1"></i>{{ os.setor.nome|default:os.maquina.setor.nome|default:"Setor Geral" }}</span>
+                            {% if os.tag %}<span><i class="bi bi-tag me-1"></i>TAG: {{ os.tag }}</span>{% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Defeito e Detalhes -->
+                    <div class="bg-light p-2 rounded-3 mb-3 flex-grow-1 border">
+                        {% if os.motivo %}
+                        <div class="small fw-semibold text-primary mb-1">
+                            <i class="bi bi-exclamation-circle me-1"></i>{{ os.motivo }}
+                        </div>
+                        {% endif %}
+                        <p class="small text-secondary mb-1" style="word-break: break-word;">
+                            {{ os.descricao_falha|truncatechars:140 }}
+                        </p>
+                        <div class="d-flex justify-content-between align-items-center text-muted" style="font-size: 0.75rem;">
+                            <span><i class="bi bi-person me-1"></i>{{ os.solicitante|default:"Líder" }}</span>
+                            <span><i class="bi bi-clock-history me-1"></i>Fila: <strong>{{ os.tempo_espera_str }}</strong></span>
+                        </div>
+                    </div>
+
+                    <!-- Foto de Abertura & Técnico Designado -->
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            {% if os.foto_abertura %}
+                            <img src="{{ os.foto_abertura.url }}" alt="Folha de OS" class="thumb-os border shadow-sm" data-bs-toggle="modal" data-bs-target="#modalFoto-{{ os.id }}">
+                            {% else %}
+                            <span class="text-muted small"><i class="bi bi-camera-slash me-1"></i>Sem foto</span>
+                            {% endif %}
+                        </div>
+                        <div class="text-end">
+                            <span class="text-muted small d-block" style="font-size: 0.72rem;">Técnico Designado:</span>
+                            {% if os.tecnico_designado %}
+                            <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle rounded-pill">
+                                <i class="bi bi-person-check-fill me-1"></i>{{ os.tecnico_designado.nome }}
+                            </span>
+                            {% else %}
+                            <span class="badge bg-light text-muted border rounded-pill">Não atribuído</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Ações da OS Pendente -->
+                    <div class="d-flex flex-wrap gap-2 pt-2 border-top">
+                        <!-- Iniciar Atendimento -->
+                        {% if technician_proprio and technician_proprio.status != 'EM_ATENDIMENTO' and not technician_proprio.is_ausente %}
+                        <form action="{% url 'os_start_service' os.id %}" method="post" class="m-0 flex-grow-1">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-success btn-sm w-100 rounded-pill fw-bold">
+                                <i class="bi bi-play-fill me-1"></i>Assumir e Iniciar
+                            </button>
+                        </form>
+                        {% else %}
+                        <button type="button" class="btn btn-success btn-sm flex-grow-1 rounded-pill fw-bold" data-bs-toggle="modal" data-bs-target="#modalIniciar-{{ os.id }}">
+                            <i class="bi bi-play-fill me-1"></i>Iniciar Atendimento
+                        </button>
+                        {% endif %}
+
+                        <!-- Atribuir Técnico / Ações de Liderança -->
+                        {% if user_can_manage %}
+                        <button type="button" class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#modalAtribuir-{{ os.id }}" title="Atribuir Técnico">
+                            <i class="bi bi-person-plus-fill"></i>
+                        </button>
+                        <button type="button" class="btn btn-outline-danger btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#modalCancelar-{{ os.id }}" title="Cancelar OS">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODAL: ATRIBUIR TÉCNICO -->
+            {% if user_can_manage %}
+            <div class="modal fade" id="modalAtribuir-{{ os.id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+                        <div class="modal-header bg-primary text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                            <h5 class="modal-title fw-bold"><i class="bi bi-person-gear me-2"></i>Designar Técnico para OS #{{ os.numero_os }}</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <form action="{% url 'os_assign_technician' os.id %}" method="post">
+                            {% csrf_token %}
+                            <div class="modal-body p-4">
+                                <p class="text-muted small mb-3">Selecione o mecânico/eletricista que ficará encarregado deste chamado.</p>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Técnico:</label>
+                                    <select name="technician_id" class="form-select">
+                                        <option value="">-- Deixar sem atribuição --</option>
+                                        {% for t in active_technicians %}
+                                        <option value="{{ t.id }}" {% if os.tecnico_designado_id == t.id %}selected{% endif %} {% if t.is_ausente %}disabled{% endif %}>
+                                            {{ t.nome }} {% if t.is_ausente %}({{ t.get_status_display }}){% elif t.status == 'EM_ATENDIMENTO' %}[Em Atendimento]{% else %}[Disponível]{% endif %}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="modal-footer bg-light border-0 py-3" style="border-radius: 0 0 16px 16px;">
+                                <button type="button" class="btn btn-outline-secondary rounded-pill px-3" data-bs-dismiss="modal">Fechar</button>
+                                <button type="submit" class="btn btn-primary rounded-pill px-4 fw-semibold">Salvar Atribuição</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODAL: CANCELAR OS -->
+            <div class="modal fade" id="modalCancelar-{{ os.id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+                        <div class="modal-header bg-danger text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                            <h5 class="modal-title fw-bold"><i class="bi bi-exclamation-triangle-fill me-2"></i>Cancelar OS #{{ os.numero_os }}</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <form action="{% url 'os_cancel' os.id %}" method="post">
+                            {% csrf_token %}
+                            <div class="modal-body p-4">
+                                <p class="text-danger fw-semibold">Tem certeza que deseja cancelar esta Ordem de Serviço física?</p>
+                                <div class="bg-light p-3 rounded-3 border">
+                                    <div><strong>OS:</strong> #{{ os.numero_os }}</div>
+                                    <div><strong>Máquina:</strong> {{ os.maquina.nome|default:os.descricao_equipamento }}</div>
+                                    <div><strong>Defeito:</strong> {{ os.descricao_falha }}</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer bg-light border-0 py-3" style="border-radius: 0 0 16px 16px;">
+                                <button type="button" class="btn btn-outline-secondary rounded-pill px-3" data-bs-dismiss="modal">Voltar</button>
+                                <button type="submit" class="btn btn-danger rounded-pill px-4 fw-semibold">Sim, Cancelar OS</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- MODAL: INICIAR ATENDIMENTO (Seleção de Técnico caso Operador) -->
+            <div class="modal fade" id="modalIniciar-{{ os.id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+                        <div class="modal-header bg-success text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                            <h5 class="modal-title fw-bold"><i class="bi bi-play-circle me-2"></i>Iniciar Atendimento na OS #{{ os.numero_os }}</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <form action="{% url 'os_start_service' os.id %}" method="post">
+                            {% csrf_token %}
+                            <div class="modal-body p-4">
+                                <div class="alert alert-success border-success-subtle mb-3 small">
+                                    <i class="bi bi-info-circle-fill me-1"></i>
+                                    <strong>{{ os.maquina.nome|default:os.descricao_equipamento }}</strong> — {{ os.motivo|default:"Atendimento de Manutenção" }}
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Selecione o Técnico que vai iniciar:</label>
+                                    <select name="technician_id" class="form-select" required>
+                                        {% for t in available_technicians %}
+                                        <option value="{{ t.id }}" {% if os.tecnico_designado_id == t.id or technician_proprio_id == t.id %}selected{% endif %}>
+                                            {{ t.nome }} {% if t.status == 'EM_ATENDIMENTO' %}(Ocupado - exigirá pausa){% else %}(Disponível){% endif %}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="modal-footer bg-light border-0 py-3" style="border-radius: 0 0 16px 16px;">
+                                <button type="button" class="btn btn-outline-secondary rounded-pill px-3" data-bs-dismiss="modal">Cancelar</button>
+                                <button type="submit" class="btn btn-success rounded-pill px-4 fw-semibold">Iniciar Serviço Agora</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODAL: FOTO ZOOM -->
+            {% if os.foto_abertura %}
+            <div class="modal fade" id="modalFoto-{{ os.id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered modal-lg">
+                    <div class="modal-content border-0 bg-dark text-white shadow-lg">
+                        <div class="modal-header border-secondary py-2">
+                            <h6 class="modal-title">Folha Física — OS #{{ os.numero_os }}</h6>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body p-2 text-center">
+                            <img src="{{ os.foto_abertura.url }}" class="img-fluid rounded" alt="Foto da OS">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% empty %}
+            <div class="col-12 text-center py-5">
+                <div class="py-5 bg-white rounded-4 border shadow-sm">
+                    <i class="bi bi-check2-all text-success" style="font-size: 3.5rem;"></i>
+                    <h4 class="fw-bold mt-2 text-dark">Nenhuma Ordem de Serviço pendente na fila!</h4>
+                    <p class="text-muted small">Todas as solicitações de manutenção foram iniciadas ou atendidas.</p>
+                    {% if user_can_create_os %}
+                    <a href="{% url 'os_create' %}" class="btn btn-primary rounded-pill px-4 fw-semibold mt-2">
+                        <i class="bi bi-plus-lg me-1"></i> Abrir Nova OS
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         ABA 2: EM ANDAMENTO (ATENDIMENTO & MULTI-TÉCNICOS)
+         ══════════════════════════════════════════════════════════════════════════ -->
+    {% elif active_tab == 'em_andamento' %}
+        <div class="row g-3">
+            {% for os in em_andamento %}
+            <div class="col-12 col-md-6 col-xl-4">
+                <div class="os-card em-andamento p-3 h-100 d-flex flex-column shadow-sm">
+                    <!-- Topo -->
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="pulse-dot-green"></span>
+                            <span class="badge bg-dark text-warning os-badge-os py-1 px-2">
+                                OS #{{ os.numero_os }}
+                            </span>
+                            <span class="badge bg-{{ os.criticidade_badge_class }}">{{ os.get_criticidade_display }}</span>
+                        </div>
+                        <div>
+                            <span class="badge bg-success-subtle text-success border border-success-subtle fw-bold">
+                                EM EXECUÇÃO
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Equipamento -->
+                    <div class="mb-2">
+                        <h5 class="fw-bold text-dark mb-0">
+                            {{ os.maquina.nome|default:os.descricao_equipamento }}
+                        </h5>
+                        <div class="text-muted small">
+                            <i class="bi bi-geo-alt me-1"></i>{{ os.setor.nome|default:os.maquina.setor.nome|default:"Setor Geral" }}
+                        </div>
+                    </div>
+
+                    <!-- Defeito -->
+                    <p class="small text-secondary mb-2" style="word-break: break-word;">
+                        {{ os.descricao_falha|truncatechars:110 }}
+                    </p>
+
+                    <!-- Equipe de Técnicos Atuando Nesta OS -->
+                    <div class="bg-white p-2 rounded-3 border mb-3 flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-center mb-2 border-bottom pb-1">
+                            <span class="small fw-bold text-dark">
+                                <i class="bi bi-people-fill text-primary me-1"></i>Equipe em Atendimento ({{ os.alocacoes_ativas.count }}):
+                            </span>
+                            <span class="badge bg-dark font-monospace" style="font-size: 0.7rem;">
+                                Total HH: {{ os.tempo_total_homem_hora_str }}
+                            </span>
+                        </div>
+
+                        <div class="d-flex flex-column gap-2">
+                            {% for alloc in os.alocacoes_ativas %}
+                            <div class="d-flex justify-content-between align-items-center p-2 rounded bg-light border" style="font-size: 0.8rem;">
+                                <div class="d-flex align-items-center gap-2">
+                                    <i class="bi bi-person-badge-fill text-primary"></i>
+                                    <strong>{{ alloc.tecnico.nome }}</strong>
+                                    {% if alloc.status == 'EM_PAUSA' %}
+                                    <span class="badge bg-warning text-dark py-0" style="font-size: 0.65rem;">Pausado</span>
+                                    {% else %}
+                                    <span class="badge bg-success py-0" style="font-size: 0.65rem;">Ativo</span>
+                                    {% endif %}
+                                </div>
+                                <span class="font-monospace text-muted">{{ alloc.tempo_decorrido_str }}</span>
+                            </div>
+                            {% empty %}
+                            <span class="text-muted small">Nenhum técnico ativo no momento.</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <!-- Ações de Trabalho em Equipe & Gestão -->
+                    <div class="d-flex flex-wrap gap-2 pt-2 border-top">
+                        <!-- Entrar na Equipe (Multi-Técnico) -->
+                        <button type="button" class="btn btn-outline-success btn-sm flex-grow-1 rounded-pill fw-bold" data-bs-toggle="modal" data-bs-target="#modalEntrarEquipe-{{ os.id }}">
+                            <i class="bi bi-person-plus-fill me-1"></i>Entrar nesta OS
+                        </button>
+                        <a href="{% url 'technician_management' %}" class="btn btn-light btn-sm rounded-pill" title="Ver no Painel">
+                            <i class="bi bi-arrow-up-right-square"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MODAL: ENTRAR NA EQUIPE -->
+            <div class="modal fade" id="modalEntrarEquipe-{{ os.id }}" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog modal-dialog-centered">
+                    <div class="modal-content border-0 shadow-lg" style="border-radius: 16px;">
+                        <div class="modal-header bg-success text-white border-0 py-3" style="border-radius: 16px 16px 0 0;">
+                            <h5 class="modal-title fw-bold"><i class="bi bi-people-fill me-2"></i>Trabalho em Equipe — OS #{{ os.numero_os }}</h5>
+                            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                        </div>
+                        <form action="{% url 'os_join_team' os.id %}" method="post">
+                            {% csrf_token %}
+                            <div class="modal-body p-4">
+                                <div class="alert alert-info border-info-subtle mb-3 small">
+                                    Adicione mais um mecânico/eletricista para atuar simultaneamente nesta intervenção.
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold">Técnico que vai se juntar:</label>
+                                    <select name="technician_id" class="form-select" required>
+                                        {% for t in available_technicians %}
+                                        <option value="{{ t.id }}" {% if technician_proprio_id == t.id %}selected{% endif %}>
+                                            {{ t.nome }} {% if t.status == 'EM_ATENDIMENTO' %}(Ocupado - exigirá pausa){% else %}(Disponível){% endif %}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="modal-footer bg-light border-0 py-3" style="border-radius: 0 0 16px 16px;">
+                                <button type="button" class="btn btn-outline-secondary rounded-pill px-3" data-bs-dismiss="modal">Cancelar</button>
+                                <button type="submit" class="btn btn-success rounded-pill px-4 fw-semibold">Confirmar Entrada na Equipe</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="col-12 text-center py-5">
+                <div class="py-5 bg-white rounded-4 border shadow-sm">
+                    <i class="bi bi-hourglass text-muted" style="font-size: 3rem;"></i>
+                    <h5 class="fw-bold mt-2 text-dark">Nenhum atendimento em andamento no momento.</h5>
+                    <p class="text-muted small">Inicie uma das OSs da fila de pendentes.</p>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         ABA 3: CONCLUÍDAS (HISTÓRICO)
+         ══════════════════════════════════════════════════════════════════════════ -->
+    {% elif active_tab == 'concluidas' %}
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr class="text-secondary small text-uppercase">
+                            <th class="ps-4">OS Nº</th>
+                            <th>Máquina / TAG</th>
+                            <th>Defeito / Serviço</th>
+                            <th>Técnicos</th>
+                            <th>Tempo Conserto / HH</th>
+                            <th>Fotos</th>
+                            <th>Conclusão</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for os in concluidas %}
+                        <tr>
+                            <td class="ps-4">
+                                <span class="badge bg-dark text-warning os-badge-os py-1 px-2">
+                                    #{{ os.numero_os }}
+                                </span>
+                            </td>
+                            <td>
+                                <strong>{{ os.maquina.nome|default:os.descricao_equipamento }}</strong>
+                                <div class="text-muted small">{{ os.setor.nome|default:os.maquina.setor.nome|default:"Setor Geral" }}</div>
+                            </td>
+                            <td>
+                                <div class="small fw-semibold text-dark">{{ os.descricao_falha|truncatechars:60 }}</div>
+                                {% if os.descricao_servico_realizado %}
+                                <div class="small text-muted fst-italic">{{ os.descricao_servico_realizado|truncatechars:50 }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="d-flex flex-wrap gap-1">
+                                    {% for t in os.tecnicos_envolvidos %}
+                                    <span class="badge bg-light text-dark border">{{ t.nome }}</span>
+                                    {% empty %}
+                                    <span class="text-muted small">-</span>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="small">Conserto: <strong>{{ os.tempo_conserto_str }}</strong></div>
+                                <div class="small text-muted">Total HH: <strong>{{ os.tempo_total_homem_hora_str }}</strong></div>
+                            </td>
+                            <td>
+                                <div class="d-flex gap-1">
+                                    {% if os.foto_abertura %}
+                                    <img src="{{ os.foto_abertura.url }}" alt="Abertura" class="thumb-os" style="width:38px; height:38px;" data-bs-toggle="modal" data-bs-target="#modalFoto-{{ os.id }}">
+                                    {% endif %}
+                                    {% if os.foto_conclusao %}
+                                    <img src="{{ os.foto_conclusao.url }}" alt="Conclusão" class="thumb-os" style="width:38px; height:38px;" data-bs-toggle="modal" data-bs-target="#modalFotoConc-{{ os.id }}">
+                                    {% endif %}
+                                </div>
+                            </td>
+                            <td>
+                                <div class="small text-dark">{{ os.data_conclusao|date:"d/m/Y H:i"|default:"-" }}</div>
+                                <span class="badge bg-success-subtle text-success border border-success-subtle py-0" style="font-size:0.7rem;">Concluída</span>
+                            </td>
+                        </tr>
+
+                        <!-- MODAL FOTO CONCLUSAO -->
+                        {% if os.foto_conclusao %}
+                        <div class="modal fade" id="modalFotoConc-{{ os.id }}" tabindex="-1" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered modal-lg">
+                                <div class="modal-content border-0 bg-dark text-white shadow-lg">
+                                    <div class="modal-header border-secondary py-2">
+                                        <h6 class="modal-title">Foto de Conclusão — OS #{{ os.numero_os }}</h6>
+                                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <div class="modal-body p-2 text-center">
+                                        <img src="{{ os.foto_conclusao.url }}" class="img-fluid rounded" alt="Foto Conclusão">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+
+                        {% empty %}
+                        <tr>
+                            <td colspan="7" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-2 d-block mb-1"></i>
+                                Nenhuma Ordem de Serviço concluída encontrada.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         ABA 4: CANCELADAS
+         ══════════════════════════════════════════════════════════════════════════ -->
+    {% elif active_tab == 'canceladas' %}
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr class="text-secondary small text-uppercase">
+                            <th class="ps-4">OS Nº</th>
+                            <th>Máquina</th>
+                            <th>Motivo / Defeito</th>
+                            <th>Solicitante</th>
+                            <th>Data de Abertura</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for os in canceladas %}
+                        <tr>
+                            <td class="ps-4">
+                                <span class="badge bg-secondary os-badge-os py-1 px-2">
+                                    #{{ os.numero_os }}
+                                </span>
+                            </td>
+                            <td>{{ os.maquina.nome|default:os.descricao_equipamento }}</td>
+                            <td>{{ os.descricao_falha|truncatechars:80 }}</td>
+                            <td>{{ os.solicitante|default:"-" }}</td>
+                            <td>{{ os.data_abertura|date:"d/m/Y H:i" }}</td>
+                            <td><span class="badge bg-danger-subtle text-danger border border-danger-subtle">Cancelada</span></td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="6" class="text-center py-5 text-muted">Nenhuma OS cancelada.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% endif %}
+
+</div>
+{% endblock %}

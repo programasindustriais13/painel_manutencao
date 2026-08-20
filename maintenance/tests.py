@@ -1,10 +1,25 @@
+import json
 from django.test import TestCase, Client
 from django.contrib.auth.models import User, Group
 from django.urls import reverse
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import Sector, Machine, Technician, Allocation, HistoricoPausa, HistoricoEscala, WhatsAppGroup, AllocationProgressUpdate
+
+from .models import (
+    Sector, 
+    Machine, 
+    Technician, 
+    OrdemServico, 
+    OrdemServicoPeca,
+    Allocation, 
+    HistoricoPausa, 
+    HistoricoEscala, 
+    WhatsAppGroup, 
+    AllocationProgressUpdate
+)
+from .forms import OrdemServicoCreateForm
+
 
 class MaintenanceSystemTestCase(TestCase):
     def setUp(self):
@@ -244,10 +259,50 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertRedirects(response, reverse('technician_management'))
         client.logout()
         
-        # 4. Other users (like operador_user or admin) -> dashboard
+        # 4. User with dual access (like operador_user or admin) -> portal_select
         client.force_login(self.operador_user)
         response = client.get(reverse('home_redirect'))
-        self.assertRedirects(response, reverse('dashboard'))
+        self.assertRedirects(response, reverse('portal_select'))
+        client.logout()
+
+        # 5. User with Production access only -> production:dashboard
+        prod_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        prod_user = User.objects.create_user('prod_leader_test', 'prod@test.com', 'pwd123')
+        prod_user.groups.add(prod_group)
+        client.force_login(prod_user)
+        response = client.get(reverse('home_redirect'))
+        self.assertRedirects(response, reverse('production:dashboard'))
+        client.logout()
+
+    def test_portal_select_view(self):
+        """Test portal_select view permissions, rendering and automatic bypass."""
+        client = Client()
+
+        # 1. Dual-access user (operador_user) can access portal_select with 200 OK
+        client.force_login(self.operador_user)
+        response = client.get(reverse('portal_select'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Manutenção Industrial")
+        self.assertContains(response, "Produção & PCP")
+        self.assertContains(response, "Selecione o Módulo de Trabalho")
+        client.logout()
+
+        # 2. Pure technician gets bypassed directly to technician_management
+        tech_group, _ = Group.objects.get_or_create(name="Tecnicos")
+        pure_tech = User.objects.create_user('pure_tech_test', 'ptech@test.com', 'pwd123')
+        pure_tech.groups.add(tech_group)
+        client.force_login(pure_tech)
+        response = client.get(reverse('portal_select'))
+        self.assertRedirects(response, reverse('technician_management'))
+        client.logout()
+
+        # 3. Pure production leader gets bypassed directly to production:dashboard
+        prod_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
+        prod_user = User.objects.create_user('prod_user_bypass', 'pby@test.com', 'pwd123')
+        prod_user.groups.add(prod_group)
+        client.force_login(prod_user)
+        response = client.get(reverse('portal_select'))
+        self.assertRedirects(response, reverse('production:dashboard'))
         client.logout()
 
     def test_finish_service_validation_failure_redirect(self):
@@ -1006,5 +1061,824 @@ class AllocationProgressUpdateTestCase(TestCase):
         self.assertEqual(AllocationProgressUpdate.objects.filter(allocation=self.alloc2).count(), 1)
         pu = AllocationProgressUpdate.objects.get(allocation=self.alloc2)
         self.assertEqual(pu.autor, self.user_op)
+
+
+class OrdemServicoModelAndAdminTestCase(TestCase):
+    def setUp(self):
+        self.admin_user = User.objects.create_superuser('admin_os', 'admin_os@test.com', 'pwd123')
+        self.operator_user = User.objects.create_user('operador_os', 'operador_os@test.com', 'pwd123')
+        
+        self.sector = Sector.objects.create(nome="Estamparia")
+        self.machine = Machine.objects.create(nome="Prensa Hidráulica 500T", setor=self.sector, criticidade="ALTA")
+        
+        self.tech1 = Technician.objects.create(nome="Lucas Silva", matricula="TEC-101", status="OCIOSO")
+        self.tech2 = Technician.objects.create(nome="Mariana Costa", matricula="TEC-102", status="OCIOSO")
+        
+        self.os = OrdemServico.objects.create(
+            numero_os="OS-1001",
+            maquina=self.machine,
+            setor=self.sector,
+            solicitante="Líder Roberto",
+            tipo_manutencao="CORRETIVA",
+            criticidade="ALTA",
+            descricao_falha="Vazamento hidráulico no pistão principal.",
+            status="PENDENTE",
+            criado_por=self.operator_user,
+            tecnico_designado=self.tech1
+        )
+
+    def test_ordem_servico_creation_and_uniqueness(self):
+        """Valida criação correta e bloqueio de número de OS duplicado."""
+        self.assertEqual(self.os.numero_os, "OS-1001")
+        self.assertEqual(self.os.maquina, self.machine)
+        self.assertEqual(self.os.setor, self.sector)
+        self.assertIn("OS #OS-1001", str(self.os))
+
+        # Tentar cadastrar outra OS com o mesmo número deve levantar IntegrityError
+        from django.db import IntegrityError
+        with self.assertRaises(IntegrityError):
+            OrdemServico.objects.create(
+                numero_os="OS-1001",
+                solicitante="Outro Líder",
+                descricao_falha="Falha duplicada",
+            )
+
+    def test_ordem_servico_multiple_technicians_allocations(self):
+        """Valida que múltiplos técnicos e alocações podem ser vinculados à mesma OS."""
+        now = timezone.now()
+        alloc1 = Allocation.objects.create(
+            ordem_servico=self.os,
+            tecnico=self.tech1,
+            maquina=self.machine,
+            atividade_observacao="Desmontagem da válvula",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(hours=2),
+            data_fim=now - timedelta(hours=1)
+        )
+        alloc2 = Allocation.objects.create(
+            ordem_servico=self.os,
+            tecnico=self.tech2,
+            maquina=self.machine,
+            atividade_observacao="Troca de retentores",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(hours=1),
+            data_fim=now
+        )
+
+        self.assertEqual(self.os.allocations.count(), 2)
+        tecnicos = self.os.tecnicos_envolvidos
+        self.assertEqual(len(tecnicos), 2)
+        self.assertIn(self.tech1, tecnicos)
+        self.assertIn(self.tech2, tecnicos)
+
+    def test_ordem_servico_properties_and_time_calculation(self):
+        """Valida cálculo de homem-hora, status de inicialização e tempo total de intervenção."""
+        now = timezone.now()
+        
+        # 1. pode_ser_iniciada
+        self.os.status = "PENDENTE"
+        self.assertTrue(self.os.pode_ser_iniciada)
+        self.os.status = "EM_ANDAMENTO"
+        self.assertTrue(self.os.pode_ser_iniciada)
+        self.os.status = "CONCLUIDA"
+        self.assertFalse(self.os.pode_ser_iniciada)
+        self.os.status = "CANCELADA"
+        self.assertFalse(self.os.pode_ser_iniciada)
+
+        # 2. Homem-hora acumulado com pausas
+        # Alocação 1: 60 minutos contínuos (1h = 3600s)
+        alloc1 = Allocation.objects.create(
+            ordem_servico=self.os,
+            tecnico=self.tech1,
+            maquina=self.machine,
+            atividade_observacao="Serviço 1",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(minutes=120),
+            data_fim=now - timedelta(minutes=60)
+        )
+        # Alocação 2: 60 minutos brutos com pausa de 20 minutos (líquido = 40 min = 2400s)
+        alloc2 = Allocation.objects.create(
+            ordem_servico=self.os,
+            tecnico=self.tech2,
+            maquina=self.machine,
+            atividade_observacao="Serviço 2",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(minutes=60),
+            data_fim=now
+        )
+        HistoricoPausa.objects.create(
+            alocacao=alloc2,
+            data_pausa=now - timedelta(minutes=40),
+            data_retorno=now - timedelta(minutes=20),
+            motivo_pausa="Aguardando peça do almoxarifado"
+        )
+
+        # Total HH: 3600 + 2400 = 6000s = 1h 40m
+        self.assertEqual(self.os.tempo_total_homem_hora_segundos, 6000)
+        self.assertEqual(self.os.tempo_total_homem_hora_str, "1h 40m")
+
+        # Tempo total de intervenção dicionário
+        info = self.os.tempo_total_intervencao
+        self.assertEqual(info['homem_hora_segundos'], 6000)
+        self.assertEqual(info['homem_hora_str'], "1h 40m")
+        self.assertIn('tempo_parada_segundos', info)
+        self.assertIn('tempo_parada_str', info)
+
+    def test_allocation_backwards_compatibility(self):
+        """Valida que alocações sem Ordem de Serviço (ordem_servico=None) continuam 100% funcionais."""
+        now = timezone.now()
+        alloc = Allocation.objects.create(
+            tecnico=self.tech1,
+            maquina=self.machine,
+            atividade_observacao="Atendimento legado sem OS",
+            status="CONCLUIDO",
+            data_inicio=now - timedelta(minutes=30),
+            data_fim=now
+        )
+        self.assertIsNone(alloc.ordem_servico)
+        self.assertEqual(alloc.tempo_decorrido_liquido, "30m")
+        self.assertIn("Lucas Silva em Prensa Hidráulica 500T", str(alloc))
+
+    def test_admin_ordem_servico_and_inlines(self):
+        """Valida registro no Django Admin, inlines, métodos auxiliares e list_display."""
+        from django.contrib import admin
+        from maintenance.admin import OrdemServicoAdmin, AlocacaoAdmin, AllocationInline, OrdemServicoPecaInline
+
+        # Verifica se OrdemServico está registrada no admin
+        self.assertIn(OrdemServico, admin.site._registry)
+        model_admin = admin.site._registry[OrdemServico]
+        self.assertIsInstance(model_admin, OrdemServicoAdmin)
+
+        # Valida campos de listagem, busca e filtro
+        self.assertIn('numero_os', OrdemServicoAdmin.list_display)
+        self.assertIn('status', OrdemServicoAdmin.list_filter)
+        self.assertIn('numero_os', OrdemServicoAdmin.search_fields)
+        self.assertEqual(OrdemServicoAdmin.date_hierarchy, 'data_abertura')
+
+        # Valida presença dos Inlines
+        self.assertIn(AllocationInline, OrdemServicoAdmin.inlines)
+        self.assertIn(OrdemServicoPecaInline, OrdemServicoAdmin.inlines)
+
+        # Valida métodos utilitários do Admin (miniaturas e tempos)
+        thumb_abertura = model_admin.exibir_foto_abertura_thumb(self.os)
+        self.assertIn("Sem foto", str(thumb_abertura))
+        thumb_conclusao = model_admin.exibir_foto_conclusao_thumb(self.os)
+        self.assertIn("Sem foto", str(thumb_conclusao))
+
+        hh_display = model_admin.tempo_total_homem_hora_display(self.os)
+        self.assertEqual(hh_display, "0m")
+
+        parada_display = model_admin.tempo_liquido_parada_display(self.os)
+        self.assertIn("m", parada_display)
+
+        # Valida AlocacaoAdmin exibindo ordem_servico
+        self.assertIn('ordem_servico', AlocacaoAdmin.list_display)
+        self.assertIn('ordem_servico', AlocacaoAdmin.list_filter)
+
+    def test_physical_form_fields_and_pecas_utilizadas(self):
+        """Valida todos os campos da folha física real e relacionamento com peças utilizadas."""
+        now = timezone.now()
+        os_fisica = OrdemServico.objects.create(
+            numero_os="10216",
+            tag="PREN-01",
+            descricao_equipamento="Prensa Vulcanizadora 10",
+            motivo="Vazamento de vapor no cabeçote",
+            tipo_manutencao="CORRETIVA",
+            parou_maquina=True,
+            descricao_falha="Trocar junta de vedação e reapertar prisioneiros",
+            data_hora_inicio_ocorrencia=now - timedelta(hours=3),
+            causa="Desgaste prematuro da junta térmica",
+            descricao_servico_realizado="Substituída junta térmica e calibrada pressão",
+            data_hora_inicio_conserto=now - timedelta(hours=2),
+            data_hora_fim_conserto=now - timedelta(hours=1),
+            data_hora_fim_ocorrencia=now - timedelta(minutes=30),
+            visto_executante_nome="Carlos Técnico",
+            visto_executante_data=(now - timedelta(hours=1)).date(),
+            visto_responsavel_nome="Roberto Líder",
+            visto_responsavel_data=now.date(),
+            status="CONCLUIDA"
+        )
+
+        # Criação de peças utilizadas
+        p1 = OrdemServicoPeca.objects.create(
+            ordem_servico=os_fisica,
+            codigo="JUN-001",
+            descricao="Junta Térmica 3/4",
+            quantidade=2
+        )
+        p2 = OrdemServicoPeca.objects.create(
+            ordem_servico=os_fisica,
+            codigo="VED-005",
+            descricao="Fita Teflon Alta Temperatura",
+            quantidade=1
+        )
+
+        self.assertEqual(os_fisica.pecas_utilizadas.count(), 2)
+        self.assertIn("Junta Térmica 3/4", str(p1))
+        self.assertEqual(os_fisica.tempo_conserto_str, "1h 0m")
+        self.assertEqual(os_fisica.tempo_liquido_parada_str, "2h 30m")
+        self.assertTrue(os_fisica.parou_maquina)
+
+
+class OrdemServicoOCRTestCase(TestCase):
+    def setUp(self):
+        from unittest.mock import patch
+        self.user = User.objects.create_user('operador_ocr', 'ocr@test.com', 'pwd123')
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa Vulcanizadora 10", setor=self.sector, criticidade="ALTA")
+
+    def test_os_ocr_fallback_when_key_missing(self):
+        """Valida que sem GEMINI_API_KEY a função retorna erro amigável sem lançar exceção."""
+        from maintenance.services.os_ocr_service import extrair_dados_os_por_foto
+        res = extrair_dados_os_por_foto(b"fake_image_bytes", api_key="")
+        self.assertFalse(res["sucesso"])
+        self.assertEqual(res["motivo"], "CHAVE_NAO_CONFIGURADA")
+        self.assertIn("não configurada", res["mensagem"])
+
+    def test_casar_maquina_e_setor(self):
+        """Valida o algoritmo de casamento de máquina e setor com variações de texto."""
+        from maintenance.services.os_ocr_service import casar_maquina_e_setor
+        
+        # 1. Casamento com nome aproximado / minúsculas
+        maq, sec = casar_maquina_e_setor(maquina_texto="prensa vulcanizadora 10", setor_texto="vulcanizacao")
+        self.assertEqual(maq, self.machine)
+        self.assertEqual(sec, self.sector)
+
+        # 2. Casamento com TAG
+        Machine.objects.create(nome="PREN-05", setor=self.sector)
+        maq2, sec2 = casar_maquina_e_setor(tag_texto="PREN-05")
+        self.assertEqual(maq2.nome, "PREN-05")
+        self.assertEqual(sec2, self.sector)
+
+    def test_os_ocr_success_mock(self):
+        """Valida extração bem-sucedida mockando a resposta da API do Gemini Vision."""
+        from unittest.mock import patch, MagicMock
+        from maintenance.services.os_ocr_service import extrair_dados_os_por_foto
+
+        mock_gemini_json = {
+            "numero_os": "10216",
+            "tag": "PREN-10",
+            "descricao_equipamento": "Prensa Vulcanizadora 10",
+            "motivo": "Vazamento de vapor",
+            "tipo_manutencao": "CORRETIVA",
+            "parou_maquina": True,
+            "descricao_falha": "Troca de junta da tubulação",
+            "data_inicio_ocorrencia": "2026-08-20",
+            "hora_inicio_ocorrencia": "08:30",
+            "solicitante": "Líder Carlos",
+            "causa": "Junta rompida por fadiga",
+            "descricao_servico_realizado": "Instalada nova junta e testada estanqueidade",
+            "pecas_utilizadas": [
+                {"codigo": "JUN-001", "descricao": "Junta de Vedação", "quantidade": 1.0}
+            ],
+            "confianca_leitura": "ALTA"
+        }
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {"text": json.dumps(mock_gemini_json)}
+                        ]
+                    }
+                }
+            ]
+        }
+
+        with patch("requests.post", return_value=mock_resp):
+            res = extrair_dados_os_por_foto(b"fake_image_bytes", api_key="valid_test_key")
+            self.assertTrue(res["sucesso"])
+            self.assertEqual(res["dados"]["numero_os"], "10216")
+            self.assertEqual(res["dados"]["motivo"], "Vazamento de vapor")
+            self.assertEqual(res["dados"]["tipo_manutencao"], "CORRETIVA")
+            self.assertTrue(res["dados"]["parou_maquina"])
+            self.assertEqual(res["maquina_sugerida_id"], self.machine.id)
+            self.assertEqual(res["setor_sugerido_id"], self.sector.id)
+
+    def test_os_ocr_network_failure_mock(self):
+        """Valida captura de falhas de conexão de rede sem crash."""
+        from unittest.mock import patch
+        import requests
+        from maintenance.services.os_ocr_service import extrair_dados_os_por_foto
+
+        with patch("requests.post", side_effect=requests.exceptions.ConnectionError("Erro DNS")):
+            res = extrair_dados_os_por_foto(b"fake_image_bytes", api_key="valid_test_key")
+            self.assertFalse(res["sucesso"])
+            self.assertEqual(res["motivo"], "FALHA_CONEXAO")
+
+    def test_api_extrair_dados_os_foto_endpoint(self):
+        """Valida o endpoint HTTP /api/os/extrair-foto/."""
+        from unittest.mock import patch
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        client = Client()
+
+        # 1. Bloqueio para usuário não logado
+        res_anon = client.post(reverse('api_extrair_dados_os_foto'))
+        self.assertEqual(res_anon.status_code, 302)
+
+        # 2. Usuário autenticado enviando GET
+        client.force_login(self.user)
+        res_get = client.get(reverse('api_extrair_dados_os_foto'))
+        self.assertEqual(res_get.status_code, 405)
+
+        # 3. Usuário autenticado sem arquivo
+        res_nofile = client.post(reverse('api_extrair_dados_os_foto'))
+        self.assertEqual(res_nofile.status_code, 400)
+        data_nofile = json.loads(res_nofile.content)
+        self.assertFalse(data_nofile["sucesso"])
+
+        # 4. Usuário autenticado enviando imagem com sucesso
+        fake_file = SimpleUploadedFile("os_scan.jpg", b"\xff\xd8\xff\xe0fake_jpeg", content_type="image/jpeg")
+        
+        mock_ret = {
+            "sucesso": True,
+            "dados": {"numero_os": "10216", "motivo": "Pressão baixa"},
+            "maquina_sugerida_id": self.machine.id,
+            "setor_sugerido_id": self.sector.id
+        }
+        with patch("maintenance.services.os_ocr_service.extrair_dados_os_por_foto", return_value=mock_ret):
+            res_post = client.post(reverse('api_extrair_dados_os_foto'), {"foto_os": fake_file})
+            self.assertEqual(res_post.status_code, 200)
+            data_post = json.loads(res_post.content)
+            self.assertTrue(data_post["sucesso"])
+            self.assertEqual(data_post["dados"]["numero_os"], "10216")
+
+
+class OrdemServicoCreationTestCase(TestCase):
+    def setUp(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.operator_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.lider_prod_group, _ = Group.objects.get_or_create(name='Liderança de Produção')
+        self.viewer_group, _ = Group.objects.get_or_create(name='Visualizador')
+
+        self.user_op = User.objects.create_user('op_os', 'op@test.com', 'pwd123')
+        self.user_op.groups.add(self.operator_group)
+
+        self.user_lider = User.objects.create_user('lider_os', 'lider@test.com', 'pwd123')
+        self.user_lider.groups.add(self.lider_prod_group)
+
+        self.user_viewer = User.objects.create_user('view_os', 'view@test.com', 'pwd123')
+        self.user_viewer.groups.add(self.viewer_group)
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa 01", setor=self.sector, criticidade="ALTA")
+        self.technician = Technician.objects.create(nome="João Mecânico", is_active=True)
+
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new('RGB', (10, 10), color='white').save(buf, format='JPEG')
+        self.valid_photo_bytes = buf.getvalue()
+
+    def test_form_validation_and_duplicity(self):
+        """Valida obrigatoriedade da foto e rejeição estrita de duplicidade no Form."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        # 1. Cria uma OS existente no banco
+        OrdemServico.objects.create(
+            numero_os="10216",
+            maquina=self.machine,
+            setor=self.sector,
+            solicitante="Carlos",
+            descricao_falha="Vazamento"
+        )
+
+        photo = SimpleUploadedFile("abertura_1.jpg", self.valid_photo_bytes, content_type="image/jpeg")
+        data = {
+            'numero_os': '10216', # Duplicada
+            'solicitante': 'Carlos',
+            'descricao_falha': 'Outro vazamento',
+            'tipo_manutencao': 'CORRETIVA',
+            'parou_maquina': 'True',
+            'criticidade': 'ALTA',
+            'data_hora_inicio_ocorrencia': timezone.now().strftime('%Y-%m-%dT%H:%M')
+        }
+        form = OrdemServicoCreateForm(data=data, files={'foto_abertura': photo})
+        self.assertFalse(form.is_valid())
+        self.assertIn("já está cadastrada", form.errors['numero_os'][0])
+
+        # 2. Form sem foto de abertura deve ser inválido
+        data_nova = data.copy()
+        data_nova['numero_os'] = '10217'
+        form_nofoto = OrdemServicoCreateForm(data=data_nova)
+        self.assertFalse(form_nofoto.is_valid())
+        self.assertIn("foto da folha física de abertura da OS é obrigatória", form_nofoto.errors['foto_abertura'][0])
+
+    def test_api_verificar_numero_os(self):
+        """Valida endpoint de verificação instantânea anti-duplicidade."""
+        client = Client()
+        # 1. Acesso anônimo
+        res_anon = client.get(reverse('api_verificar_numero_os') + '?numero=10216')
+        self.assertEqual(res_anon.status_code, 302)
+
+        # 2. Acesso autenticado com número inexistente
+        client.force_login(self.user_op)
+        res_non = client.get(reverse('api_verificar_numero_os') + '?numero=99999')
+        self.assertEqual(res_non.status_code, 200)
+        self.assertFalse(json.loads(res_non.content)["existe"])
+
+        # 3. Cria OS e checa se endpoint acusa existência
+        OrdemServico.objects.create(
+            numero_os="88888",
+            maquina=self.machine,
+            descricao_equipamento="Prensa 01",
+            solicitante="Marcos Líder",
+            descricao_falha="Falha sensor"
+        )
+        res_exist = client.get(reverse('api_verificar_numero_os') + '?numero=88888')
+        self.assertEqual(res_exist.status_code, 200)
+        data = json.loads(res_exist.content)
+        self.assertTrue(data["existe"])
+        self.assertEqual(data["os"]["numero"], "88888")
+
+    def test_os_create_view_permissions_and_flow(self):
+        """Valida permissões da view os_create e fluxo de criação com upload."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        client = Client()
+
+        # 1. Usuário sem permissão (Viewer)
+        client.force_login(self.user_viewer)
+        res_view = client.get(reverse('os_create'))
+        self.assertEqual(res_view.status_code, 302) # Redireciona com alerta
+
+        # 2. Usuário de Liderança de Produção (Acesso Autorizado)
+        client.force_login(self.user_lider)
+        res_get = client.get(reverse('os_create'))
+        self.assertEqual(res_get.status_code, 200)
+        self.assertContains(res_get, "Abertura de Ordem de Serviço")
+
+        # 3. POST criando OS com foto
+        photo = SimpleUploadedFile("folha_10216.jpg", self.valid_photo_bytes, content_type="image/jpeg")
+        post_data = {
+            'numero_os': '55443',
+            'tag': 'PREN-01',
+            'descricao_equipamento': 'Prensa 01',
+            'maquina': self.machine.id,
+            'setor': self.sector.id,
+            'solicitante': 'Líder Roberto',
+            'motivo': 'Barulho anormal',
+            'tipo_manutencao': 'CORRETIVA',
+            'parou_maquina': 'True',
+            'criticidade': 'ALTA',
+            'descricao_falha': 'Verificar rolamento do motor principal',
+            'data_hora_inicio_ocorrencia': timezone.now().strftime('%Y-%m-%dT%H:%M'),
+            'tecnico_designado': self.technician.id,
+            'foto_abertura': photo,
+        }
+        res_post = client.post(reverse('os_create'), data=post_data)
+        self.assertEqual(res_post.status_code, 302)
+
+
+
+        # 4. Verifica se OS foi criada no banco com status PENDENTE e foto gravada
+        os_criada = OrdemServico.objects.get(numero_os='55443')
+        self.assertEqual(os_criada.criado_por, self.user_lider)
+        self.assertEqual(os_criada.status, 'PENDENTE')
+        self.assertEqual(os_criada.tecnico_designado, self.technician)
+        self.assertTrue(bool(os_criada.foto_abertura))
+        self.assertTrue(os_criada.parou_maquina)
+
+
+class OrdemServicoBoardAndMultiTechTestCase(TestCase):
+    """
+    Testes unitários e de integração para a Fase 5:
+    - Quadro de OSs (/ordens-servico/)
+    - Atribuição de técnico por operadores/líderes
+    - Início de atendimento com criação de alocação vinculada
+    - Concorrência estrita (1 atendimento ativo por técnico)
+    - Bloqueio de técnicos ausentes
+    - Suporte a múltiplos técnicos na mesma OS (trabalho em equipe)
+    - Cancelamento de OS
+    """
+    def setUp(self):
+        self.op_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.lider_group, _ = Group.objects.get_or_create(name='Liderança de Produção')
+        self.viewer_group, _ = Group.objects.get_or_create(name='Visualizador')
+
+        self.user_op = User.objects.create_user('operador_os', 'op@test.com', 'pwd123')
+        self.user_op.groups.add(self.op_group)
+
+        self.user_lider = User.objects.create_user('lider_os_5', 'lider5@test.com', 'pwd123')
+        self.user_lider.groups.add(self.lider_group)
+
+        self.user_viewer = User.objects.create_user('viewer_os_5', 'view5@test.com', 'pwd123')
+        self.user_viewer.groups.add(self.viewer_group)
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.sector_outro = Sector.objects.create(nome="PCP")
+        self.machine = Machine.objects.create(nome="Prensa 05", setor=self.sector, criticidade="ALTA")
+        self.machine_2 = Machine.objects.create(nome="Extrusora 02", setor=self.sector, criticidade="MEDIA")
+
+        self.tech_1 = Technician.objects.create(nome="Marcos Mecânico", matricula="M001", is_active=True, status="OCIOSO")
+        self.tech_2 = Technician.objects.create(nome="Lucas Eletricista", matricula="E002", is_active=True, status="OCIOSO")
+        self.tech_ausente = Technician.objects.create(nome="Roberto Ausente", matricula="A003", is_active=True, status="AUSENTE_FERIAS")
+
+        self.os_pendente = OrdemServico.objects.create(
+            numero_os="7001",
+            maquina=self.machine,
+            setor=self.sector,
+            solicitante="Líder João",
+            motivo="Vazamento de óleo",
+            descricao_falha="Trocar retentor",
+            status="PENDENTE",
+            criticidade="ALTA"
+        )
+
+    def test_os_board_view_and_filtering(self):
+        """Valida renderização do quadro de OSs e filtros de status/setor."""
+        client = Client()
+        client.force_login(self.user_op)
+
+        # 1. Acesso à aba pendentes
+        res = client.get(reverse('os_board') + '?tab=pendentes')
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "7001")
+        self.assertContains(res, "Prensa 05")
+
+        # 2. Busca por número de OS
+        res_search = client.get(reverse('os_board') + '?busca=7001')
+        self.assertEqual(res_search.status_code, 200)
+        self.assertContains(res_search, "7001")
+
+        # 3. Busca que não retorna nada
+        res_none = client.get(reverse('os_board') + '?busca=999999')
+        self.assertEqual(res_none.status_code, 200)
+        self.assertNotContains(res_none, "7001")
+
+    def test_os_assign_technician_flow(self):
+        """Valida atribuição de técnico por operador e bloqueio de ausentes."""
+        client = Client()
+
+        # 1. Bloqueia usuário sem permissão (Viewer)
+        client.force_login(self.user_viewer)
+        res_view = client.post(reverse('os_assign_technician', args=[self.os_pendente.id]), data={'technician_id': self.tech_1.id})
+        self.assertEqual(res_view.status_code, 302)
+        self.os_pendente.refresh_from_db()
+        self.assertIsNone(self.os_pendente.tecnico_designado)
+
+        # 2. Operador atribui técnico disponível
+        client.force_login(self.user_op)
+        res_op = client.post(reverse('os_assign_technician', args=[self.os_pendente.id]), data={'technician_id': self.tech_1.id})
+        self.assertEqual(res_op.status_code, 302)
+        self.os_pendente.refresh_from_db()
+        self.assertEqual(self.os_pendente.tecnico_designado, self.tech_1)
+
+        # 3. Tenta atribuir técnico ausente -> Bloqueia
+        res_ausente = client.post(reverse('os_assign_technician', args=[self.os_pendente.id]), data={'technician_id': self.tech_ausente.id})
+        self.assertEqual(res_ausente.status_code, 302)
+        self.os_pendente.refresh_from_db()
+        self.assertEqual(self.os_pendente.tecnico_designado, self.tech_1) # Não alterou
+
+        # 4. Remove atribuição
+        res_clear = client.post(reverse('os_assign_technician', args=[self.os_pendente.id]), data={'technician_id': ''})
+        self.assertEqual(res_clear.status_code, 302)
+        self.os_pendente.refresh_from_db()
+        self.assertIsNone(self.os_pendente.tecnico_designado)
+
+    def test_os_start_service_flow_and_concurrency(self):
+        """Valida início de atendimento, criação de alocação e bloqueio de concorrência."""
+        client = Client()
+        client.force_login(self.user_op)
+
+        # 1. Inicia atendimento da OS com tech_1
+        res_start = client.post(reverse('os_start_service', args=[self.os_pendente.id]), data={'technician_id': self.tech_1.id})
+        self.assertEqual(res_start.status_code, 302)
+
+        self.os_pendente.refresh_from_db()
+        self.tech_1.refresh_from_db()
+
+        self.assertEqual(self.os_pendente.status, 'EM_ANDAMENTO')
+        self.assertEqual(self.tech_1.status, 'EM_ATENDIMENTO')
+        self.assertEqual(self.os_pendente.allocations.count(), 1)
+
+        alloc = self.os_pendente.allocations.first()
+        self.assertEqual(alloc.tecnico, self.tech_1)
+        self.assertEqual(alloc.maquina, self.machine)
+        self.assertEqual(alloc.status, 'EM_ATENDIMENTO')
+        self.assertIsNotNone(alloc.data_inicio)
+
+        # 2. Tenta iniciar uma SEGUNDA OS com o mesmo técnico que já está EM_ATENDIMENTO -> Bloqueia por concorrência
+        os_2 = OrdemServico.objects.create(
+            numero_os="7002",
+            maquina=self.machine_2,
+            solicitante="Líder Pedro",
+            descricao_falha="Falha motor",
+            status="PENDENTE"
+        )
+        res_concurr = client.post(reverse('os_start_service', args=[os_2.id]), data={'technician_id': self.tech_1.id})
+        self.assertEqual(res_concurr.status_code, 302)
+
+        os_2.refresh_from_db()
+        self.assertEqual(os_2.status, 'PENDENTE') # Continua pendente
+        self.assertEqual(os_2.allocations.count(), 0)
+
+        # 3. Tenta iniciar com técnico ausente -> Bloqueia
+        res_ausente = client.post(reverse('os_start_service', args=[os_2.id]), data={'technician_id': self.tech_ausente.id})
+        self.assertEqual(res_ausente.status_code, 302)
+        os_2.refresh_from_db()
+        self.assertEqual(os_2.status, 'PENDENTE')
+
+    def test_os_join_team_multi_technician_flow(self):
+        """Valida suporte a múltiplos técnicos na mesma OS e controle individual de alocações."""
+        client = Client()
+        client.force_login(self.user_op)
+
+        # 1. Tech 1 inicia a OS
+        client.post(reverse('os_start_service', args=[self.os_pendente.id]), data={'technician_id': self.tech_1.id})
+        self.os_pendente.refresh_from_db()
+        self.assertEqual(self.os_pendente.allocations.count(), 1)
+
+        # 2. Tech 2 junta-se à equipe da mesma OS
+        res_join = client.post(reverse('os_join_team', args=[self.os_pendente.id]), data={'technician_id': self.tech_2.id})
+        self.assertEqual(res_join.status_code, 302)
+
+        self.os_pendente.refresh_from_db()
+        self.tech_2.refresh_from_db()
+
+        self.assertEqual(self.tech_2.status, 'EM_ATENDIMENTO')
+        self.assertEqual(self.os_pendente.allocations.count(), 2)
+
+        techs_na_os = [a.tecnico for a in self.os_pendente.allocations.all()]
+        self.assertIn(self.tech_1, techs_na_os)
+        self.assertIn(self.tech_2, techs_na_os)
+
+        # 3. Tentar adicionar o Tech 2 novamente na mesma OS -> Bloqueia duplicata
+        res_dup = client.post(reverse('os_join_team', args=[self.os_pendente.id]), data={'technician_id': self.tech_2.id})
+        self.assertEqual(res_dup.status_code, 302)
+        self.assertEqual(self.os_pendente.allocations.count(), 2)
+
+    def test_os_cancel_flow(self):
+        """Valida cancelamento de OS pendente e bloqueio de cancelamento com atendimentos ativos."""
+        client = Client()
+        client.force_login(self.user_op)
+
+        # 1. Cancela OS pendente com sucesso
+        res_cancel = client.post(reverse('os_cancel', args=[self.os_pendente.id]))
+        self.assertEqual(res_cancel.status_code, 302)
+        self.os_pendente.refresh_from_db()
+        self.assertEqual(self.os_pendente.status, 'CANCELADA')
+
+        # 2. OS em andamento com alocação ativa não pode ser cancelada
+        os_andamento = OrdemServico.objects.create(
+            numero_os="7003",
+            maquina=self.machine,
+            status="EM_ANDAMENTO"
+        )
+        Allocation.objects.create(
+            tecnico=self.tech_1,
+            maquina=self.machine,
+            ordem_servico=os_andamento,
+            status='EM_ATENDIMENTO',
+            data_inicio=timezone.now(),
+            usuario_operador=self.user_op
+        )
+        res_block_cancel = client.post(reverse('os_cancel', args=[os_andamento.id]))
+        self.assertEqual(res_block_cancel.status_code, 302)
+        os_andamento.refresh_from_db()
+        self.assertEqual(os_andamento.status, 'EM_ANDAMENTO')
+
+
+class OrdemServicoEndToEndQATestCase(TestCase):
+    """
+    Testes integrados de ponta a ponta (QA Fase 7):
+    - Roteamento e Portal (/portal/, /management/, /producao/)
+    - Vínculo emergencial de atendimento avulso a uma folha de OS física
+    - Conclusão completa de OS com anexo de foto assinada, líder e peças
+    - Tela de Detalhes e Auditoria (/ordens-servico/<pk>/)
+    - Fallbacks seguros
+    """
+    def setUp(self):
+        import io
+        from PIL import Image
+        self.op_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.lider_prod_group, _ = Group.objects.get_or_create(name='Liderança de Produção')
+        self.tecnico_group, _ = Group.objects.get_or_create(name='Técnico')
+
+        # Usuários com diferentes perfis de acesso
+        self.user_tech = User.objects.create_user('tech_qa', 'tech@qa.com', 'pwd123')
+        self.user_tech.groups.add(self.tecnico_group)
+
+        self.user_prod = User.objects.create_user('prod_qa', 'prod@qa.com', 'pwd123')
+        self.user_prod.groups.add(self.lider_prod_group)
+
+        self.user_dual = User.objects.create_user('dual_qa', 'dual@qa.com', 'pwd123')
+        self.user_dual.groups.add(self.op_group)
+        self.user_dual.groups.add(self.lider_prod_group)
+
+        self.sector = Sector.objects.create(nome="Vulcanização")
+        self.machine = Machine.objects.create(nome="Prensa QA 01", setor=self.sector, criticidade="ALTA")
+        self.technician = Technician.objects.create(nome="Carlos QA", matricula="QA99", is_active=True, status="OCIOSO", user=self.user_tech)
+
+
+        buf = io.BytesIO()
+        Image.new('RGB', (20, 20), color='blue').save(buf, format='JPEG')
+        self.valid_jpeg = buf.getvalue()
+
+    def test_qa_routing_and_portal_access(self):
+        """Valida roteamento correto pós-login e acesso aos módulos."""
+        client = Client()
+
+        # 1. Técnico comum acessa portal_select -> redireciona direto para management
+        client.force_login(self.user_tech)
+        res_tech = client.get(reverse('portal_select'))
+        self.assertEqual(res_tech.status_code, 302)
+        self.assertIn('/management/', res_tech.url)
+
+        # 2. Usuário de produção acessa portal_select -> redireciona direto para produção
+        client.force_login(self.user_prod)
+        res_prod = client.get(reverse('portal_select'))
+        self.assertEqual(res_prod.status_code, 302)
+        self.assertIn('/producao/', res_prod.url)
+
+        # 3. Usuário com duplo acesso -> exibe a tela de portal para escolher
+        client.force_login(self.user_dual)
+        res_dual = client.get(reverse('portal_select'))
+        self.assertEqual(res_dual.status_code, 200)
+        self.assertContains(res_dual, "card-manutencao")
+        self.assertContains(res_dual, "card-producao")
+
+
+
+    def test_qa_emergency_link_and_finalization_flow(self):
+        """Valida fluxo de atendimento emergencial, vínculo à OS física e fechamento com foto assinada."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        client = Client()
+        client.force_login(self.user_dual)
+
+        # 1. Inicia atendimento avulso sem OS prévia
+        alloc = Allocation.objects.create(
+            tecnico=self.technician,
+            maquina=self.machine,
+            atividade_observacao="Manutenção de emergência - vazamento de óleo",
+            data_inicio=timezone.now(),
+            status='EM_ATENDIMENTO',
+            usuario_operador=self.user_dual
+        )
+        self.technician.status = 'EM_ATENDIMENTO'
+        self.technician.save()
+
+        # 2. Folha física chega: cria OS pendente
+        os_obj = OrdemServico.objects.create(
+            numero_os="99101",
+            maquina=self.machine,
+            setor=self.sector,
+            solicitante="Líder Fernando",
+            descricao_falha="Vazamento grave de óleo hidráulico",
+            status="PENDENTE"
+        )
+
+        # 3. Vincula atendimento à OS física via link_allocation_os
+        res_link = client.post(reverse('link_allocation_os', args=[alloc.id]), data={'os_id': os_obj.id})
+        self.assertEqual(res_link.status_code, 302)
+
+        alloc.refresh_from_db()
+        os_obj.refresh_from_db()
+        self.assertEqual(alloc.ordem_servico, os_obj)
+        self.assertEqual(os_obj.status, 'EM_ANDAMENTO')
+
+        # 4. Finaliza a alocação enviando foto da OS concluída, visto do líder e peças
+        photo_conc = SimpleUploadedFile("os_concluida_assinada.jpg", self.valid_jpeg, content_type="image/jpeg")
+        post_data = {
+            'observacao_conclusao': 'Troca do retentor principal e teste de vedação OK.',
+            'lider_assinatura_nome': 'Líder Fernando Ramos',
+            'causa': 'Desgaste natural do anel o-ring',
+            'descricao_servico_realizado': 'Substituição de anel de vedação e reaperto dos flanges',
+            'pecas_utilizadas_texto': '1x Anel O-ring Viton 50mm\n2L Óleo ISO 68',
+            'foto_conclusao': photo_conc,
+        }
+        res_finish = client.post(reverse('finish_allocation', args=[alloc.id]), data=post_data)
+        self.assertEqual(res_finish.status_code, 302)
+
+        alloc.refresh_from_db()
+        os_obj.refresh_from_db()
+        self.technician.refresh_from_db()
+
+        # Verificações de conclusão
+        self.assertEqual(alloc.status, 'CONCLUIDO')
+        self.assertEqual(self.technician.status, 'OCIOSO')
+        self.assertEqual(os_obj.status, 'CONCLUIDA')
+        self.assertEqual(os_obj.lider_assinatura_nome, 'Líder Fernando Ramos')
+        self.assertEqual(os_obj.causa, 'Desgaste natural do anel o-ring')
+        self.assertTrue(bool(os_obj.foto_conclusao))
+        self.assertEqual(os_obj.pecas_utilizadas.count(), 2)
+
+        # 5. Valida tela de auditoria / detalhes da OS (/ordens-servico/<pk>/)
+        res_detail = client.get(reverse('os_detail', args=[os_obj.id]))
+        self.assertEqual(res_detail.status_code, 200)
+        self.assertContains(res_detail, "99101")
+        self.assertContains(res_detail, "Líder Fernando Ramos")
+        self.assertContains(res_detail, "Carlos QA")
+        self.assertContains(res_detail, "Anel O-ring Viton 50mm")
+
+
+
+
+
+
+
+
 
 

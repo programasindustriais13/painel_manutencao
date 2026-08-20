@@ -107,10 +107,10 @@ class ProductionIntegrationTestCase(TestCase):
         """Test that maintenance users are redirected to their respective endpoints."""
         client = Client()
         
-        # Operator -> dashboard
+        # Operator with dual access -> portal_select
         client.force_login(self.maintenance_operator)
         response = client.get(reverse("home_redirect"))
-        self.assertRedirects(response, reverse("dashboard"))
+        self.assertRedirects(response, reverse("portal_select"))
         client.logout()
         
         # Technician -> technician_management
@@ -136,16 +136,16 @@ class ProductionIntegrationTestCase(TestCase):
         self.assertRedirects(response, reverse("production:dashboard"))
 
     def test_maintenance_blocked_from_production(self):
-        """Test that maintenance users cannot access production dashboard."""
+        """Test that pure technicians cannot access production, while operators can."""
         client = Client()
         
-        # Operator tries to access production
+        # Operator has dual access and can access production
         client.force_login(self.maintenance_operator)
         response = client.get(reverse("production:dashboard"))
-        self.assertRedirects(response, reverse("home_redirect"), target_status_code=302)
+        self.assertEqual(response.status_code, 200)
         client.logout()
 
-        # Technician tries to access production
+        # Pure technician is blocked from production
         client.force_login(self.maintenance_tech)
         response = client.get(reverse("production:dashboard"))
         self.assertRedirects(response, reverse("home_redirect"), target_status_code=302)
@@ -157,6 +157,14 @@ class ProductionIntegrationTestCase(TestCase):
         client.force_login(self.admin_user)
         response = client.get(reverse("production:dashboard"))
         self.assertEqual(response.status_code, 200)
+
+    def test_production_navbar_brand_links_to_production_dashboard(self):
+        """Test that clicking the logo in production dashboard stays in production."""
+        client = Client()
+        client.force_login(self.prod_user)
+        response = client.get(reverse("production:dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("production:dashboard")}"')
 
 
 class ProductionConfigModelsTestCase(TestCase):
@@ -608,12 +616,16 @@ class ProductionDashboardViewTestCase(TestCase):
 
         self.prod_leader_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
         self.operator_group, _ = Group.objects.get_or_create(name="Operadores")
+        self.tech_group, _ = Group.objects.get_or_create(name="Tecnicos")
 
         self.prod_user = User.objects.create_user("lider_prod", "lider@test.com", "pwd123")
         self.prod_user.groups.add(self.prod_leader_group)
 
-        self.maint_user = User.objects.create_user("maint_user", "maint@test.com", "pwd123")
-        self.maint_user.groups.add(self.operator_group)
+        self.operator_user = User.objects.create_user("operator_user", "op@test.com", "pwd123")
+        self.operator_user.groups.add(self.operator_group)
+
+        self.tech_user = User.objects.create_user("tech_user", "tech@test.com", "pwd123")
+        self.tech_user.groups.add(self.tech_group)
 
     def test_dashboard_accessible_by_production_leader(self):
         """Usuário da Liderança de Produção acessa /producao/ com sucesso (200)."""
@@ -623,10 +635,18 @@ class ProductionDashboardViewTestCase(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Painel de Estado Atual de Produção")
 
-    def test_dashboard_blocked_for_maintenance_users(self):
-        """Usuário da Manutenção é redirecionado e bloqueado de acessar /producao/."""
+    def test_dashboard_accessible_by_operator(self):
+        """Usuário Operador acessa /producao/ com sucesso (200) devido ao acesso duplo."""
         client = Client()
-        client.force_login(self.maint_user)
+        client.force_login(self.operator_user)
+        response = client.get(reverse("production:dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Painel de Estado Atual de Produção")
+
+    def test_dashboard_blocked_for_pure_technician_users(self):
+        """Usuário Técnico puro da Manutenção é redirecionado e bloqueado de acessar /producao/."""
+        client = Client()
+        client.force_login(self.tech_user)
         response = client.get(reverse("production:dashboard"))
         self.assertRedirects(response, reverse("home_redirect"), target_status_code=302)
 
@@ -659,13 +679,13 @@ class Spec05StateAndCollectorTestCase(TestCase):
         )
 
         self.prod_leader_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
-        self.operator_group, _ = Group.objects.get_or_create(name="Operadores")
+        self.tech_group, _ = Group.objects.get_or_create(name="Tecnicos")
 
         self.prod_user = User.objects.create_user("prod_lider_05", "prod05@test.com", "pwd123")
         self.prod_user.groups.add(self.prod_leader_group)
 
         self.maint_user = User.objects.create_user("maint_user_05", "maint05@test.com", "pwd123")
-        self.maint_user.groups.add(self.operator_group)
+        self.maint_user.groups.add(self.tech_group)
 
     def test_transition_producing_to_stopped_opens_one_event(self):
         """Produzindo -> Parada abre apenas 1 evento de parada e atualiza ProductionMachineState."""

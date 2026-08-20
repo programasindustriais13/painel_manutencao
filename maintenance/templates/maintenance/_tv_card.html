@@ -18,8 +18,16 @@
     <div class="tech-body">
         <div>
             <div class="tech-label">Máquina</div>
-            <div class="tech-value" title="{{ alloc.maquina.nome }}">{{ alloc.maquina.nome }}</div>
+            <div class="tech-value" title="{{ alloc.maquina.nome }}">
+                {{ alloc.maquina.nome }}
+                {% if alloc.ordem_servico %}
+                    <span style="font-size:0.65rem; background:rgba(99,102,241,0.35); color:#e0e7ff; border:1px solid #6366f1; border-radius:4px; padding:1px 4px; margin-left:4px; font-weight:700; vertical-align:middle;">
+                        OS #{{ alloc.ordem_servico.numero_os }}
+                    </span>
+                {% endif %}
+            </div>
         </div>
+
         <div>
             <div class="tech-label">Setor</div>
             <div class="tech-value sector" title="{{ alloc.maquina.setor.nome }}">{{ alloc.maquina.setor.nome }}</div>

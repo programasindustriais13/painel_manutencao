@@ -153,6 +153,387 @@ class Technician(models.Model):
         verbose_name_plural = "Técnicos"
 
 
+class OrdemServico(models.Model):
+    STATUS_CHOICES = [
+        ('PENDENTE', 'Pendente (Aguardando Atendimento)'),
+        ('EM_ANDAMENTO', 'Em Andamento'),
+        ('CONCLUIDA', 'Concluída'),
+        ('CANCELADA', 'Cancelada'),
+    ]
+
+    TIPO_MANUTENCAO_CHOICES = [
+        ('CORRETIVA', 'Corretiva'),
+        ('PREVENTIVA', 'Preventiva'),
+        ('MELHORIA', 'Melhoria'),
+        ('PREDIAL', 'Predial'),
+        ('OUTRO', 'Outro'),
+    ]
+
+    CRITICIDADE_CHOICES = [
+        ('BAIXA', 'Baixa (Normal)'),
+        ('MEDIA', 'Média'),
+        ('ALTA', 'Alta (Urgente / Parada de Máquina)'),
+    ]
+
+    # --- 1. CABEÇALHO ---
+    numero_os = models.CharField(
+        max_length=50, 
+        unique=True, 
+        verbose_name="Número da OS Física",
+        help_text="Número impresso na folha física (ex: 10216). Deve ser único para evitar duplicidades."
+    )
+
+    # --- 2. ETAPA 1: ABERTURA PELO LÍDER ---
+    tag = models.CharField(
+        max_length=50, 
+        null=True, 
+        blank=True, 
+        verbose_name="TAG do Equipamento"
+    )
+    descricao_equipamento = models.CharField(
+        max_length=150, 
+        null=True, 
+        blank=True, 
+        verbose_name="Descrição do Equipamento"
+    )
+    maquina = models.ForeignKey(
+        'Machine', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="ordens_servico", 
+        verbose_name="Máquina Relacionada"
+    )
+    setor = models.ForeignKey(
+        'Sector', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="ordens_servico", 
+        verbose_name="Setor"
+    )
+    solicitante = models.CharField(
+        max_length=120, 
+        null=True, 
+        blank=True, 
+        verbose_name="Solicitante / Líder de Produção"
+    )
+    motivo = models.CharField(
+        max_length=200, 
+        null=True, 
+        blank=True, 
+        verbose_name="Motivo do Chamado"
+    )
+    tipo_manutencao = models.CharField(
+        max_length=20, 
+        choices=TIPO_MANUTENCAO_CHOICES, 
+        default='CORRETIVA', 
+        verbose_name="Tipo de Serviço"
+    )
+    parou_maquina = models.BooleanField(
+        default=True, 
+        verbose_name="Parou a Máquina?"
+    )
+    criticidade = models.CharField(
+        max_length=15, 
+        choices=CRITICIDADE_CHOICES, 
+        default='MEDIA', 
+        verbose_name="Criticidade"
+    )
+    descricao_falha = models.TextField(
+        null=True, 
+        blank=True, 
+        verbose_name="Descrição do Serviço a ser Realizado"
+    )
+    data_hora_inicio_ocorrencia = models.DateTimeField(
+        null=True, 
+        blank=True, 
+        verbose_name="Início da Ocorrência"
+    )
+    data_abertura = models.DateTimeField(
+        default=timezone.now, 
+        verbose_name="Data/Hora de Cadastro no Sistema"
+    )
+
+    # --- 3. ETAPA 2: EXECUÇÃO & FECHAMENTO PELO TÉCNICO ---
+    causa = models.TextField(
+        null=True, 
+        blank=True, 
+        verbose_name="Causa da Falha (Conferir no Verso)"
+    )
+    descricao_servico_realizado = models.TextField(
+        null=True, 
+        blank=True, 
+        verbose_name="Descrição do Serviço Realizado"
+    )
+    data_hora_inicio_conserto = models.DateTimeField(
+        null=True, 
+        blank=True, 
+        verbose_name="Início do Conserto"
+    )
+    data_hora_fim_conserto = models.DateTimeField(
+        null=True, 
+        blank=True, 
+        verbose_name="Fim do Conserto"
+    )
+    visto_executante_nome = models.CharField(
+        max_length=120, 
+        null=True, 
+        blank=True, 
+        verbose_name="Visto Executante (Nome do Técnico)"
+    )
+    visto_executante_data = models.DateField(
+        null=True, 
+        blank=True, 
+        verbose_name="Data do Visto Executante"
+    )
+    tecnico_designado = models.ForeignKey(
+        'Technician', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='os_designadas', 
+        verbose_name="Técnico Designado Principal (Opcional)"
+    )
+
+    # --- 4. ETAPA 3: FINALIZAÇÃO & ACEITE PELO LÍDER ---
+    data_hora_fim_ocorrencia = models.DateTimeField(
+        null=True, 
+        blank=True, 
+        verbose_name="Fim da Ocorrência (Máquina Liberada)"
+    )
+    visto_responsavel_nome = models.CharField(
+        max_length=120, 
+        null=True, 
+        blank=True, 
+        verbose_name="Visto Responsável (Nome do Líder)"
+    )
+    visto_responsavel_data = models.DateField(
+        null=True, 
+        blank=True, 
+        verbose_name="Data do Visto Responsável"
+    )
+
+    # --- 5. CONTROLE DO SISTEMA & AUDITORIA ---
+    status = models.CharField(
+        max_length=20, 
+        choices=STATUS_CHOICES, 
+        default='PENDENTE', 
+        verbose_name="Status da OS"
+    )
+    foto_abertura = models.ImageField(
+        upload_to='ordens_servico/abertura/%Y/%m/', 
+        null=True, 
+        blank=True, 
+        verbose_name="Foto da OS na Abertura"
+    )
+    foto_conclusao = models.ImageField(
+        upload_to='ordens_servico/conclusao/%Y/%m/', 
+        null=True, 
+        blank=True, 
+        verbose_name="Foto da OS Finalizada e Assinada"
+    )
+    foto_verso = models.ImageField(
+        upload_to='ordens_servico/verso/%Y/%m/', 
+        null=True, 
+        blank=True, 
+        verbose_name="Foto do Verso da OS (Opcional)"
+    )
+    criado_por = models.ForeignKey(
+        'auth.User', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='os_abertas',
+        verbose_name="Usuário que Cadastrou"
+    )
+    data_conclusao = models.DateTimeField(
+        null=True, 
+        blank=True, 
+        verbose_name="Data/Hora de Conclusão no Sistema"
+    )
+    observacao_fechamento = models.TextField(
+        null=True, 
+        blank=True, 
+        verbose_name="Observações de Fechamento / Ação Executada"
+    )
+    lider_assinatura_nome = models.CharField(
+        max_length=120, 
+        null=True, 
+        blank=True, 
+        verbose_name="Nome do Líder que Assinou a Conclusão"
+    )
+
+    class Meta:
+        verbose_name = "Ordem de Serviço"
+        verbose_name_plural = "Ordens de Serviço"
+        ordering = ['-data_abertura']
+
+    def __str__(self):
+        identificador = self.descricao_equipamento or (self.maquina.nome if self.maquina else "Sem Máquina")
+        return f"OS #{self.numero_os} - {identificador} ({self.get_status_display()})"
+
+    @property
+    def tecnicos_envolvidos(self):
+        """Retorna lista única de técnicos que trabalharam nas alocações ligadas a esta OS."""
+        if hasattr(self, '_prefetched_objects_cache') and 'allocations' in self._prefetched_objects_cache:
+            seen = set()
+            techs = []
+            for alloc in self.allocations.all():
+                if alloc.tecnico and alloc.tecnico_id not in seen:
+                    seen.add(alloc.tecnico_id)
+                    techs.append(alloc.tecnico)
+            return techs
+        tech_ids = self.allocations.values_list('tecnico_id', flat=True).distinct()
+        return list(Technician.objects.filter(id__in=tech_ids))
+
+    @property
+    def pode_ser_iniciada(self):
+        """Retorna True se o status for PENDENTE ou EM_ANDAMENTO."""
+        return self.status in ['PENDENTE', 'EM_ANDAMENTO']
+
+    @property
+    def tempo_total_homem_hora_segundos(self):
+        """Soma total de homem-hora em segundos de todas as alocações vinculadas."""
+        total_seconds = 0
+        allocations = self.allocations.all()
+        for alloc in allocations:
+            total_seconds += alloc.tempo_decorrido_segundos
+        return total_seconds
+
+    @property
+    def tempo_total_homem_hora_str(self):
+        """Retorna o tempo homem-hora total acumulado formatado (ex: '2h 30m' ou '45m')."""
+        seconds = self.tempo_total_homem_hora_segundos
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
+    @property
+    def tempo_conserto_segundos(self):
+        """Calcula a duração do conserto a partir dos horários físicos (início ao fim do conserto)."""
+        if self.data_hora_inicio_conserto and self.data_hora_fim_conserto:
+            return max(0, int((self.data_hora_fim_conserto - self.data_hora_inicio_conserto).total_seconds()))
+        return 0
+
+    @property
+    def tempo_conserto_str(self):
+        seconds = self.tempo_conserto_segundos
+        if not seconds:
+            return "N/A"
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
+    @property
+    def tempo_liquido_parada_segundos(self):
+        """Calcula o tempo total de parada da ocorrência física ou da data_abertura até conclusão."""
+        if self.data_hora_inicio_ocorrencia and self.data_hora_fim_ocorrencia:
+            return max(0, int((self.data_hora_fim_ocorrencia - self.data_hora_inicio_ocorrencia).total_seconds()))
+        if self.data_hora_inicio_ocorrencia:
+            fim = self.data_hora_fim_ocorrencia or timezone.now()
+            return max(0, int((fim - self.data_hora_inicio_ocorrencia).total_seconds()))
+        if not self.data_abertura:
+            return 0
+        fim = self.data_conclusao or timezone.now()
+        return max(0, int((fim - self.data_abertura).total_seconds()))
+
+    @property
+    def tempo_liquido_parada_str(self):
+        seconds = self.tempo_liquido_parada_segundos
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
+    @property
+    def alocacoes_ativas(self):
+        """Retorna as alocações atualmente em andamento ou pausadas nesta OS."""
+        return self.allocations.filter(data_fim__isnull=True).select_related('tecnico')
+
+    @property
+    def tecnicos_ativos(self):
+        """Retorna lista dos técnicos com alocações ativas nesta OS."""
+        return [alloc.tecnico for alloc in self.alocacoes_ativas if alloc.tecnico]
+
+    @property
+    def tempo_espera_str(self):
+        """Retorna o tempo de espera desde o início da ocorrência ou abertura da OS."""
+        ref = self.data_hora_inicio_ocorrencia or self.data_abertura
+        if not ref:
+            return "0m"
+        now = timezone.now()
+        seconds = max(0, int((now - ref).total_seconds()))
+        days = seconds // 86400
+        hours = (seconds % 86400) // 3600
+        minutes = (seconds % 3600) // 60
+        if days > 0:
+            return f"{days}d {hours}h"
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+
+    @property
+    def criticidade_badge_class(self):
+        """Retorna a classe CSS do Bootstrap conforme a criticidade."""
+        if self.criticidade == 'ALTA':
+            return 'danger'
+        elif self.criticidade == 'MEDIA':
+            return 'warning text-dark'
+        return 'info text-dark'
+
+    @property
+    def tempo_total_intervencao(self):
+        """Retorna dicionário com o tempo total acumulado de homem-hora e tempo de máquina parada."""
+        return {
+            'homem_hora_segundos': self.tempo_total_homem_hora_segundos,
+            'homem_hora_str': self.tempo_total_homem_hora_str,
+            'tempo_conserto_segundos': self.tempo_conserto_segundos,
+            'tempo_conserto_str': self.tempo_conserto_str,
+            'tempo_parada_segundos': self.tempo_liquido_parada_segundos,
+            'tempo_parada_str': self.tempo_liquido_parada_str,
+        }
+
+
+
+class OrdemServicoPeca(models.Model):
+    ordem_servico = models.ForeignKey(
+        OrdemServico, 
+        on_delete=models.CASCADE, 
+        related_name='pecas_utilizadas', 
+        verbose_name="Ordem de Serviço"
+    )
+    codigo = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True, 
+        verbose_name="Código da Peça"
+    )
+    descricao = models.CharField(
+        max_length=200, 
+        verbose_name="Descrição da Peça / Material"
+    )
+    quantidade = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=1.0, 
+        verbose_name="Quantidade"
+    )
+
+    def __str__(self):
+        cod_str = f"[{self.codigo}] " if self.codigo else ""
+        return f"{cod_str}{self.descricao} (Qtd: {self.quantidade})"
+
+    class Meta:
+        verbose_name = "Peça Utilizada"
+        verbose_name_plural = "Peças Utilizadas"
+
+
 class Allocation(models.Model):
     STATUS_CHOICES = [
         ('EM_ATENDIMENTO', 'Em Atendimento'),
@@ -160,6 +541,14 @@ class Allocation(models.Model):
         ('CONCLUIDO', 'Concluído'),
     ]
 
+    ordem_servico = models.ForeignKey(
+        'OrdemServico',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='allocations',
+        verbose_name="Ordem de Serviço Vinculada"
+    )
     tecnico = models.ForeignKey(Technician, on_delete=models.CASCADE, related_name="allocations", verbose_name="Técnico")
     maquina = models.ForeignKey(Machine, on_delete=models.SET_NULL, null=True, blank=True, related_name="allocations", verbose_name="Máquina")
     atividade_observacao = models.TextField(verbose_name="Atividade/Observação")
@@ -188,10 +577,9 @@ class Allocation(models.Model):
         return f"{self.tecnico.nome} em {maquina_str} - Início: {self.data_inicio.strftime('%d/%m/%Y %H:%M')}"
 
     @property
-    def tempo_decorrido_liquido(self):
+    def tempo_decorrido_segundos(self):
         if not self.data_inicio:
-            return "N/A"
-        
+            return 0
         now_time = timezone.now()
         fim = self.data_fim or now_time
         duration_bruto = (fim - self.data_inicio).total_seconds()
@@ -215,7 +603,13 @@ class Allocation(models.Model):
             p_fim = self.data_fim or now_time
             total_pause_seconds += (p_fim - self.data_pausa).total_seconds()
             
-        seconds = max(0, round(duration_bruto - total_pause_seconds))
+        return max(0, round(duration_bruto - total_pause_seconds))
+
+    @property
+    def tempo_decorrido_liquido(self):
+        if not self.data_inicio:
+            return "N/A"
+        seconds = self.tempo_decorrido_segundos
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
         if hours > 0:

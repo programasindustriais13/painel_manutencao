@@ -2675,5 +2675,249 @@ Detalhamento Técnico e Regras de Negócio:
    - /producao/ (Dashboard) : Banner vermelho de advertência destacado no topo sempre que houver cavidades operando em divergência de setup.
 
 
+================================================================================
+FASE 1: PORTAL PÓS-LOGIN & ROTEAMENTO ENTRE MÓDULOS
+================================================================================
+
+Objetivo:
+Implementar a tela de seleção de módulo pós-login ("Hub / Portal de Entrada"), regras inteligentes de bypass automático de perfil, correção de redirecionamento no cabeçalho do módulo de Produção e atalhos de alternância rápida entre Manutenção e Produção para usuários híbridos (dual access).
+
+Arquivos Criados / Modificados:
+- maintenance/views.py (Funções auxiliares _user_can_access_maintenance, _user_can_access_production, _user_has_dual_access, atualização do home_redirect com regras de bypass e criação da view portal_select)
+- maintenance/urls.py (Adicionada rota /portal/ com o nome portal_select)
+- maintenance/context_processors.py [NOVO] (Context processor module_access_context disponibilizando flags de permissão de módulo e dual access para todos os templates)
+- maintenance_project/settings.py (Registrado maintenance.context_processors.module_access_context)
+- maintenance/templates/maintenance/portal_select.html [NOVO] (Hub responsivo em dark mode industrial com saudação, botão de logout e cards interativos para Manutenção e Produção)
+- maintenance/templates/maintenance/base.html (Navbar atualizada com flags do context processor e links rápidos "Trocar para Produção" e "Portal de Módulos" para dual access)
+- production/templates/production/base_production.html (Correção do link .navbar-brand para production:dashboard e adição dos botões "Trocar para Manutenção" e "Portal de Módulos")
+- production/decorators.py (Atualização dos decorators @lider_producao_required e @lider_ou_pcp_required para permitir acesso aos grupos Operadores, Operador e PCP)
+- maintenance/tests.py (Testes de redirecionamento pós-login e validação da view portal_select e regras de bypass)
+- production/tests.py (Testes de redirecionamento, acesso de operadores ao módulo de produção, bloqueio de técnicos puros e validação do logo de navegação)
+- Instrucoes.txt
+
+Detalhamento Técnico e Regras de Negócio:
+1. Roteamento Pós-Login Inteligente (`home_redirect`):
+   - Usuário de TV ('tv' ou grupo 'Visualizador'): Bypass automático para /tv/ (tv_dashboard).
+   - Usuário com Acesso Duplo (Operadores, Superusuários, Staff ou quem pertence aos grupos de Produção e Manutenção): Redirecionado para /portal/ (portal_select).
+   - Usuário de Produção Exclusivo (Liderança de Produção): Bypass automático para /producao/ (production:dashboard).
+   - Usuário de Manutenção Exclusivo (Técnicos): Bypass automático para /management/ (technician_management).
+2. Tela do Portal de Módulos (`/portal/`):
+   - View protegida por @login_required com verificação de permissão: se um usuário sem acesso duplo tentar acessar a URL diretamente, é redirecionado automaticamente para o único módulo ao qual tem direito.
+   - Interface dark theme refinada estilo Hub Industrial com cartões grandes interativos:
+     - Card Manutenção Industrial: Direciona para /dashboard/ (se operador) ou /management/ (se técnico).
+     - Card Produção & PCP: Direciona para /producao/.
+3. Correção do Logo na Produção:
+   - O logo "PAINEL PRODUÇÃO" em base_production.html agora direciona para 'production:dashboard', eliminando o comportamento indevido de redirecionar operadores de volta para a manutenção.
+4. Alternância Rápida de Módulos na Barra Superior:
+   - Para usuários com acesso duplo (has_dual_access), ambas as navbars exibem os botões de troca rápida de módulo e o atalho de retorno ao "Portal de Módulos".
+5. Testes Automatizados:
+   - 232 testes unitários e de integração executados com 100% de sucesso.
+
+
+================================================================================
+FASE 2: MODELAGEM DE DADOS DA ORDEM DE SERVIÇO & MIGRAÇÕES (ESPELHO DA FOLHA FÍSICA)
+================================================================================
+
+Objetivo:
+Estruturar o modelo de dados OrdemServico como espelho exato (1-para-1) da folha física de Ordem de Serviços da PNEUS FREEDOM, contemplando o fluxo em 3 etapas de caneta (Abertura pelo Líder, Execução pelo Técnico e Finalização pelo Líder), prevenção de duplicidade, tabela de peças utilizadas, rastreabilidade fotográfica, conexão com o modelo Allocation existente e suporte a múltiplos técnicos na mesma intervenção com acúmulo de homem-hora.
+
+Arquivos Criados / Modificados:
+- maintenance/models.py (Criação do modelo OrdemServico com todos os campos da folha física real, modelo OrdemServicoPeca, métodos de cálculo de homem-hora/parada/conserto e chave estrangeira ordem_servico em Allocation)
+- maintenance/admin.py (Registro de OrdemServicoAdmin com inlines OrdemServicoPecaInline e AllocationInline, fieldsets divididos pelas etapas físicas da folha, filtros, busca e miniaturas de foto de abertura, conclusão e verso)
+- maintenance/migrations/0014_ordemservico_allocation_ordem_servico.py [NOVO] (Migração inicial de OS e Allocation)
+- maintenance/migrations/0015_ordemservico_causa_and_more.py [NOVO] (Migração aditiva adicionando campos da folha física e modelo OrdemServicoPeca)
+- maintenance/tests.py (OrdemServicoModelAndAdminTestCase validando criação, unicidade de numero_os, alocações de múltiplos técnicos, cálculo de tempo HH/intervenção/conserto, peças utilizadas e integração com o Admin)
+- Instrucoes.txt
+
+Detalhamento Técnico e Regras de Negócio:
+1. Modelo `OrdemServico` (Espelho da Folha Física):
+   - Cabeçalho: `numero_os` (único, ex: 10216).
+   - Etapa 1 (Líder / Abertura): `tag`, `descricao_equipamento`, `maquina`, `setor`, `motivo`, `tipo_manutencao` (CORRETIVA, PREVENTIVA, MELHORIA, PREDIAL, OUTRO), `parou_maquina` (Booleano), `descricao_falha` (Serviço a realizar), `data_hora_inicio_ocorrencia`, `solicitante`.
+   - Etapa 2 (Técnico / Execução): `tecnico_designado`, `causa` (Conferir no verso), `descricao_servico_realizado`, `data_hora_inicio_conserto`, `data_hora_fim_conserto`, `visto_executante_nome`, `visto_executante_data`.
+   - Etapa 3 (Líder / Finalização): `data_hora_fim_ocorrencia`, `visto_responsavel_nome`, `visto_responsavel_data`.
+   - Registro Fotográfico: `foto_abertura`, `foto_conclusao`, `foto_verso`.
+2. Modelo `OrdemServicoPeca`:
+   - Relacionamento ForeignKey com `OrdemServico` contendo `codigo`, `descricao` e `quantidade`.
+3. Relacionamento com `Allocation`:
+   - Campo `ordem_servico` adicionado em `Allocation` como nullable (`null=True, blank=True`), espelhando a tabela física de Mão de Obra e preservando dados legados.
+4. Propriedades e Métodos:
+   - `tecnicos_envolvidos`: Retorna lista única dos técnicos que atuaram nas alocações da OS.
+   - `tempo_total_homem_hora_segundos` e `tempo_total_homem_hora_str`: Soma do tempo líquido trabalhado por todos os técnicos na OS.
+   - `tempo_conserto_segundos` e `tempo_conserto_str`: Duração do conserto físico (início ao fim do conserto).
+   - `tempo_liquido_parada_segundos` e `tempo_liquido_parada_str`: Tempo total da ocorrência de máquina parada.
+   - `tempo_total_intervencao`: Dicionário consolidado com métricas completas de tempo.
+   - `pode_ser_iniciada`: Retorna True para OSs em status PENDENTE ou EM_ANDAMENTO.
+5. Django Admin:
+   - Fieldsets organizados nas etapas reais da fábrica.
+   - Inlines de Peças Utilizadas (`OrdemServicoPecaInline`) e Alocações de Técnicos (`AllocationInline`).
+   - Miniaturas no grid e expansão de fotos de abertura, conclusão e verso.
+6. Validação Automatizada:
+   - 249 testes unitários e de integração executados com 100% de sucesso (45 em maintenance e 204 em production).
+
+
+================================================================================
+FASE 3: SERVIÇO DE IA / OCR MULTIMODAL (GEMINI VISION)
+================================================================================
+
+Objetivo:
+Implementar a camada de serviço backend em Python para leitura multimodal com inteligência artificial (Google Gemini Vision API) da folha física de Ordem de Serviços da PNEUS FREEDOM. O serviço transcreve a caligrafia manual cursiva à caneta, corrige erros de ortografia, normaliza datas/horários, realiza o casamento com as máquinas e setores cadastrados no banco de dados e expõe um endpoint REST interno resiliente para o frontend.
+
+Arquivos Criados / Modificados:
+- maintenance/services/__init__.py [NOVO] (Inicialização do pacote de serviços de manutenção)
+- maintenance/services/os_ocr_service.py [NOVO] (Serviço de IA multimodal com prompt especializado na OS da PNEUS FREEDOM, conversão base64, chamada REST ao Gemini Vision, tratamento de exceções/timeouts e algoritmo de casamento de máquina/setor)
+- maintenance/views.py (Criação da view extrair_dados_os_foto_api protegida por @login_required para processamento de fotos via multipart POST)
+- maintenance/urls.py (Registro da rota /api/os/extrair-foto/ sob o nome api_extrair_dados_os_foto)
+- maintenance_project/settings.py (Configurações GEMINI_API_KEY e GEMINI_MODEL)
+- .env e .env.example (Adicionadas variáveis GEMINI_API_KEY e GEMINI_MODEL=gemini-1.5-flash)
+- maintenance/tests.py (OrdemServicoOCRTestCase cobrindo fallbacks de chave ausente, casamento de máquina/setor, extração mockada de todos os campos e testes do endpoint HTTP)
+- Instrucoes.txt
+
+Detalhamento Técnico e Regras de Negócio:
+1. Arquitetura do Serviço (`maintenance/services/os_ocr_service.py`):
+   - Função `extrair_dados_os_por_foto(image_file_or_bytes)`:
+     - Aceita bytes, arquivos Django UploadedFile ou file-like objects.
+     - Detecta automaticamente o MIME type (image/jpeg, image/png, image/webp).
+     - Converte a imagem para Base64 e envia para a API REST do Gemini (`https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}`).
+     - Utiliza `response_mime_type: application/json` e `temperature: 0.1` para garantir retorno direto de JSON estritamente válido sem blocos de markdown.
+   - Prompt Especialista de Manutenção Industrial:
+     - Mapeia todos os campos da folha física (número da OS, TAG, descrição do equipamento, motivo, tipo de serviço, parou máquina, serviço solicitado, início da ocorrência, solicitante, causa, serviço realizado, horários de conserto, tabela de peças utilizadas e vistos).
+   - Resiliência e Fallbacks:
+     - Se `GEMINI_API_KEY` não estiver definida: retorna `{"sucesso": False, "motivo": "CHAVE_NAO_CONFIGURADA", "mensagem": "..."}` sem quebrar o sistema.
+     - Se houver timeout ou erro de rede/DNS: captura `requests.exceptions` e retorna `{"sucesso": False, "motivo": "FALHA_CONEXAO", ...}`.
+2. Casamento Inteligente com Banco de Dados (`casar_maquina_e_setor`):
+   - Normaliza o texto removendo acentos e caracteres especiais (`normalizar_texto`).
+   - Tenta casamento por TAG exata ou parcial na tabela `Machine`.
+   - Tenta casamento por nome da máquina (`icontains` ou inclusão de substring normalizada).
+   - Localiza automaticamente o `Sector` associado ou sugerido no texto.
+   - Retorna os IDs sugeridos (`maquina_sugerida_id`, `setor_sugerido_id`) para pré-seleção no formulário.
+3. Endpoint Interno (`/api/os/extrair-foto/`):
+   - Rota protegida por autenticação (`@login_required`).
+   - Exige método HTTP POST com multipart/form-data (`foto_os`).
+   - Retorna JSONResponse em tempo real (< 2s).
+4. Validação Automatizada:
+   - 254 testes unitários e de integração executados com 100% de sucesso (50 em maintenance e 204 em production).
+
+
+================================================================================
+FASE 4: CADASTRO DE OS POR FOTO & VALIDAÇÃO ANTI-DUPLICIDADE
+================================================================================
+
+Objetivo:
+Construir a interface mobile-first e o fluxo completo de abertura de Ordem de Serviço com captura de foto via câmera/arquivo, leitura assíncrona assistida por IA (Gemini Vision), validação estrita anti-duplicidade em tempo real (frontend e backend), pré-seleção inteligente de máquina e setor, e atalhos rápidos de navegação.
+
+Arquivos Criados / Modificados:
+- maintenance/forms.py (Criação de OrdemServicoCreateForm com campos da folha física, validação clean_numero_os anti-duplicidade e obrigatoriedade da foto_abertura)
+- maintenance/views.py (Criação da view os_create com decorator os_creation_required e endpoint api_verificar_numero_os para checagem instantânea de duplicidade)
+- maintenance/urls.py (Registro das rotas /ordens-servico/nova/ e /api/os/verificar-numero/)
+- maintenance/context_processors.py (Disponibilização da flag can_create_os no contexto global de templates)
+- maintenance/templates/maintenance/os_create.html [NOVO] (Interface mobile-first com hero card para foto/câmera, botão de escaneamento por IA com animação de loading, realce suave dos campos autopreenchidos e badge anti-duplicidade em tempo real)
+- maintenance/templates/maintenance/base.html (Adicionado botão de ação rápida '+ Nova OS' na navbar superior para usuários autorizados)
+- production/templates/production/base_production.html (Adicionado botão '+ Abrir OS' na barra de navegação da Produção)
+- maintenance/tests.py (OrdemServicoCreationTestCase validando obrigatoriedade da foto, bloqueio de duplicidade no Form, endpoint de verificação e fluxo completo de criação)
+- Instrucoes.txt
+
+Detalhamento Técnico e Regras de Negócio:
+1. Formulário `OrdemServicoCreateForm`:
+   - Campos: `numero_os`, `tag`, `descricao_equipamento`, `setor`, `maquina`, `solicitante`, `motivo`, `tipo_manutencao`, `parou_maquina`, `criticidade`, `descricao_falha`, `data_hora_inicio_ocorrencia`, `tecnico_designado`, `foto_abertura`.
+   - Método `clean_numero_os`: Busca no banco por `numero_os__iexact`. Se existir, lança ValidationError amigável informando data de abertura e status da OS já existente.
+   - Método `clean_foto_abertura`: Exige o envio da imagem da folha física.
+2. Endpoint Anti-Duplicidade (`/api/os/verificar-numero/`):
+   - Consulta rápida em tempo real invocada no evento de digitação/blur do campo `numero_os`.
+   - Retorna JSON `{ existe: true, os: { ... } }` ou `{ existe: false }`, alternando o badge visual entre 'Número Disponível' (verde) e 'Já Cadastrada' (vermelho com aviso).
+3. Tela Mobile-First (`os_create.html`):
+   - Integração com a câmera nativa do smartphone através de `capture="environment"`.
+   - Botão 'Escanear com IA' que envia a foto para `/api/os/extrair-foto/` e distribui os dados nos campos com efeito `@keyframes pulseField`.
+   - Sincronização automática entre dropdowns de Máquina e Setor via dados injetados em JSON.
+4. Permissões e Segurança:
+   - Decorator `os_creation_required`: Permite acesso a Operadores, Técnicos Líderes, Liderança de Produção, PCP, Admins e Staff.
+5. Validação Automatizada:
+   - 257 testes unitários e de integração executados com 100% de sucesso (53 em maintenance e 204 em production).
+
+================================================================================
+FASE 5: QUADRO DE OSS, ATRIBUIÇÃO & SUPORTE A MÚLTIPLOS TÉCNICOS
+================================================================================
+
+Objetivo:
+Disponibilizar o quadro visual completo de Ordens de Serviço (/ordens-servico/) com abas de fluxo (Pendentes/Na Fila, Em Andamento, Concluídas e Canceladas), suportar a atribuição de técnicos por liderança/operadores, início de atendimento individual pelo próprio técnico ou operador com validação estrita de concorrência e ausência, suporte a múltiplos técnicos trabalhando na mesma OS em equipe (alocações individuais com apontamento de tempo independente), e integração visual com os cards de técnicos (/management/) e modo TV (/tv/).
+
+Arquivos Criados / Modificados:
+- maintenance/models.py (Propriedades auxiliares no modelo OrdemServico: alocacoes_ativas, tecnicos_ativos, tempo_espera_str, criticidade_badge_class)
+- maintenance/views.py (Implementação de os_board, os_assign_technician, os_start_service, os_join_team, os_cancel)
+- maintenance/urls.py (Registro das rotas /ordens-servico/, /atribuir/, /iniciar/, /entrar-equipe/, /cancelar/)
+- maintenance/templates/maintenance/os_board.html [NOVO] (Quadro visual com abas, badges de criticidade e parada de máquina, contadores em tempo real, modais de atribuição, início, entrada em equipe, cancelamento e zoom de foto da folha física)
+- maintenance/templates/maintenance/technician_management.html (Integração com exibição do badge [ OS #... ] e [ Equipe (X) ] nas alocações ativas e pausadas)
+- maintenance/templates/maintenance/_tv_card.html (Tag da OS vinculada junto ao nome da máquina)
+- maintenance/templates/maintenance/base.html (Adicionado link 'Quadro de OSs' na barra de navegação)
+- production/templates/production/base_production.html (Adicionado link 'Quadro de OSs' na barra de navegação)
+- maintenance/tests.py (OrdemServicoBoardAndMultiTechTestCase validando quadro, filtros, atribuição, início, concorrência estrita, múltiplos técnicos e cancelamento)
+- Instrucoes.txt
+
+Regras de Negócio e Validações Implementadas:
+1. Concorrência Estrita:
+   - Um técnico só pode ter no máximo UMA alocação com status 'EM_ATENDIMENTO' ativa por vez. Se já estiver em atendimento, o sistema bloqueia e exige pausa ou conclusão antes de iniciar uma nova OS ou entrar em equipe.
+2. Bloqueio de Ausência:
+   - Técnicos com status de férias, folga, licença médica ou plantão externo não podem ser atribuídos nem iniciar atendimentos.
+3. Multi-Técnicos (Trabalho em Equipe):
+   - Múltiplos técnicos podem atuar na mesma OS simultaneamente. Cada técnico possui sua própria instância de `Allocation` vinculada à mesma `OrdemServico`, permitindo ciclos independentes de pausas, retomadas e cálculo preciso de Homem-Hora (HH).
+4. Quadro Visual (/ordens-servico/):
+   - Aba 1 (Na Fila): Exibe tempo de espera, criticidade, foto ampliada e botões rápidos de 'Assumir e Iniciar' ou 'Atribuir Técnico'.
+   - Aba 2 (Em Andamento): Exibe equipe atuando em tempo real com cronômetros individuais e botão 'Entrar nesta OS'.
+   - Aba 3 (Concluídas): Histórico com fotos de abertura e conclusão, tempo de conserto e total HH.
+   - Aba 4 (Canceladas): Histórico de chamados cancelados.
+5. Validação Automatizada:
+   - 262 testes unitários e de integração executados com 100% de sucesso (58 em maintenance e 204 em production).
+
+================================================================================
+FASE 6: VÍNCULO EMERGENCIAL & FINALIZAÇÃO COM FOTO DE ASSINATURA
+================================================================================
+
+Objetivo:
+Permitir que atendimentos emergenciais iniciados de imediato no sistema (sem folha física prévia) sejam regularizados e vinculados à folha de OS física quando esta for entregue pela liderança. Além disso, estruturar o fechamento completo da OS com envio da foto final assinada pelo Líder de Produção, apontamento de causa raiz, serviços realizados, materiais/peças utilizadas e tela detalhada de auditoria visual com comparativo lado a lado das fotos de abertura e conclusão.
+
+Arquivos Criados / Modificados:
+- maintenance/forms.py (Campos adicionais em FinishServiceForm: foto_conclusao, foto_verso, lider_assinatura_nome, causa, descricao_servico_realizado, pecas_utilizadas_texto)
+- maintenance/views.py (Implementação de os_detail e link_allocation_os; atualização de finish_service e finish_allocation para fechar a OS e criar registros em OrdemServicoPeca quando o último técnico encerrar)
+- maintenance/urls.py (Registro das rotas /ordens-servico/<pk>/ e /allocations/<id>/vincular-os/)
+- maintenance/templates/maintenance/technician_management.html (Botão '+ Vincular OS' no card de atendimento avulso com modal de seleção de OSs pendentes, e campos de fechamento de OS no modal de conclusão)
+- maintenance/templates/maintenance/os_detail.html [NOVO] (Tela de detalhes e auditoria com galeria comparativa de fotos com zoom, tabela de mão de obra de todos os técnicos participantes, tempos líquidos de conserto/HH e lista de peças)
+- Instrucoes.txt
+
+================================================================================
+FASE 7: TESTES INTEGRADOS DE QA, AUDITORIA DA CONSTITUIÇÃO & DOCUMENTAÇÃO
+================================================================================
+
+Objetivo:
+Validação de ponta a ponta do ecossistema de Ordens de Serviço Físicas, Portal de Módulos e Gestão de Manutenção, garantindo conformidade rigorosa com a `constitution.md`.
+
+Auditoria de Conformidade (`constitution.md`):
+1. Ambiente Único:
+   - Projeto monolítico coeso em Django (`maintenance_project`), sem duplicação de pastas, apenas 1 ambiente virtual ativo.
+2. Compatibilidade de Banco de Dados:
+   - Todas as queries do ORM e métodos de modelos são 100% compatíveis com SQLite (dev) e MySQL/MariaDB (produção). Migrações estritamente aditivas e campos opcionais com defaults seguros.
+3. Segurança Backend e Controle de Acesso:
+   - Decorators ativos e testados em todas as rotas sensíveis:
+     - `@login_required`
+     - `@operador_required`
+     - `@lider_ou_operador_required`
+     - `@tecnico_or_operador_required`
+     - `@os_creation_required`
+4. Regra de Concorrência:
+   - Um técnico não pode ter 2 alocações 'EM_ATENDIMENTO' ativas sob nenhuma circunstância.
+5. Modo TV (/tv/):
+   - Atualização automática em 10 segundos preservada, tela cheia sem barras de rolagem e com indicação clara de máquinas com OS e técnicos ociosos.
+6. Fallback Seguro & Resiliência:
+   - OCR assistido por IA Gemini Vision falha graciosamente em caso de erro de rede ou falta de chave, permitindo preenchimento manual imediato sem erros 500.
+
+Configuração de Variáveis de Ambiente (.env):
+- `GEMINI_API_KEY`: Chave da API do Google Gemini (Flash 1.5/2.0) para extração de OCR de folhas físicas.
+- `GEMINI_MODEL`: Modelo Gemini utilizado (Padrão: `gemini-1.5-flash`).
+
+Resumo de Testes Automatizados:
+- `maintenance/tests.py`: 60 testes automatizados (100% OK).
+- `production/tests`: 204 testes automatizados (100% OK).
+- Total de Testes do Projeto: 264 testes com 100% de sucesso.
+
+
+
 
 

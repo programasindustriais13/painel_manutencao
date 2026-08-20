@@ -135,12 +135,11 @@ def catalog_list(request):
     else:
         form = ProductionMatrixCatalogForm()
 
-@lider_ou_pcp_required
-def pcp_plan_list(request):
-    """
-    Lista de Programações PCP (/production/pcp/).
-    """
-    plans_qs = ProductionPCPPlan.objects.select_related("matriz", "bladder", "created_by").prefetch_related("shift_targets__shift").order_by("-created_at")
+    return render(request, "production/catalog_list.html", {
+        "catalogs": catalogs,
+        "form": form,
+    })
+
 
 @lider_ou_pcp_required
 def pcp_plan_list(request):
