@@ -411,6 +411,14 @@ footer { display: none !important; }
 .badge-ferias  { background: #164e63; color: #a5f3fc; border: 1px solid #0e7490; }
 .badge-medico  { background: #3b0764; color: #d8b4fe; border: 1px solid #7c3aed; }
 .badge-plantao { background: #431407; color: #fdba74; border: 1px solid #c2410c; }
+@keyframes spin-sync {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+.spin-sync {
+    display: inline-block;
+    animation: spin-sync 1s linear infinite;
+}
 </style>
 {% endblock %}
 
@@ -451,9 +459,9 @@ footer { display: none !important; }
             <span id="statAusentes">0</span> Ausentes
         </div>
         <span style="color:#27272a;">|</span>
-        <span style="color:#3f3f46;">{{ technicians|length }} técnicos</span>
+        <span id="techCountLabel" style="color:#3f3f46;">{{ technicians|length }} técnicos</span>
         <span style="color:#27272a;">|</span>
-        <span style="color:#3f3f46; font-size:0.65rem;">↻ 10s</span>
+        <span id="syncStatus" style="color:#3f3f46; font-size:0.65rem; cursor:pointer;" title="Clique para sincronizar agora">↻ 10s</span>
     </div>
 
     {# Relógio #}
@@ -566,33 +574,112 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     updateStats();
 
-    /* ── Barra de progresso de refresh ── */
-    const REFRESH_SECS = 10;
-    let remaining = REFRESH_SECS;
-    const bar = document.getElementById('refreshBar');
-
-    const interval = setInterval(function () {
-        remaining -= 0.1;
-        const pct = Math.max(0, (remaining / REFRESH_SECS) * 100);
-        if (bar) bar.style.width = pct + '%';
-        if (remaining <= 0) {
-            clearInterval(interval);
-            location.reload();
-        }
-    }, 100);
-
     /* ── Grid auto-sizing: ajusta grid-template-rows para preencher altura ── */
     function fitGrid() {
         const grid = document.getElementById('tvGrid');
         if (!grid) return;
-        // O CSS faz o trabalho pesado; aqui apenas removemos o
-        // min-height residual dos cards para garantir compressão.
         grid.querySelectorAll('.tech-card').forEach(c => {
             c.style.minHeight = '0';
         });
     }
     fitGrid();
     window.addEventListener('resize', fitGrid);
+
+    /* ── Sincronização Assíncrona Resiliente (AJAX / Fetch) ── */
+    const REFRESH_SECS = 10;
+    let remaining = REFRESH_SECS;
+    let isFetching = false;
+    const bar = document.getElementById('refreshBar');
+    const syncStatus = document.getElementById('syncStatus');
+    const techCountLabel = document.getElementById('techCountLabel');
+
+    async function refreshDashboardData() {
+        if (isFetching) return;
+        isFetching = true;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        try {
+            const response = await fetch(window.location.href, {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Cache-Control': 'no-cache'
+                },
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            // Se sessão expirou e redirecionou para tela de login
+            if (response.redirected && response.url.includes('/login/')) {
+                window.location.href = response.url;
+                return;
+            }
+
+            const html = await response.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+
+            const newGrid = doc.getElementById('tvGrid');
+            const currentGrid = document.getElementById('tvGrid');
+
+            if (newGrid && currentGrid) {
+                currentGrid.innerHTML = newGrid.innerHTML;
+            }
+
+            const newCount = doc.getElementById('techCountLabel');
+            if (newCount && techCountLabel) {
+                techCountLabel.textContent = newCount.textContent;
+            }
+
+            // Atualiza contadores e redimensionamento dos cards
+            updateStats();
+            fitGrid();
+
+            // Restaura indicador normal
+            if (syncStatus) {
+                syncStatus.innerHTML = '↻ 10s';
+                syncStatus.style.color = '#3f3f46';
+                syncStatus.title = 'Clique para sincronizar agora';
+            }
+        } catch (err) {
+            console.warn('[TV Dashboard] Sincronização em background falhou:', err.message);
+            // Mantém os dados atuais 100% visíveis na tela da TV sem substituir por erro da Cloudflare
+            if (syncStatus) {
+                syncStatus.innerHTML = '<i class="bi bi-arrow-repeat spin-sync"></i> Reconectando...';
+                syncStatus.style.color = '#f59e0b';
+                syncStatus.title = 'Última tentativa falhou (' + err.message + '). Tentando reconectar no próximo ciclo...';
+            }
+        } finally {
+            remaining = REFRESH_SECS;
+            isFetching = false;
+        }
+    }
+
+    // Timer de 10s com barra de progresso suave
+    const interval = setInterval(function () {
+        if (!isFetching) {
+            remaining -= 0.1;
+            const pct = Math.max(0, (remaining / REFRESH_SECS) * 100);
+            if (bar) bar.style.width = pct + '%';
+            if (remaining <= 0) {
+                refreshDashboardData();
+            }
+        }
+    }, 100);
+
+    // Permite sincronização imediata ao clicar no botão de status
+    if (syncStatus) {
+        syncStatus.addEventListener('click', function () {
+            remaining = 0;
+            refreshDashboardData();
+        });
+    }
 });
 </script>
 {% endblock %}

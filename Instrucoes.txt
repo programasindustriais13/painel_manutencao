@@ -2917,6 +2917,33 @@ Resumo de Testes Automatizados:
 - `production/tests`: 204 testes automatizados (100% OK).
 - Total de Testes do Projeto: 264 testes com 100% de sucesso.
 
+================================================================================
+MELHORIA DE RESILIÊNCIA: MODO TV (/tv/) CONTRA ERRO 502 BAD GATEWAY (CLOUDFLARE)
+================================================================================
+
+Objetivo:
+Eliminar o travamento permanente da tela do Painel de Fábrica (Modo TV /tv/) em casos de oscilações transitórias de rede, timeouts do proxy Cloudflare ou indisponibilidade momentânea do servidor. Substituir a recarga total de página (location.reload) por sincronização assíncrona inteligente via fetch/DOMParser em segundo plano, com retenção do estado atual dos cards e reconexão automática sem intervenção manual.
+
+Arquivos Modificados:
+- maintenance/templates/maintenance/tv_dashboard.html (Substituição de location.reload() por rotina assíncrona fetch com AbortController de 8s, parser de DOM para substituição atômica de #tvGrid e contadores, animação @keyframes spin-sync e tratamento gracioso de falhas 502/504 com aviso sutil 'Reconectando...' sem travar a tela)
+- DEPLOY_WINDOWS_SERVER.md (Atualizada a recomendação de threads do serviço NSSM Waitress de 4 para 12/16 para prevenir saturação do pool de conexões simultâneas)
+- Instrucoes.txt
+
+Detalhamento Técnico:
+1. Sincronização Assíncrona Não-Bloqueante:
+   - A cada 10 segundos, o JavaScript dispara uma requisição fetch em background com os headers 'X-Requested-With': 'XMLHttpRequest' e 'Cache-Control': 'no-cache'.
+   - O tempo limite de requisição é controlado por um AbortController configurado em 8 segundos.
+2. Atualização Atômica da Interface:
+   - Em caso de sucesso (HTTP 200), o DOMParser extrai o novo conteúdo do grid (#tvGrid) e a quantidade de técnicos cadastrados (#techCountLabel), atualizando a tela de forma fluida e sem flicker visual.
+   - Os cálculos de contadores (Ativos, Pausados, Ociosos, Ausentes) e redimensionamento responsivo (fitGrid) são reexecutados imediatamente após a troca.
+3. Resiliência Contra Falhas Transitórias (502 / 504 / Quedas de Rede):
+   - Caso o servidor retorne 502 Bad Gateway ou a conexão falhe por instabilidade na internet da fábrica/túnel Cloudflare, a tela da TV NUNCA é substituída pela página de erro da Cloudflare.
+   - O estado visual existente permanece 100% legível para a fábrica, e o indicador de sincronização exibe um ícone giratório discreto ('Reconectando...').
+   - O temporizador continua operando e tenta restabelecer a conexão a cada novo ciclo de 10s, recuperando a normalidade automaticamente assim que o servidor responder.
+4. Suporte a Sincronização Sob Demanda:
+   - O indicador de status no cabeçalho é interativo: um clique sobre '↻ 10s' dispara a sincronização imediata sem esperar o ciclo do temporizador.
+
+
 
 
 

@@ -140,11 +140,16 @@ Utilizar o **NSSM (Non-Sucking Service Manager)** para registrar os dois serviç
 
 ### 5.1 Serviço Web WSGI (Waitress)
 ```powershell
-nssm install PainelManutencaoWSGI "C:\Caminho\Do\Projeto\.venv\Scripts\python.exe" "-m waitress --host=127.0.0.1 --port=8900 --threads=4 maintenance_project.wsgi:application"
+nssm install PainelManutencaoWSGI "C:\Caminho\Do\Projeto\.venv\Scripts\python.exe" "-m waitress --host=127.0.0.1 --port=8900 --threads=12 maintenance_project.wsgi:application"
 nssm set PainelManutencaoWSGI AppDirectory "C:\Caminho\Do\Projeto"
 nssm set PainelManutencaoWSGI Start SERVICE_AUTO_START
 nssm start PainelManutencaoWSGI
 ```
+
+> [!TIP]
+> **POOL DE THREADS DO WAITRESS (`--threads=12`):**
+> O parâmetro `--threads=12` (ou `--threads=16`) é fundamental para evitar esgotamento de conexões e erros `502 Bad Gateway` do Cloudflare quando houver concorrência simultânea entre múltiplos navegadores, requisições de IA/OCR Gemini, WhatsApp e o polling contínuo do Modo TV.
+
 
 ### 5.2 Serviço do Coletor Scada Background (Intervalo de 60s em Produção)
 ```powershell
