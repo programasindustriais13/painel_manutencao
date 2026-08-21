@@ -1,10 +1,37 @@
+import json
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.utils import timezone
-from .decorators import lider_producao_required, lider_ou_pcp_required
-from .services import ProductionStateService, PCPCalculationService, BladderTrackingService
-from .models import ProductionTarget, ProductionMatrixCatalog, ProductionShift, ProductionPCPPlan, ProductionBladderUsage
-from .forms import ProductionTargetForm, ProductionMatrixCatalogForm
+from django.http import JsonResponse, HttpResponseBadRequest
+from django.db import transaction
+from maintenance.models import Machine
+from .decorators import lider_producao_required, lider_ou_pcp_required, superuser_required
+from .services import ProductionStateService, PCPCalculationService, BladderTrackingService, scada_reader
+from .xid_configuration import XIDRegistry, XIDDiagnosticsService, XIDTestService
+from .models import (
+
+    ProductionTarget,
+    ProductionMatrixCatalog,
+    ProductionShift,
+    ProductionPCPPlan,
+    ProductionBladderUsage,
+    ProductionMachineConfig,
+    ProductionCavityConfig,
+    ProductionGlobalParameter,
+    ProductionGlobalAlarm,
+)
+from .forms import (
+    ProductionTargetForm,
+    ProductionMatrixCatalogForm,
+    ProductionPCPPlanForm,
+    ProductionMachineConfigForm,
+    ProductionCavityConfigForm,
+    get_cavity_formset,
+    ProductionGlobalParameterForm,
+    ProductionGlobalAlarmForm,
+)
+
+
 
 
 @lider_producao_required
@@ -539,6 +566,214 @@ def bladder_detail(request, pk=None):
         return redirect("production:bladder_list")
 
     return render(request, "production/bladder_detail.html", context_data)
+
+
+# ==============================================================================
+# CENTRAL DE CONFIGURAÇÃO SCADA E CADASTRO ORGANIZADO DE XIDs (SUPERUSER ONLY)
+# ==============================================================================
+
+@superuser_required
+def xid_config_dashboard(request):
+    """
+    Visão geral da Central de Configuração SCADA / XIDs.
+    Exibe contadores de preenchimento, diagnósticos de cobertura por prensa,
+    detecção de duplicidades e filtros rápidos.
+    """
+    q = request.GET.get("q", "").strip()
+    status_filter = request.GET.get("status", "all").strip()
+    sector_filter = request.GET.get("sector", "vulcanizacao").strip()
+
+    diagnostics = XIDDiagnosticsService.get_diagnostics_overview(
+        search_query=q if q else None,
+        status_filter=status_filter if status_filter else None,
+        sector_filter=sector_filter if sector_filter else "vulcanizacao"
+    )
+
+    return render(request, "production/xid_config_dashboard.html", {
+        "diagnostics": diagnostics,
+        "q": q,
+        "status_filter": status_filter,
+        "sector_filter": sector_filter,
+    })
+
+
+
+@superuser_required
+def xid_machine_config(request, pk):
+    """
+    Configuração individual de XIDs para uma prensa e suas respectivas cavidades.
+    Utiliza transação atômica para garantir que falhas em qualquer cavidade impeçam salvamento parcial.
+    """
+    machine = get_object_or_404(Machine.objects.select_related("setor"), pk=pk)
+    machine_cfg = getattr(machine, "production_config", None)
+    is_new_config = (machine_cfg is None)
+
+    # Identificar próxima e anterior para navegação fluida
+    prev_machine = Machine.objects.filter(id__lt=machine.id).order_by("-id").first()
+    next_machine = Machine.objects.filter(id__gt=machine.id).order_by("id").first()
+
+    CavityFormSetClass = get_cavity_formset(extra=0)
+
+    if request.method == "POST":
+        if is_new_config:
+            machine_cfg = ProductionMachineConfig(machine=machine)
+
+        form = ProductionMachineConfigForm(request.POST, instance=machine_cfg)
+        formset = CavityFormSetClass(request.POST, instance=machine_cfg)
+
+        if form.is_valid() and formset.is_valid():
+            with transaction.atomic(using="default"):
+                saved_cfg = form.save(commit=False)
+                saved_cfg.machine = machine
+                saved_cfg.save()
+
+                formset.instance = saved_cfg
+                formset.save()
+
+                # Limpar caches de resolução do ScadaReader
+                scada_reader.clear_caches()
+
+            messages.success(request, f"Configurações da prensa '{machine.nome}' salvas com sucesso no banco padrão!")
+            action = request.POST.get("action", "save")
+
+            if action == "save_and_back":
+                return redirect("production:xid_config_dashboard")
+            elif action == "save_and_next":
+                if next_machine:
+                    return redirect("production:xid_machine_config", pk=next_machine.pk)
+                else:
+                    first_m = Machine.objects.all().order_by("id").first()
+                    if first_m and first_m.pk != machine.pk:
+                        return redirect("production:xid_machine_config", pk=first_m.pk)
+                    return redirect("production:xid_config_dashboard")
+            else:
+                return redirect("production:xid_machine_config", pk=machine.pk)
+
+        else:
+            messages.error(
+                request,
+                "Erro ao salvar configurações da prensa. Verifique os campos destacados e corrija os erros."
+            )
+    else:
+        if is_new_config:
+            machine_cfg = ProductionMachineConfig(
+                machine=machine,
+                ordem_exibicao=1,
+                stale_limit_seconds=120,
+                produzindo_value="1"
+            )
+            form = ProductionMachineConfigForm(instance=machine_cfg)
+            # Para nova configuração sem cavidades no banco, inicializa com 2 cavidades padrão
+            CavityFormSetInit = get_cavity_formset(extra=2)
+            formset = CavityFormSetInit(
+                instance=machine_cfg,
+                initial=[
+                    {"nome": "Cavidade 1", "ordem": 1},
+                    {"nome": "Cavidade 2", "ordem": 2},
+                ]
+            )
+        else:
+            form = ProductionMachineConfigForm(instance=machine_cfg)
+            formset = CavityFormSetClass(instance=machine_cfg)
+
+    # Inspecionar duplicidades conhecidas
+    overview = XIDDiagnosticsService.get_diagnostics_overview()
+    duplicates_map = overview.get("duplicates_map", {})
+
+    return render(request, "production/xid_machine_config.html", {
+        "machine": machine,
+        "machine_cfg": machine_cfg,
+        "is_new_config": is_new_config,
+        "form": form,
+        "formset": formset,
+        "prev_machine": prev_machine,
+        "next_machine": next_machine,
+        "duplicates_map": duplicates_map,
+        "machine_fields_defs": XIDRegistry.get_machine_fields(),
+        "cavity_fields_defs": XIDRegistry.get_cavity_fields(),
+    })
+
+
+@superuser_required
+def xid_global_config(request):
+    """
+    Gestão de Parâmetros Globais e Alarmes Globais do Scada-LTS.
+    Permite cadastrar, visualizar e editar variáveis de telemetria geral da fábrica.
+    """
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+
+        if action == "save_param":
+            param_id = request.POST.get("param_id")
+            instance = get_object_or_404(ProductionGlobalParameter, pk=param_id) if param_id else None
+            form = ProductionGlobalParameterForm(request.POST, instance=instance)
+            if form.is_valid():
+                with transaction.atomic(using="default"):
+                    form.save()
+                    scada_reader.clear_caches()
+                messages.success(request, f"Parâmetro Global '{form.cleaned_data['nome']}' salvo com sucesso!")
+                return redirect("production:xid_global_config")
+            else:
+                messages.error(request, f"Erro ao salvar parâmetro global: {form.errors.as_text()}")
+
+        elif action == "save_alarm":
+            alarm_id = request.POST.get("alarm_id")
+            instance = get_object_or_404(ProductionGlobalAlarm, pk=alarm_id) if alarm_id else None
+            form = ProductionGlobalAlarmForm(request.POST, instance=instance)
+            if form.is_valid():
+                with transaction.atomic(using="default"):
+                    form.save()
+                    scada_reader.clear_caches()
+                messages.success(request, f"Alarme Global '{form.cleaned_data['nome']}' salvo com sucesso!")
+                return redirect("production:xid_global_config")
+            else:
+                messages.error(request, f"Erro ao salvar alarme global: {form.errors.as_text()}")
+
+    global_params = list(ProductionGlobalParameter.objects.all().order_by("ordem", "nome"))
+    global_alarms = list(ProductionGlobalAlarm.objects.all().order_by("ordem", "nome"))
+    param_form = ProductionGlobalParameterForm()
+    alarm_form = ProductionGlobalAlarmForm()
+
+    return render(request, "production/xid_global_config.html", {
+        "global_params": global_params,
+        "global_alarms": global_alarms,
+        "param_form": param_form,
+        "alarm_form": alarm_form,
+    })
+
+
+@superuser_required
+def xid_test_api(request):
+    """
+    Endpoint assíncrono interno para teste e leitura em tempo real de um XID no Scada-LTS.
+    Segurança:
+    - Exclusivo para superusuários (via @superuser_required).
+    - Método POST obrigatório.
+    - CSRF verificado.
+    - Estritamente somente-leitura.
+    """
+    if request.method != "POST":
+        return JsonResponse(
+            {"success": False, "error": "Método não permitido. Utilize POST."},
+            status=405
+        )
+
+    xid_val = ""
+    if request.content_type == "application/json":
+        try:
+            body_data = json.loads(request.body.decode("utf-8"))
+            xid_val = body_data.get("xid", "")
+        except Exception:
+            return JsonResponse(
+                {"success": False, "error": "Payload JSON inválido."},
+                status=400
+            )
+    else:
+        xid_val = request.POST.get("xid", "")
+
+    result = XIDTestService.test_single_xid(xid_val)
+    return JsonResponse(result)
+
 
 
 

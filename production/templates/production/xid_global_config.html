@@ -1,0 +1,401 @@
+{% extends "production/base_production.html" %}
+{% load static %}
+
+{% block title %}Parâmetros & Alarmes Globais - Central SCADA{% endblock %}
+
+{% block extra_css %}
+<style>
+    .global-nav-tabs .nav-link {
+        color: #64748B;
+        font-weight: 600;
+        border: none;
+        border-bottom: 3px solid transparent;
+        padding: 0.75rem 1.25rem;
+        transition: all 0.2s ease;
+    }
+    .global-nav-tabs .nav-link.active {
+        color: #D19C3E;
+        border-bottom-color: #D19C3E;
+        background: transparent;
+    }
+    .table-globals th {
+        background-color: #F8FAFC;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #475569;
+        font-weight: 700;
+        border-bottom: 2px solid #E2E8F0;
+    }
+    .table-globals td {
+        vertical-align: middle;
+        font-size: 0.88rem;
+    }
+    .xid-inline-test-result {
+        font-size: 0.75rem;
+        display: inline-block;
+        margin-left: 6px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4 px-3 px-md-4">
+
+    <!-- Header Section -->
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-start align-items-md-center gap-3 mb-4">
+        <div>
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb mb-1 small">
+                    <li class="breadcrumb-item"><a href="{% url 'production:dashboard' %}" class="text-decoration-none">Produção</a></li>
+                    <li class="breadcrumb-item"><a href="{% url 'production:xid_config_dashboard' %}" class="text-decoration-none">Central SCADA</a></li>
+                    <li class="breadcrumb-item active" aria-current="page">Variáveis Globais</li>
+                </ol>
+            </nav>
+            <h2 class="h3 fw-bold text-dark mb-0">
+                <i class="bi bi-globe2 text-warning me-2"></i>Parâmetros &amp; Alarmes Globais
+            </h2>
+            <p class="text-muted small mb-0 mt-1">
+                Cadastro e telemetria de utilidades globais da fábrica (vapor, ar comprimido, vácuo, alarmes gerais).
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{% url 'production:xid_config_dashboard' %}" class="btn btn-outline-dark d-flex align-items-center gap-2">
+                <i class="bi bi-arrow-left"></i>
+                <span>Voltar para Central</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Nav Tabs (Parâmetros vs Alarmes) -->
+    <ul class="nav global-nav-tabs border-bottom mb-4" id="globalsTab" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active d-flex align-items-center gap-2" id="params-tab" data-bs-toggle="tab" data-bs-target="#params-pane" type="button" role="tab" aria-controls="params-pane" aria-selected="true">
+                <i class="bi bi-speedometer"></i>
+                <span>Parâmetros Globais ({{ global_params|length }})</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link d-flex align-items-center gap-2" id="alarms-tab" data-bs-toggle="tab" data-bs-target="#alarms-pane" type="button" role="tab" aria-controls="alarms-pane" aria-selected="false">
+                <i class="bi bi-bell-fill"></i>
+                <span>Alarmes Globais ({{ global_alarms|length }})</span>
+            </button>
+        </li>
+    </ul>
+
+    <!-- Tab Content -->
+    <div class="tab-content" id="globalsTabContent">
+
+        <!-- ══════════════════════════════════════════════════════════
+             ABA 1: PARÂMETROS GLOBAIS
+        ══════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade show active" id="params-pane" role="tabpanel" aria-labelledby="params-tab" tabindex="0">
+            <div class="card card-custom p-3 p-md-4 mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Parâmetros Globais de Telemetria</h5>
+                        <span class="text-muted small">Variáveis de monitoramento contínuo no Scada-LTS.</span>
+                    </div>
+                    <button type="button" class="btn btn-primary-custom fw-bold d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#modalParam" onclick="openParamModal('', '', '', '', '0')">
+                        <i class="bi bi-plus-circle-fill"></i>
+                        <span>Novo Parâmetro</span>
+                    </button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover table-globals align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width: 60px;">Ordem</th>
+                                <th>Nome do Parâmetro</th>
+                                <th>Chave Única</th>
+                                <th>Unidade</th>
+                                <th>XID no Scada-LTS</th>
+                                <th style="width: 140px;" class="text-center">Teste Scada</th>
+                                <th style="width: 100px;" class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in global_params %}
+                            <tr>
+                                <td class="fw-bold text-muted">{{ p.ordem }}</td>
+                                <td>
+                                    <span class="fw-bold text-dark">{{ p.nome }}</span>
+                                </td>
+                                <td><code>{{ p.chave }}</code></td>
+                                <td>
+                                    {% if p.unidade %}
+                                    <span class="badge bg-light text-dark border">{{ p.unidade }}</span>
+                                    {% else %}
+                                    <span class="text-muted small">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if p.xid %}
+                                    <code class="fw-bold text-primary">{{ p.xid }}</code>
+                                    {% else %}
+                                    <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25">Pendente</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if p.xid %}
+                                    <button type="button" class="btn btn-sm btn-outline-secondary btn-test-global" data-xid="{{ p.xid }}" id="btn_test_p_{{ p.pk }}" title="Testar leitura no Scada">
+                                        <i class="bi bi-search"></i> Testar
+                                    </button>
+                                    <div id="res_p_{{ p.pk }}" class="small mt-1"></div>
+                                    {% else %}
+                                    <span class="text-muted small">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <button type="button" class="btn btn-sm btn-outline-dark" onclick="openParamModal('{{ p.pk }}', '{{ p.nome|escapejs }}', '{{ p.chave|escapejs }}', '{{ p.xid|default:''|escapejs }}', '{{ p.unidade|default:''|escapejs }}', '{{ p.ordem }}')">
+                                        <i class="bi bi-pencil-fill"></i> Editar
+                                    </button>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="7" class="text-center py-4 text-muted">
+                                    Nenhum parâmetro global cadastrado até o momento.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════════
+             ABA 2: ALARMES GLOBAIS
+        ══════════════════════════════════════════════════════════ -->
+        <div class="tab-pane fade" id="alarms-pane" role="tabpanel" aria-labelledby="alarms-tab" tabindex="0">
+            <div class="card card-custom p-3 p-md-4 mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h5 class="fw-bold text-dark mb-0">Alarmes Globais da Planta</h5>
+                        <span class="text-muted small">Pontos de alarme de utilidades mapeados no Scada-LTS.</span>
+                    </div>
+                    <button type="button" class="btn btn-primary-custom fw-bold d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#modalAlarm" onclick="openAlarmModal('', '', '', '', '0')">
+                        <i class="bi bi-plus-circle-fill"></i>
+                        <span>Novo Alarme</span>
+                    </button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-hover table-globals align-middle">
+                        <thead>
+                            <tr>
+                                <th style="width: 60px;">Ordem</th>
+                                <th>Nome do Alarme</th>
+                                <th>Chave Única</th>
+                                <th>XID no Scada-LTS</th>
+                                <th style="width: 140px;" class="text-center">Teste Scada</th>
+                                <th style="width: 100px;" class="text-end">Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for a in global_alarms %}
+                            <tr>
+                                <td class="fw-bold text-muted">{{ a.ordem }}</td>
+                                <td>
+                                    <span class="fw-bold text-dark">{{ a.nome }}</span>
+                                </td>
+                                <td><code>{{ a.chave }}</code></td>
+                                <td>
+                                    {% if a.xid %}
+                                    <code class="fw-bold text-danger">{{ a.xid }}</code>
+                                    {% else %}
+                                    <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25">Pendente</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if a.xid %}
+                                    <button type="button" class="btn btn-sm btn-outline-secondary btn-test-global" data-xid="{{ a.xid }}" id="btn_test_a_{{ a.pk }}" title="Testar leitura no Scada">
+                                        <i class="bi bi-search"></i> Testar
+                                    </button>
+                                    <div id="res_a_{{ a.pk }}" class="small mt-1"></div>
+                                    {% else %}
+                                    <span class="text-muted small">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-end">
+                                    <button type="button" class="btn btn-sm btn-outline-dark" onclick="openAlarmModal('{{ a.pk }}', '{{ a.nome|escapejs }}', '{{ a.chave|escapejs }}', '{{ a.xid|default:''|escapejs }}', '{{ a.ordem }}')">
+                                        <i class="bi bi-pencil-fill"></i> Editar
+                                    </button>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="6" class="text-center py-4 text-muted">
+                                    Nenhum alarme global cadastrado até o momento.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODAL: PARÂMETRO GLOBAL
+══════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalParam" tabindex="-1" aria-labelledby="modalParamLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_param">
+            <input type="hidden" name="param_id" id="modal_param_id" value="">
+
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="modalParamLabel">Parâmetro Global</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Nome do Parâmetro <span class="text-danger">*</span></label>
+                    <input type="text" name="nome" id="modal_param_nome" class="form-control" required placeholder="Ex: Pressão de Vácuo">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Chave Única <span class="text-danger">*</span></label>
+                    <input type="text" name="chave" id="modal_param_chave" class="form-control" required placeholder="Ex: pressao_vacuo">
+                    <div class="form-text small">Identificador único no sistema (letras minúsculas e underline).</div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-8">
+                        <label class="form-label small fw-bold">XID no Scada-LTS</label>
+                        <input type="text" name="xid" id="modal_param_xid" class="form-control" placeholder="Ex: DP_VACUO_GERAL">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small fw-bold">Unidade</label>
+                        <input type="text" name="unidade" id="modal_param_unidade" class="form-control" placeholder="Ex: bar, °C">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Ordem de Exibição</label>
+                    <input type="number" name="ordem" id="modal_param_ordem" class="form-control" value="0" min="0">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light border" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-primary-custom fw-bold">Salvar Parâmetro</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════
+     MODAL: ALARME GLOBAL
+══════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalAlarm" tabindex="-1" aria-labelledby="modalAlarmLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="post" class="modal-content">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="save_alarm">
+            <input type="hidden" name="alarm_id" id="modal_alarm_id" value="">
+
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="modalAlarmLabel">Alarme Global</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Nome do Alarme <span class="text-danger">*</span></label>
+                    <input type="text" name="nome" id="modal_alarm_nome" class="form-control" required placeholder="Ex: Falha de Vácuo">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label small fw-bold">Chave Única <span class="text-danger">*</span></label>
+                    <input type="text" name="chave" id="modal_alarm_chave" class="form-control" required placeholder="Ex: alarme_falha_vacuo">
+                    <div class="form-text small">Identificador único no sistema (letras minúsculas e underline).</div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-8">
+                        <label class="form-label small fw-bold">XID no Scada-LTS</label>
+                        <input type="text" name="xid" id="modal_alarm_xid" class="form-control" placeholder="Ex: DP_ALARME_VACUO">
+                    </div>
+                    <div class="col-4">
+                        <label class="form-label small fw-bold">Ordem</label>
+                        <input type="number" name="ordem" id="modal_alarm_ordem" class="form-control" value="0" min="0">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light border" data-bs-dismiss="modal">Cancelar</button>
+                <button type="submit" class="btn btn-primary-custom fw-bold">Salvar Alarme</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+function openParamModal(id, nome, chave, xid, unidade, ordem) {
+    document.getElementById("modal_param_id").value = id || "";
+    document.getElementById("modal_param_nome").value = nome || "";
+    document.getElementById("modal_param_chave").value = chave || "";
+    document.getElementById("modal_param_xid").value = xid || "";
+    document.getElementById("modal_param_unidade").value = unidade || "";
+    document.getElementById("modal_param_ordem").value = ordem || "0";
+    document.getElementById("modalParamLabel").innerText = id ? "Editar Parâmetro Global" : "Novo Parâmetro Global";
+}
+
+function openAlarmModal(id, nome, chave, xid, ordem) {
+    document.getElementById("modal_alarm_id").value = id || "";
+    document.getElementById("modal_alarm_nome").value = nome || "";
+    document.getElementById("modal_alarm_chave").value = chave || "";
+    document.getElementById("modal_alarm_xid").value = xid || "";
+    document.getElementById("modal_alarm_ordem").value = ordem || "0";
+    document.getElementById("modalAlarmLabel").innerText = id ? "Editar Alarme Global" : "Novo Alarme Global";
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+    const testApiUrl = "{% url 'production:xid_test_api' %}";
+    const csrfToken = document.querySelector("[name=csrfmiddlewaretoken]") ? document.querySelector("[name=csrfmiddlewaretoken]").value : "";
+
+    document.querySelectorAll(".btn-test-global").forEach(btn => {
+        btn.addEventListener("click", function(e) {
+            e.preventDefault();
+            const xid = this.getAttribute("data-xid");
+            const resDiv = this.parentElement.querySelector("div");
+            if (!xid || !resDiv) return;
+
+            resDiv.innerHTML = '<span class="text-muted"><span class="spinner-border spinner-border-sm"></span></span>';
+            btn.disabled = true;
+
+            fetch(testApiUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": csrfToken,
+                    "X-Requested-With": "XMLHttpRequest"
+                },
+                body: JSON.stringify({ xid: xid })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.success && data.status === "OK") {
+                    resDiv.innerHTML = `<span class="badge bg-success">✓ ${data.str_value}</span> <span class="text-muted" style="font-size:0.7rem;">(${data.formatted_time})</span>`;
+                } else if (data.status === "NOT_FOUND") {
+                    resDiv.innerHTML = `<span class="badge bg-danger">Não localizado</span>`;
+                } else if (data.status === "SCADA_OFFLINE") {
+                    resDiv.innerHTML = `<span class="badge bg-warning text-dark">Scada offline</span>`;
+                } else {
+                    resDiv.innerHTML = `<span class="badge bg-secondary">${data.message || 'Sem dados'}</span>`;
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                resDiv.innerHTML = `<span class="badge bg-danger">Erro de rede</span>`;
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

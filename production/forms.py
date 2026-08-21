@@ -147,4 +147,247 @@ class ProductionPCPPlanForm(forms.ModelForm):
         return cav
 
 
+# ==============================================================================
+# FORMULÁRIOS DA CENTRAL DE CONFIGURAÇÃO SCADA / XIDs
+# ==============================================================================
+
+class ProductionMachineConfigForm(forms.ModelForm):
+    """
+    Formulário para edição da configuração de máquina/prensa no Scada-LTS.
+    """
+    class Meta:
+        from .models import ProductionMachineConfig
+        model = ProductionMachineConfig
+        fields = [
+            "ordem_exibicao",
+            "stale_limit_seconds",
+            "produzindo_value",
+            "xid_status_prensa",
+            "xid_abertura",
+            "xid_motivo_parada_geral",
+        ]
+        widgets = {
+            "ordem_exibicao": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+            "stale_limit_seconds": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+            "produzindo_value": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: 1 ou true"}),
+            "xid_status_prensa": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_STATUS"}),
+            "xid_abertura": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_ABERTURA"}),
+            "xid_motivo_parada_geral": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_MOTIVO"}),
+        }
+
+    def clean_stale_limit_seconds(self):
+        val = self.cleaned_data.get("stale_limit_seconds")
+        if val is None or val < 1:
+            raise ValidationError("O limite para dado desatualizado deve ser de pelo menos 1 segundo.")
+        return val
+
+    def clean_produzindo_value(self):
+        val = self.cleaned_data.get("produzindo_value", "1")
+        if not val or not str(val).strip():
+            return "1"
+        return str(val).strip()
+
+    def clean_xid_status_prensa(self):
+        val = self.cleaned_data.get("xid_status_prensa")
+        return str(val).strip() if val else None
+
+    def clean_xid_abertura(self):
+        val = self.cleaned_data.get("xid_abertura")
+        return str(val).strip() if val else None
+
+    def clean_xid_motivo_parada_geral(self):
+        val = self.cleaned_data.get("xid_motivo_parada_geral")
+        return str(val).strip() if val else None
+
+
+class ProductionCavityConfigForm(forms.ModelForm):
+    """
+    Formulário para configuração individual de cada cavidade de uma prensa.
+    """
+    class Meta:
+        from .models import ProductionCavityConfig
+        model = ProductionCavityConfig
+        fields = [
+            "nome",
+            "ordem",
+            "xid_producao",
+            "xid_motivo_parada",
+            "xid_matriz",
+            "xid_produto",
+            "xid_lote_bladder",
+            "xid_bla_real",
+            "xid_meta",
+            "xid_motivo_troca_bladder",
+        ]
+        widgets = {
+            "nome": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: Cavidade 1"}),
+            "ordem": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+            "xid_producao": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_PROD"}),
+            "xid_motivo_parada": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_MOTIVO"}),
+            "xid_matriz": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_MATRIZ"}),
+            "xid_produto": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_PROD_PREFIX"}),
+            "xid_lote_bladder": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_LOTE_NUM"}),
+            "xid_bla_real": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_BLA"}),
+            "xid_meta": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_META"}),
+            "xid_motivo_troca_bladder": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_PR01_C1_MOTIVO_TROCA"}),
+        }
+
+    def clean_nome(self):
+        nome = self.cleaned_data.get("nome", "").strip()
+        if not nome:
+            raise ValidationError("O nome da cavidade é obrigatório.")
+        return nome
+
+    def clean_ordem(self):
+        ordem = self.cleaned_data.get("ordem")
+        if ordem is None or ordem < 1:
+            raise ValidationError("A ordem de exibição deve ser no mínimo 1.")
+        return ordem
+
+    def clean_xid_producao(self):
+        val = self.cleaned_data.get("xid_producao")
+        return str(val).strip() if val else None
+
+    def clean_xid_motivo_parada(self):
+        val = self.cleaned_data.get("xid_motivo_parada")
+        return str(val).strip() if val else None
+
+    def clean_xid_matriz(self):
+        val = self.cleaned_data.get("xid_matriz")
+        return str(val).strip() if val else None
+
+    def clean_xid_produto(self):
+        val = self.cleaned_data.get("xid_produto")
+        return str(val).strip() if val else None
+
+    def clean_xid_lote_bladder(self):
+        val = self.cleaned_data.get("xid_lote_bladder")
+        return str(val).strip() if val else None
+
+    def clean_xid_bla_real(self):
+        val = self.cleaned_data.get("xid_bla_real")
+        return str(val).strip() if val else None
+
+    def clean_xid_meta(self):
+        val = self.cleaned_data.get("xid_meta")
+        return str(val).strip() if val else None
+
+    def clean_xid_motivo_troca_bladder(self):
+        val = self.cleaned_data.get("xid_motivo_troca_bladder")
+        return str(val).strip() if val else None
+
+
+class BaseProductionCavityConfigFormSet(forms.BaseInlineFormSet):
+    """
+    Formset customizado para validação de unicidade de nomes e ordens entre cavidades da mesma máquina.
+    """
+    def clean(self):
+        super().clean()
+        if any(self.errors):
+            return
+
+        names = set()
+        orders = set()
+
+        for form in self.forms:
+            if not form.cleaned_data or form.cleaned_data.get("DELETE", False):
+                continue
+
+            nome = form.cleaned_data.get("nome")
+            ordem = form.cleaned_data.get("ordem")
+
+            if nome:
+                norm_nome = nome.strip().lower()
+                if norm_nome in names:
+                    raise ValidationError(f"Existe mais de uma cavidade com o nome '{nome}' nesta máquina.")
+                names.add(norm_nome)
+
+            if ordem:
+                if ordem in orders:
+                    raise ValidationError(f"Existe mais de uma cavidade com a ordem {ordem} nesta máquina.")
+                orders.add(ordem)
+
+
+def get_cavity_formset(extra=0):
+    from .models import ProductionMachineConfig, ProductionCavityConfig
+    return forms.inlineformset_factory(
+        ProductionMachineConfig,
+        ProductionCavityConfig,
+        form=ProductionCavityConfigForm,
+        formset=BaseProductionCavityConfigFormSet,
+        extra=extra,
+        can_delete=False,
+    )
+
+
+class ProductionGlobalParameterForm(forms.ModelForm):
+    """
+    Formulário para cadastro e edição de parâmetros globais do Scada-LTS.
+    """
+    class Meta:
+        from .models import ProductionGlobalParameter
+        model = ProductionGlobalParameter
+        fields = ["nome", "chave", "xid", "unidade", "ordem"]
+        widgets = {
+            "nome": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: Pressão de Vácuo"}),
+            "chave": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: pressao_vacuo"}),
+            "xid": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_VACUO_GERAL"}),
+            "unidade": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: bar, mmHg, °C"}),
+            "ordem": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        }
+
+    def clean_nome(self):
+        nome = self.cleaned_data.get("nome", "").strip()
+        if not nome:
+            raise ValidationError("O nome do parâmetro é obrigatório.")
+        return nome
+
+    def clean_chave(self):
+        chave = self.cleaned_data.get("chave", "").strip()
+        if not chave:
+            raise ValidationError("A chave única é obrigatória.")
+        return chave.lower().replace(" ", "_")
+
+    def clean_xid(self):
+        val = self.cleaned_data.get("xid")
+        return str(val).strip() if val else None
+
+    def clean_unidade(self):
+        val = self.cleaned_data.get("unidade")
+        return str(val).strip() if val else None
+
+
+class ProductionGlobalAlarmForm(forms.ModelForm):
+    """
+    Formulário para cadastro e edição de alarmes globais do Scada-LTS.
+    """
+    class Meta:
+        from .models import ProductionGlobalAlarm
+        model = ProductionGlobalAlarm
+        fields = ["nome", "chave", "xid", "ordem"]
+        widgets = {
+            "nome": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: Alarme Falha de Vácuo"}),
+            "chave": forms.TextInput(attrs={"class": "form-control", "placeholder": "Ex: alarme_falha_vacuo"}),
+            "xid": forms.TextInput(attrs={"class": "form-control xid-input", "placeholder": "Ex: DP_ALARME_VACUO"}),
+            "ordem": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        }
+
+    def clean_nome(self):
+        nome = self.cleaned_data.get("nome", "").strip()
+        if not nome:
+            raise ValidationError("O nome do alarme é obrigatório.")
+        return nome
+
+    def clean_chave(self):
+        chave = self.cleaned_data.get("chave", "").strip()
+        if not chave:
+            raise ValidationError("A chave única é obrigatória.")
+        return chave.lower().replace(" ", "_")
+
+    def clean_xid(self):
+        val = self.cleaned_data.get("xid")
+        return str(val).strip() if val else None
+
+
+
 

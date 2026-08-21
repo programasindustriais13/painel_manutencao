@@ -24,5 +24,11 @@ urlpatterns = [
     path("pcp/<int:pk>/cancelar/", views.pcp_plan_cancel, name="pcp_plan_cancel"),
     path("pcp/<int:pk>/excluir/", views.pcp_plan_delete, name="pcp_plan_delete"),
     path("pcp/api/calcular/", views.pcp_api_calculate, name="pcp_api_calculate"),
+    # Central de Configuração SCADA e Cadastro Organizado de XIDs
+    path("configuracao-scada/", views.xid_config_dashboard, name="xid_config_dashboard"),
+    path("configuracao-scada/maquinas/<int:pk>/", views.xid_machine_config, name="xid_machine_config"),
+    path("configuracao-scada/globais/", views.xid_global_config, name="xid_global_config"),
+    path("configuracao-scada/api/testar-xid/", views.xid_test_api, name="xid_test_api"),
 ]
+
 

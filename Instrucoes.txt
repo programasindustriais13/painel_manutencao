@@ -2943,6 +2943,51 @@ Detalhamento Técnico:
 4. Suporte a Sincronização Sob Demanda:
    - O indicador de status no cabeçalho é interativo: um clique sobre '↻ 10s' dispara a sincronização imediata sem esperar o ciclo do temporizador.
 
+================================================================================
+CENTRAL DE CONFIGURAÇÃO SCADA E CADASTRO ORGANIZADO DE XIDs (SUPERUSER ONLY)
+================================================================================
+
+Objetivo:
+Centralizar e estruturar em uma interface única, auditável e segura a configuração e mapeamento de todos os pontos de telemetria (XIDs) do Scada-LTS para máquinas/prensas, cavidades e variáveis globais da planta de produção, eliminando a dependência do painel Django Admin para manutenção diária de telemetria.
+
+Arquitetura e Segurança:
+1. Controle de Acesso Estrito:
+   - Exclusivo para usuários com `request.user.is_superuser is True` (via decorator `@superuser_required`).
+   - Requisições HTML de usuários não autorizados são redirecionadas com mensagem de erro para o dashboard de produção.
+   - Requisições assíncronas / API de usuários não autorizados recebem HTTP 403 com payload JSON formatado.
+2. Integridade de Banco de Dados e ScadaRouter:
+   - Zero novas migrações: utiliza estritamente os modelos existentes no banco `default`.
+   - Todas as operações de gravação ocorrem exclusivamente no alias `default` dentro de `transaction.atomic()`.
+   - O Scada-LTS (`scada`) permanece 100% somente-leitura.
+   - Limpeza automática de caches de resolução do `ScadaReaderService` (`scada_reader.clear_caches()`) após cada salvamento.
+3. Resiliência Operacional:
+   - Quedas de conexão ou instabilidades no Scada-LTS não geram erros HTTP 500 nem impedem a gravação local das configurações.
+   - O serviço de teste (`XIDTestService`) captura exceções de rede e retorna status informativos amigáveis (`SCADA_OFFLINE`, `NOT_FOUND`, `NO_READINGS`, `OK`).
+
+Rotas Registradas (/producao/configuracao-scada/):
+- `/producao/configuracao-scada/` (name: `xid_config_dashboard`): Painel geral com KPIs de cobertura, detecção de duplicidades, diagnósticos de pendências e filtros por status.
+- `/producao/configuracao-scada/maquinas/<pk>/` (name: `xid_machine_config`): Configuração individual da prensa e suas cavidades com formulário atômico, formset e botões inline de teste de leitura em tempo real.
+- `/producao/configuracao-scada/globais/` (name: `xid_global_config`): Cadastro e gestão de parâmetros globais e alarmes globais de utilidades industriais.
+- `/producao/configuracao-scada/api/testar-xid/` (name: `xid_test_api`): Endpoint assíncrono interno para teste e consulta de leitura de XIDs diretamente no Scada-LTS.
+
+Arquivos Criados / Modificados:
+- `production/xid_configuration.py`: Módulo contendo `XIDRegistry` (catálogo canônico de XIDs), `XIDDiagnosticsService` (motor de auditoria e cálculo de completude) e `XIDTestService` (leitura em tempo real).
+- `production/forms.py`: Formulários especializados `ProductionMachineConfigForm`, `ProductionCavityConfigForm`, `BaseProductionCavityConfigFormSet`, `ProductionGlobalParameterForm` e `ProductionGlobalAlarmForm` com normalização `.strip()` nos XIDs.
+- `production/views.py`: Views protegidas com `@superuser_required` e persistência atômica.
+- `production/urls.py`: Registro das 4 rotas no namespace `production`.
+- `production/templates/production/xid_config_dashboard.html`: Template do painel de diagnóstico geral.
+- `production/templates/production/xid_machine_config.html`: Template de configuração da máquina e cavidades com teste inline e barra de ações fixa.
+- `production/templates/production/xid_global_config.html`: Template com abas para parâmetros e alarmes globais.
+- `production/templates/production/base_production.html`: Link "Configuração SCADA" adicionado na barra lateral desktop e mobile para superusuários.
+- `production/test_xid_configuration.py`: Suíte de 17 testes automatizados cobrindo matriz de permissões (8 perfis), auditoria, atomicidade, mock de testes e metateste de exaustividade de inventário de XIDs.
+- `regras_programacao/SPEC_CENTRAL_CONFIGURACAO_SCADA_XIDS.md`: Especificação técnica formal da funcionalidade.
+
+Resumo de Testes Automatizados:
+- `production/test_xid_configuration.py`: 17 testes (100% OK).
+- `production` (todos os testes): 210 testes (100% OK).
+- Total de Testes do Projeto: 271 testes com 100% de sucesso.
+
+
 
 
 

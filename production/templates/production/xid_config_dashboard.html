@@ -1,0 +1,394 @@
+{% extends "production/base_production.html" %}
+{% load static %}
+
+{% block title %}Central de Configuração SCADA - Pneus Freedom{% endblock %}
+
+{% block extra_css %}
+<style>
+    .scada-header-box {
+        background: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .kpi-card-xid {
+        background: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        padding: 1.25rem 1rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .kpi-card-xid:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    .kpi-icon-circle {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        flex-shrink: 0;
+    }
+    .machine-config-card {
+        background: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+        transition: all 0.2s ease;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        height: 100%;
+        min-height: 290px;
+        padding: 1.25rem;
+        position: relative;
+    }
+    .machine-config-card:hover {
+        border-color: #CBD5E1;
+        box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+    }
+    .machine-config-card.is-complete {
+        border-left: 5px solid #10B981;
+    }
+    .machine-config-card.is-incomplete {
+        border-left: 5px solid #F59E0B;
+    }
+    .machine-config-card.is-unconfigured {
+        border-left: 5px solid #EF4444;
+    }
+    .machine-card-content {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+    }
+    .machine-card-footer {
+        flex-shrink: 0;
+        margin-top: 1rem;
+        padding-top: 0.85rem;
+        border-top: 1px solid #F1F5F9;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    .progress-xid {
+        height: 8px;
+        border-radius: 6px;
+        background-color: #E2E8F0;
+        overflow: hidden;
+    }
+    .badge-missing-item {
+        font-size: 0.73rem;
+        background-color: #FEF3C7;
+        color: #92400E;
+        border: 1px solid #FDE68A;
+        border-radius: 6px;
+        padding: 3px 8px;
+        margin: 2px;
+        display: inline-block;
+    }
+    .badge-duplicate-alert {
+        font-size: 0.73rem;
+        background-color: #FEE2E2;
+        color: #991B1B;
+        border: 1px solid #FECACA;
+        border-radius: 6px;
+        padding: 3px 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .filter-btn-group .btn {
+        border-radius: 8px;
+        font-size: 0.83rem;
+        font-weight: 600;
+        padding: 6px 12px;
+    }
+    .sector-nav-pills .nav-link {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #475569;
+        border-radius: 8px;
+        padding: 6px 14px;
+        border: 1px solid transparent;
+        transition: all 0.2s ease;
+    }
+    .sector-nav-pills .nav-link.active {
+        background-color: #0F172A;
+        color: #F8FAFC;
+    }
+    .sector-nav-pills .nav-link:hover:not(.active) {
+        background-color: #F1F5F9;
+        border-color: #CBD5E1;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3 px-3 px-md-4">
+
+    <!-- Header Box Section -->
+    <div class="scada-header-box">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-start align-items-lg-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="badge bg-dark text-warning border border-warning px-2 py-1" style="font-size: 0.72rem;">
+                        <i class="bi bi-shield-lock-fill"></i> RESTRITO SUPERUSER
+                    </span>
+                    <span class="text-muted small">Módulo de Produção &bull; Telemetria Industrial</span>
+                </div>
+                <h2 class="h3 fw-bold text-dark mb-1">
+                    <i class="bi bi-sliders text-warning me-2"></i>Central de Configuração SCADA
+                </h2>
+                <p class="text-muted small mb-0">
+                    Gerenciamento, auditoria de integridade e teste em tempo real de todos os XIDs mapeados no Scada-LTS.
+                </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'production:xid_global_config' %}" class="btn btn-outline-dark fw-bold d-flex align-items-center gap-2">
+                    <i class="bi bi-globe"></i>
+                    <span>Parâmetros &amp; Alarmes Globais</span>
+                </a>
+                <a href="{% url 'production:dashboard' %}" class="btn btn-light border text-muted d-flex align-items-center gap-1">
+                    <i class="bi bi-arrow-left"></i>
+                    <span>Voltar ao Dashboard</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- KPIs Row -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3">
+            <div class="kpi-card-xid h-100 d-flex align-items-center gap-3">
+                <div class="kpi-icon-circle bg-primary bg-opacity-10 text-primary">
+                    <i class="bi bi-cpu-fill"></i>
+                </div>
+                <div>
+                    <span class="text-muted small d-block">Total de XIDs Esperados</span>
+                    <span class="fs-4 fw-bold text-dark">{{ diagnostics.total_expected_xids }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="kpi-card-xid h-100 d-flex align-items-center gap-3">
+                <div class="kpi-icon-circle bg-success bg-opacity-10 text-success">
+                    <i class="bi bi-check-circle-fill"></i>
+                </div>
+                <div>
+                    <span class="text-muted small d-block">XIDs Configurados</span>
+                    <div class="d-flex align-items-baseline gap-2">
+                        <span class="fs-4 fw-bold text-dark">{{ diagnostics.total_filled_xids }}</span>
+                        <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size: 0.75rem;">
+                            {{ diagnostics.overall_percent }}%
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="kpi-card-xid h-100 d-flex align-items-center gap-3">
+                <div class="kpi-icon-circle bg-warning bg-opacity-10 text-warning">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                </div>
+                <div>
+                    <span class="text-muted small d-block">XIDs Pendentes</span>
+                    <span class="fs-4 fw-bold text-dark">{{ diagnostics.total_missing_xids }}</span>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-lg-3">
+            <div class="kpi-card-xid h-100 d-flex align-items-center gap-3">
+                <div class="kpi-icon-circle {% if diagnostics.duplicates_count > 0 %}bg-danger bg-opacity-10 text-danger{% else %}bg-secondary bg-opacity-10 text-secondary{% endif %}">
+                    <i class="bi bi-intersect"></i>
+                </div>
+                <div>
+                    <span class="text-muted small d-block">Possíveis Duplicidades</span>
+                    <span class="fs-4 fw-bold {% if diagnostics.duplicates_count > 0 %}text-danger{% else %}text-muted{% endif %}">
+                        {{ diagnostics.duplicates_count }}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters & Search Toolbar -->
+    <div class="card card-custom p-3 mb-4">
+        
+        <!-- Sector Selector Pills -->
+        <div class="d-flex flex-wrap gap-2 align-items-center border-bottom pb-3 mb-3">
+            <span class="text-muted small fw-bold text-uppercase me-2" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                <i class="bi bi-funnel-fill"></i> Filtrar Setor:
+            </span>
+            <ul class="nav sector-nav-pills gap-1">
+                <li class="nav-item">
+                    <a href="?sector=vulcanizacao{% if q %}&q={{ q }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" class="nav-link {% if sector_filter == 'vulcanizacao' %}active{% endif %}">
+                        <i class="bi bi-fire me-1"></i> Prensas de Vulcanização ({{ diagnostics.vulcanizacao_count }})
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="?sector=all{% if q %}&q={{ q }}{% endif %}{% if status_filter %}&status={{ status_filter }}{% endif %}" class="nav-link {% if sector_filter == 'all' %}active{% endif %}">
+                        <i class="bi bi-building me-1"></i> Todas as Máquinas da Fábrica ({{ diagnostics.total_factory_machines }})
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Search and Status Filter Row -->
+        <form method="get" class="row g-2 align-items-center">
+            <input type="hidden" name="sector" value="{{ sector_filter }}">
+            <div class="col-12 col-md-5 col-lg-5">
+                <div class="input-group">
+                    <span class="input-group-text bg-light border-end-0"><i class="bi bi-search text-muted"></i></span>
+                    <input type="text" name="q" value="{{ q }}" class="form-control border-start-0 bg-light" placeholder="Buscar por prensa, cavidade ou XID..." autocomplete="off">
+                </div>
+            </div>
+            <div class="col-12 col-md-7 col-lg-7">
+                <div class="d-flex flex-wrap gap-1 justify-content-md-end filter-btn-group">
+                    <a href="?sector={{ sector_filter }}&status=all{% if q %}&q={{ q }}{% endif %}" class="btn {% if status_filter == 'all' or not status_filter %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+                        Todas ({{ diagnostics.all_machines_count }})
+                    </a>
+                    <a href="?sector={{ sector_filter }}&status=incomplete{% if q %}&q={{ q }}{% endif %}" class="btn {% if status_filter == 'incomplete' %}btn-warning text-dark{% else %}btn-outline-warning text-dark{% endif %}">
+                        Incompletas ({{ diagnostics.incomplete_count }})
+                    </a>
+                    <a href="?sector={{ sector_filter }}&status=complete{% if q %}&q={{ q }}{% endif %}" class="btn {% if status_filter == 'complete' %}btn-success{% else %}btn-outline-success{% endif %}">
+                        Completas ({{ diagnostics.complete_count }})
+                    </a>
+                    {% if diagnostics.issues_count > 0 %}
+                    <a href="?sector={{ sector_filter }}&status=issues{% if q %}&q={{ q }}{% endif %}" class="btn {% if status_filter == 'issues' %}btn-danger{% else %}btn-outline-danger{% endif %}">
+                        Alertas ({{ diagnostics.issues_count }})
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Machines Grid -->
+    <div class="row g-3 mb-4">
+        {% for m in diagnostics.machines %}
+        <div class="col-12 col-md-6 col-xl-4">
+            <div class="machine-config-card {% if m.is_unconfigured %}is-unconfigured{% elif m.is_complete %}is-complete{% else %}is-incomplete{% endif %}">
+                <div class="machine-card-content">
+                    
+                    <!-- Machine Header -->
+                    <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                        <div>
+                            <h5 class="fw-bold text-dark mb-1 d-flex align-items-center gap-2">
+                                <span>{{ m.machine_name }}</span>
+                                <span class="badge bg-light text-secondary border fw-normal" style="font-size: 0.72rem;">
+                                    {{ m.sector_name }}
+                                </span>
+                            </h5>
+                            <span class="text-muted small">
+                                <i class="bi bi-boxes"></i> {{ m.cavities_count }} cavidade(s) cadastrada(s)
+                            </span>
+                        </div>
+                        <div>
+                            {% if m.is_unconfigured %}
+                            <span class="badge bg-danger bg-opacity-10 text-danger border border-danger border-opacity-25" style="font-size: 0.72rem;">
+                                Não Configurada
+                            </span>
+                            {% elif m.is_complete %}
+                            <span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25" style="font-size: 0.72rem;">
+                                100% OK
+                            </span>
+                            {% else %}
+                            <span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" style="font-size: 0.72rem;">
+                                {{ m.filled_count }}/{{ m.expected_count }} XIDs
+                            </span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-1" style="font-size: 0.75rem;">
+                            <span class="text-muted">Progresso do Mapeamento</span>
+                            <span class="fw-bold {% if m.percent == 100 %}text-success{% elif m.percent > 0 %}text-warning{% else %}text-danger{% endif %}">{{ m.percent }}%</span>
+                        </div>
+                        <div class="progress-xid">
+                            <div class="progress-bar {% if m.percent == 100 %}bg-success{% elif m.percent > 0 %}bg-warning{% else %}bg-danger{% endif %}" role="progressbar" style="width: {{ m.percent }}%;" aria-valuenow="{{ m.percent }}" aria-valuemin="0" aria-valuemax="100"></div>
+                        </div>
+                    </div>
+
+                    <!-- Duplicate Alerts -->
+                    {% if m.duplicates %}
+                    <div class="mb-3">
+                        <div class="small fw-bold text-danger mb-1 d-flex align-items-center gap-1">
+                            <i class="bi bi-exclamation-octagon-fill"></i> Atenção: XID Compartilhado
+                        </div>
+                        {% for dup in m.duplicates %}
+                        <div class="badge-duplicate-alert mb-1" title="Presente em: {{ dup.locations|join:', ' }}">
+                            <code>{{ dup.xid }}</code> (usado em {{ dup.count }} locais)
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <!-- Missing Items -->
+                    {% if m.missing_items %}
+                    <div class="mb-2">
+                        <span class="text-muted small fw-semibold d-block mb-1">Pendências de Mapeamento:</span>
+                        <div class="d-flex flex-wrap gap-1" style="max-height: 90px; overflow-y: auto;">
+                            {% for item in m.missing_items|slice:":5" %}
+                            <span class="badge-missing-item">{{ item }}</span>
+                            {% endfor %}
+                            {% if m.missing_items|length > 5 %}
+                            <span class="badge bg-light text-muted border" style="font-size: 0.7rem;">+{{ m.missing_items|length|add:"-5" }} outros</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                </div>
+
+                <!-- Card Action Footer -->
+                <div class="machine-card-footer">
+                    <span class="text-muted" style="font-size: 0.75rem;">
+                        Stale: <strong>{{ m.stale_limit_seconds }}s</strong> | Produzindo: <code>{{ m.produzindo_value }}</code>
+                    </span>
+                    <a href="{% url 'production:xid_machine_config' m.machine_id %}" class="btn btn-sm btn-primary-custom d-flex align-items-center gap-1">
+                        <i class="bi bi-gear-fill"></i>
+                        <span>Configurar Prensa</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-12">
+            <div class="card card-custom p-5 text-center">
+                <i class="bi bi-search fs-1 text-muted mb-2"></i>
+                <h5 class="fw-bold text-dark">Nenhuma prensa encontrada</h5>
+                <p class="text-muted small mb-0">Tente ajustar o termo de busca ou o filtro de setor/status selecionado.</p>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Quick Footer Banner: Globals -->
+    <div class="card card-custom bg-dark text-white p-3 p-md-4">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+            <div>
+                <h5 class="fw-bold text-warning mb-1">
+                    <i class="bi bi-globe2 me-2"></i>Variáveis Globais de Processo &amp; Alarmes
+                </h5>
+                <p class="text-light text-opacity-75 small mb-0">
+                    {{ diagnostics.global_params_count }} Parâmetros Globais ({{ diagnostics.global_params_filled }} configurados) e {{ diagnostics.global_alarms_count }} Alarmes Globais ({{ diagnostics.global_alarms_filled }} configurados).
+                </p>
+            </div>
+            <a href="{% url 'production:xid_global_config' %}" class="btn btn-warning text-dark fw-bold d-flex align-items-center gap-2">
+                <i class="bi bi-gear-wide-connected"></i>
+                <span>Gerenciar Parâmetros &amp; Alarmes</span>
+            </a>
+        </div>
+    </div>
+
+</div>
+{% endblock %}

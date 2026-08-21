@@ -520,6 +520,21 @@
                     </ul>
                 </div>
 
+                <!-- Seção 3: Administração SCADA (Apenas Superusuário) -->
+                {% if user.is_superuser %}
+                <div>
+                    <div class="sidebar-section-title">ADMINISTRAÇÃO SCADA</div>
+                    <ul class="sidebar-menu">
+                        <li>
+                            <a href="{% url 'production:xid_config_dashboard' %}" class="sidebar-link {% if 'configuracao-scada' in request.path %}active{% endif %}">
+                                <i class="bi bi-gear-wide-connected"></i>
+                                <span>Configuração SCADA</span>
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                {% endif %}
+
                 <!-- Alternância de Módulos (Dual Access) -->
                 {% if has_dual_access or can_access_maintenance %}
                 <div class="mt-auto pt-2">
@@ -538,6 +553,7 @@
                     </div>
                 </div>
                 {% endif %}
+
 
             </div>
 
@@ -636,6 +652,21 @@
                         </ul>
                     </div>
 
+                    <!-- Seção 3: Administração SCADA (Apenas Superusuário Mobile) -->
+                    {% if user.is_superuser %}
+                    <div>
+                        <div class="sidebar-section-title">ADMINISTRAÇÃO SCADA</div>
+                        <ul class="sidebar-menu">
+                            <li>
+                                <a href="{% url 'production:xid_config_dashboard' %}" class="sidebar-link {% if 'configuracao-scada' in request.path %}active{% endif %}">
+                                    <i class="bi bi-gear-wide-connected"></i>
+                                    <span>Configuração SCADA</span>
+                                </a>
+                            </li>
+                        </ul>
+                    </div>
+                    {% endif %}
+
                     {% if has_dual_access or can_access_maintenance %}
                     <div class="mt-auto pt-2">
                         <div class="sidebar-section-title">MÓDULOS</div>
@@ -653,6 +684,7 @@
                         </div>
                     </div>
                     {% endif %}
+
                 </div>
 
                 <div class="sidebar-footer">
