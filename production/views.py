@@ -2,11 +2,13 @@ import json
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.utils import timezone
-from django.http import JsonResponse, HttpResponseBadRequest
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db import transaction
 from maintenance.models import Machine
 from .decorators import lider_producao_required, lider_ou_pcp_required, superuser_required
 from .services import ProductionStateService, PCPCalculationService, BladderTrackingService, scada_reader
+from .services_calandra import CalandraHistoricalService
 from .xid_configuration import XIDRegistry, XIDDiagnosticsService, XIDTestService
 from .models import (
 
@@ -773,6 +775,200 @@ def xid_test_api(request):
 
     result = XIDTestService.test_single_xid(xid_val)
     return JsonResponse(result)
+
+
+@superuser_required
+def xid_calandra_config(request):
+    """
+    Configuração e mapeamento dos 20 XIDs da Calandra no Scada-LTS.
+    Permite visualizar, editar e testar a comunicação em tempo real de cada variável.
+    """
+    from .services_calandra import CALANDRA_VARIABLES_CONFIG
+
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+
+        if action == "save_calandra_xids":
+            with transaction.atomic(using="default"):
+                for var in CALANDRA_VARIABLES_CONFIG:
+                    key = var["key"]
+                    db_key = f"calandra_{key}"
+                    form_xid = request.POST.get(f"xid_{key}", "").strip()
+
+                    obj, _ = ProductionGlobalParameter.objects.get_or_create(
+                        chave=db_key,
+                        defaults={
+                            "nome": f"Calandra - {var['label']}",
+                            "unidade": var["unit"],
+                            "ordem": var["order"],
+                        }
+                    )
+                    obj.nome = f"Calandra - {var['label']}"
+                    obj.xid = form_xid if form_xid else var["tag_name"]
+                    obj.unidade = var["unit"]
+                    obj.ordem = var["order"]
+                    obj.save()
+
+                scada_reader.clear_caches()
+            messages.success(request, "Configurações de XIDs da Calandra salvas com sucesso!")
+            return redirect("production:xid_calandra_config")
+
+        elif action == "restore_defaults":
+            with transaction.atomic(using="default"):
+                ProductionGlobalParameter.objects.filter(chave__startswith="calandra_").delete()
+                scada_reader.clear_caches()
+            messages.success(request, "Configurações da Calandra restauradas para os padrões canônicos!")
+            return redirect("production:xid_calandra_config")
+
+    # Carregar estado atual para renderização
+    db_map = {
+        p.chave: p.xid
+        for p in ProductionGlobalParameter.objects.filter(chave__startswith="calandra_")
+    }
+
+    groups = [
+        {"id": "producao", "title": "1. Produção & Contexto", "badge": "3 Variáveis", "icon": "bi-speedometer2", "vars": []},
+        {"id": "cargas", "title": "2. Cargas & Tensões (kg)", "badge": "4 Variáveis", "icon": "bi-arrows-expand", "vars": []},
+        {"id": "espessuras", "title": "3. Espessuras (mm)", "badge": "4 Variáveis", "icon": "bi-bounding-box", "vars": []},
+        {"id": "temperatura_borracha", "title": "4. Temperatura da Borracha (°C)", "badge": "3 Variáveis", "icon": "bi-fire", "vars": []},
+        {"id": "temperaturas_processo", "title": "5. Temperaturas do Equipamento (°C)", "badge": "6 Variáveis", "icon": "bi-thermometer-high", "vars": []},
+    ]
+    group_dict = {g["id"]: g for g in groups}
+
+    for var in CALANDRA_VARIABLES_CONFIG:
+        db_key = f"calandra_{var['key']}"
+        current_xid = db_map.get(db_key) or var["tag_name"]
+        item = {
+            **var,
+            "current_xid": current_xid,
+            "is_customized": (db_key in db_map and db_map[db_key] != var["tag_name"]),
+        }
+        if var["group"] in group_dict:
+            group_dict[var["group"]]["vars"].append(item)
+
+    return render(request, "production/xid_calandra_config.html", {
+        "groups": groups,
+        "total_vars": len(CALANDRA_VARIABLES_CONFIG),
+    })
+
+
+# ==============================================================================
+# CENTRAL DE RELATÓRIOS DE MÁQUINAS & HISTÓRICO DA CALANDRA
+# ==============================================================================
+
+@lider_producao_required
+def machine_reports_hub(request):
+    """
+    Central de Relatórios de Máquinas (/producao/relatorios/).
+    Apresenta catálogo amigável de máquinas disponíveis para consulta histórica.
+    Zero consultas ao banco SCADA.
+    """
+    available_reports = [
+        {
+            "slug": "calandra",
+            "name": "Calandra",
+            "tag": "CALANDRA",
+            "process": "Emborrachamento de Tecido",
+            "description": "Histórico das 20 variáveis de processo: produção, cargas de tensão, espessuras e temperaturas da borracha e da máquina.",
+            "url_name": "production:calandra_report",
+            "icon": "bi-layers-half",
+            "is_active": True,
+            "badge_label": "Ativo",
+            "badge_class": "success",
+        },
+    ]
+    return render(request, "production/machine_reports_hub.html", {
+        "reports": available_reports,
+    })
+
+
+@lider_producao_required
+def calandra_historical_report(request):
+    """
+    Relatório Histórico da Calandra (/producao/relatorios/calandra/).
+    Filtros rápidos (Hoje, Ontem, 7d, 30d) e personalizado.
+    Gráficos organizados por 5 grupos de processo e tabela de estado sincronizado.
+    """
+    periodo = request.GET.get("periodo", "").strip()
+    data_inicio = request.GET.get("data_inicio", "").strip()
+    hora_inicio = request.GET.get("hora_inicio", "").strip()
+    data_final = request.GET.get("data_final", "").strip()
+    hora_final = request.GET.get("hora_final", "").strip()
+    page_num = request.GET.get("page", "1").strip()
+
+    start_dt, end_dt, periodo_ativo, error_msg = CalandraHistoricalService.parse_period_filters(
+        periodo=periodo if periodo else None,
+        data_inicio=data_inicio if data_inicio else None,
+        hora_inicio=hora_inicio if hora_inicio else None,
+        data_final=data_final if data_final else None,
+        hora_final=hora_final if hora_final else None,
+    )
+
+    if error_msg:
+        messages.warning(request, error_msg)
+
+    # Consulta e sincronização temporal do histórico
+    history_data = CalandraHistoricalService.get_synchronized_history(start_dt, end_dt)
+    timeline = history_data["timeline"]
+    variables_config = CalandraHistoricalService.get_variables_config()
+
+    # Paginação da tabela (50 registros por página)
+    paginator = Paginator(timeline, 50)
+    try:
+        page_obj = paginator.page(page_num)
+    except PageNotAnInteger:
+        page_obj = paginator.page(1)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+
+    context = {
+        "periodo_ativo": periodo_ativo,
+        "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
+        "hora_inicio_str": start_dt.strftime("%H:%M"),
+        "data_final_str": end_dt.strftime("%Y-%m-%d"),
+        "hora_final_str": end_dt.strftime("%H:%M"),
+        "start_dt_formatted": start_dt.strftime("%d/%m/%Y %H:%M"),
+        "end_dt_formatted": end_dt.strftime("%d/%m/%Y %H:%M"),
+        "timeline_page": page_obj,
+        "total_records": len(timeline),
+        "raw_points_count": history_data["raw_points_count"],
+        "variables_found_count": history_data["variables_found_count"],
+        "variables_missing": history_data["variables_missing"],
+        "variables_config": variables_config,
+        "chart_datasets_json": json.dumps(history_data["chart_datasets"]),
+    }
+    return render(request, "production/calandra_report.html", context)
+
+
+@lider_producao_required
+def calandra_export_excel(request):
+    """
+    Exportação do Histórico Sincronizado da Calandra em formato Excel (.xlsx).
+    """
+    periodo = request.GET.get("periodo", "").strip()
+    data_inicio = request.GET.get("data_inicio", "").strip()
+    hora_inicio = request.GET.get("hora_inicio", "").strip()
+    data_final = request.GET.get("data_final", "").strip()
+    hora_final = request.GET.get("hora_final", "").strip()
+
+    start_dt, end_dt, _, _ = CalandraHistoricalService.parse_period_filters(
+        periodo=periodo if periodo else None,
+        data_inicio=data_inicio if data_inicio else None,
+        hora_inicio=hora_inicio if hora_inicio else None,
+        data_final=data_final if data_final else None,
+        hora_final=hora_final if hora_final else None,
+    )
+
+    excel_bytes = CalandraHistoricalService.generate_excel_report(start_dt, end_dt)
+
+    filename = f"CALANDRA_HISTORICO_{start_dt.strftime('%Y-%m-%d')}_{end_dt.strftime('%Y-%m-%d')}.xlsx"
+    response = HttpResponse(
+        excel_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
 
 
 

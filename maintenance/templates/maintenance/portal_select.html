@@ -164,7 +164,7 @@
         /* Module Selection Cards */
         .cards-wrapper {
             width: 100%;
-            max-width: 1020px;
+            max-width: 1200px;
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
             gap: 2rem;
@@ -266,6 +266,41 @@
         .portal-card.card-prod .btn-access:hover {
             background: linear-gradient(135deg, #38BDF8 0%, #0EA5E9 100%);
             box-shadow: 0 6px 20px rgba(14, 165, 233, 0.4);
+        }
+
+        /* Reports Card Styling */
+        .portal-card.card-reports::before {
+            background: linear-gradient(90deg, #10B981, #059669);
+        }
+
+        .portal-card.card-reports:hover {
+            transform: translateY(-8px);
+            border-color: rgba(16, 185, 129, 0.6);
+            box-shadow: 0 20px 40px -10px rgba(16, 185, 129, 0.25);
+            background: rgba(24, 32, 48, 0.95);
+        }
+
+        .portal-card.card-reports .icon-box {
+            background: rgba(16, 185, 129, 0.12);
+            color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .portal-card.card-reports:hover .icon-box {
+            background: rgba(16, 185, 129, 0.22);
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.4);
+            transform: scale(1.05);
+        }
+
+        .portal-card.card-reports .btn-access {
+            background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+            color: #FFFFFF;
+            font-weight: 700;
+        }
+
+        .portal-card.card-reports .btn-access:hover {
+            background: linear-gradient(135deg, #34D399 0%, #10B981 100%);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
         }
 
         /* Icon Box */
@@ -430,7 +465,7 @@
                     <div class="icon-box">
                         <i class="bi bi-cpu"></i>
                     </div>
-                    <h2 class="card-title">Produção & PCP</h2>
+                    <h2 class="card-title">Produção &amp; PCP</h2>
                     <p class="card-desc">
                         Acompanhamento de máquinas, cavidades, planos de turno, metas, matrizes e bladders.
                     </p>
@@ -443,6 +478,29 @@
                 </div>
                 <div class="btn-access">
                     <span>Acessar Produção</span>
+                    <i class="bi bi-arrow-right-short fs-4"></i>
+                </div>
+            </a>
+
+            <!-- Card 3: Relatórios de Máquinas -->
+            <a href="{% url 'production:machine_reports_hub' %}" class="portal-card card-reports" id="card-relatorios">
+                <div>
+                    <div class="icon-box">
+                        <i class="bi bi-file-earmark-bar-graph-fill"></i>
+                    </div>
+                    <h2 class="card-title">Relatórios de Máquinas</h2>
+                    <p class="card-desc">
+                        Consulte históricos, gráficos e exportações por equipamento (Calandra e telemetria SCADA).
+                    </p>
+                    <div class="feature-tags">
+                        <span class="tag-pill"><i class="bi bi-layers-half text-warning"></i> Calandra</span>
+                        <span class="tag-pill"><i class="bi bi-graph-up text-success"></i> 5 Gráficos</span>
+                        <span class="tag-pill"><i class="bi bi-clock-history text-info"></i> Sincronização SCADA</span>
+                        <span class="tag-pill"><i class="bi bi-file-earmark-excel text-success"></i> Exportação Excel</span>
+                    </div>
+                </div>
+                <div class="btn-access">
+                    <span>Acessar Relatórios</span>
                     <i class="bi bi-arrow-right-short fs-4"></i>
                 </div>
             </a>

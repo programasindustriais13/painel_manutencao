@@ -2987,6 +2987,65 @@ Resumo de Testes Automatizados:
 - `production` (todos os testes): 210 testes (100% OK).
 - Total de Testes do Projeto: 271 testes com 100% de sucesso.
 
+==============================================================================
+SPEC — HISTÓRICO DA CALANDRA E CENTRAL DE RELATÓRIOS DE MÁQUINAS
+Data: 2026-08-26 | Status: Concluída com Sucesso (Suíte 282/282 Testes Aprovados)
+==============================================================================
+
+Objetivo:
+Implementar a funcionalidade de análise histórica, visualização gráfica agrupada e exportação tabular sincronizada em formato Excel (.xlsx) das 20 variáveis da máquina CALANDRA (emborrachamento de tecido nas 1ª e 2ª faces / face oposta), integrando os dados históricos reais armazenados pelo Scada-LTS (somente leitura), e criar um ponto de acesso permanente aos relatórios de máquinas a partir da página inicial do módulo de Produção pós-login.
+
+Arquitetura e Segurança:
+1. Ponto de Acesso pós-login e Central de Relatórios:
+   - Card "Relatórios de Máquinas" adicionado na página inicial da Produção (`/producao/`) após o login, com descrição "Consulte históricos, gráficos e exportações por equipamento." e botão "Acessar relatórios".
+   - Central de Relatórios de Máquinas (`/producao/relatorios/`) estruturada como catálogo extensível para múltiplos equipamentos (Calandra ativo, novos equipamentos em preparação).
+   - Zero consultas ao histórico do SCADA ao carregar a página inicial (`/producao/`) ou a Central (`/producao/relatorios/`).
+2. Sincronização Temporal (Forward-Fill de Estado):
+   - As 20 variáveis do Scada-LTS com timestamps dessincronizados são unificadas em uma linha temporal horizontal.
+   - A cada leitura, o estado conhecido da máquina é atualizado e as demais variáveis mantêm o último valor conhecido anterior (forward-fill).
+   - A variável PASSADA atua como contexto temporal do processo: "PASSADA 1 (1ª face)" e "PASSADA 2 (2ª face / face oposta)".
+3. 5 Gráficos de Processo (Chart.js):
+   - Gráfico A: Produção & Passadas (Velocidade m/min, Metragem Bobinada m e transições de Passada).
+   - Gráfico B: Cargas & Tensões em kg (Bobinamento, Desbobinador, Pós-Calandra, Quebra-Trama).
+   - Gráfico C: Espessuras em mm (Esq. Superior, Dir. Superior, Dir. Inferior, Esq. Inferior).
+   - Gráfico D: Temperatura da Borracha em °C (Saída Extrusão -> Entrada Calandra -> Saída Calandra).
+   - Gráfico E: Temperaturas do Equipamento em °C (Cilindro Inferior, Intermediário, Superior, Furador, Aquecedor, TCU Extrusora).
+4. Exportação em Excel (.xlsx):
+   - Gerada com openpyxl com 100% dos dados históricos brutos sincronizados.
+   - Coluna 1: DATA/HORA, Coluna 2: PASSADA, seguidas pelas demais 19 variáveis com cabeçalhos e unidades.
+   - Valores numéricos mantidos como números nativos, datas formatadas, autofiltro ativo e primeira linha congelada.
+5. Isolamento e Segurança do SCADA:
+   - Banco `scada` estritamente somente-leitura (zero writes, zero migrations).
+   - Filtros obrigatórios por período e proteção contra consultas excessivas (> 31 dias).
+
+Rotas Registradas:
+- `/producao/relatorios/` (name: `machine_reports_hub`): Central de Relatórios de Máquinas.
+- `/producao/relatorios/calandra/` (name: `calandra_report`): Relatório Histórico da Calandra.
+- `/producao/relatorios/calandra/exportar-excel/` (name: `calandra_export_excel`): Exportação do Histórico em Excel (.xlsx).
+- `/producao/configuracao-scada/calandra/` (name: `xid_calandra_config`): Configuração e teste em tempo real dos 20 XIDs da Calandra.
+
+Arquivos Criados:
+- `regras_programacao/SPEC_HISTORICO_CALANDRA_RELATORIOS.md`: Especificação técnica formal.
+- `production/services_calandra.py`: Serviço de mapeamento das 20 variáveis, resolução flexível de DataPoints, consultas indexadas em lote, motor de sincronização temporal (forward-fill), amostragem de gráficos e gerador de Excel openpyxl.
+- `production/templates/production/machine_reports_hub.html`: Template da Central de Relatórios de Máquinas.
+- `production/templates/production/calandra_report.html`: Template do Relatório Histórico da Calandra (Filtros, 5 Gráficos Chart.js e Tabela Sincronizada com Paginação).
+- `production/templates/production/xid_calandra_config.html`: Template de configuração e teste em tempo real dos XIDs da Calandra na Central SCADA.
+- `production/test_calandra_report.py`: Suíte de 13 testes automatizados cobrindo permissões, atalhos de período, filtros de data/hora, forward-fill, transição PASSADA 1 -> PASSADA 2, exportação Excel, ausência de escrita no SCADA, e edição/teste dos XIDs da Calandra.
+
+Arquivos Modificados:
+- `production/views.py`: Adição das views `machine_reports_hub`, `calandra_historical_report`, `calandra_export_excel` e `xid_calandra_config`.
+- `production/urls.py`: Registro das novas rotas no app `production`.
+- `production/templates/production/dashboard.html`: Inclusão do card "Relatórios de Máquinas" na página inicial pós-login.
+- `production/templates/production/base_production.html`: Inclusão do link "Relatórios de Máquinas" na sidebar desktop e mobile.
+- `maintenance/templates/maintenance/portal_select.html`: Inclusão do card "Relatórios de Máquinas" no portal pós-login.
+- `production/templates/production/xid_config_dashboard.html` e `production/templates/production/xid_global_config.html`: Botão de acesso à configuração da Calandra.
+
+Resumo de Testes Automatizados:
+- `production/test_calandra_report.py`: 13 testes (100% OK).
+- Suíte Global do Projeto: 284 testes com 100% de sucesso.
+
+
+
 
 
 

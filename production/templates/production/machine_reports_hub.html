@@ -1,0 +1,175 @@
+{% extends "production/base_production.html" %}
+
+{% block title %}Central de Relatórios de Máquinas - Produção{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hub-header {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        border-radius: 16px;
+        padding: 2rem 2.25rem;
+        color: #FFFFFF;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+        margin-bottom: 2rem;
+        border: 1px solid rgba(209, 156, 62, 0.25);
+    }
+    .report-card {
+        border: 1px solid #E2E8F0;
+        border-radius: 14px;
+        background: #FFFFFF;
+        transition: all 0.25s ease;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+    }
+    .report-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.09);
+        border-color: var(--freedom-gold);
+    }
+    .report-card-header {
+        padding: 1.25rem 1.5rem;
+        background: #F8FAFC;
+        border-bottom: 1px solid #E2E8F0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .report-card-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        background: rgba(209, 156, 62, 0.15);
+        color: var(--freedom-gold-dark);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+        border: 1px solid rgba(209, 156, 62, 0.3);
+    }
+    .report-card-body {
+        padding: 1.5rem;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+    }
+    .badge-feature {
+        font-size: 0.72rem;
+        padding: 4px 10px;
+        border-radius: 20px;
+        background-color: #F1F5F9;
+        color: #475569;
+        border: 1px solid #E2E8F0;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+
+    <!-- Breadcrumb & Back -->
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-0 fs-7">
+                <li class="breadcrumb-item"><a href="{% url 'production:dashboard' %}" class="text-decoration-none text-muted">Produção</a></li>
+                <li class="breadcrumb-item active fw-bold text-dark" aria-current="page">Relatórios de Máquinas</li>
+            </ol>
+        </nav>
+        <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm">
+            <i class="bi bi-arrow-left me-1"></i>Voltar ao Início
+        </a>
+    </div>
+
+    <!-- Hub Banner -->
+    <div class="hub-header">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+            <div>
+                <span class="badge bg-warning text-dark px-3 py-1 mb-2 fw-bold text-uppercase" style="letter-spacing: 0.8px;">
+                    <i class="bi bi-graph-up-arrow me-1"></i>Módulo de Análise Histórica
+                </span>
+                <h2 class="fw-bold mb-1 text-white">Central de Relatórios de Máquinas</h2>
+                <p class="text-white-50 mb-0">
+                    Selecione uma máquina para consultar seu histórico, gráficos contextuais e exportações de telemetria.
+                </p>
+            </div>
+            <div class="text-md-end">
+                <span class="badge bg-dark border border-secondary px-3 py-2 fs-7 rounded-pill text-white-50">
+                    <i class="bi bi-shield-check text-success me-1"></i>Consultas Otimizadas &amp; Somente Leitura
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reports Grid -->
+    <div class="row g-4 mb-4">
+
+        <!-- Card: Calandra -->
+        <div class="col-12 col-md-6 col-xl-4">
+            <div class="report-card shadow-sm">
+                <div class="report-card-header">
+                    <div class="report-card-icon">
+                        <i class="bi bi-layers-half"></i>
+                    </div>
+                    <div>
+                        <h5 class="fw-bold mb-0 text-dark">Calandra</h5>
+                        <small class="text-muted">Emborrachamento de Tecido (1ª e 2ª Face)</small>
+                    </div>
+                </div>
+                <div class="report-card-body">
+                    <p class="text-secondary small mb-3 flex-grow-1">
+                        Histórico completo das 20 variáveis de processo: contagem e velocidade de produção, 
+                        cargas de tensão, espessuras das faces e temperaturas da borracha e da máquina.
+                    </p>
+
+                    <!-- Features Tags -->
+                    <div class="d-flex flex-wrap gap-1 mb-4">
+                        <span class="badge-feature"><i class="bi bi-cpu me-1 text-primary"></i>20 Variáveis</span>
+                        <span class="badge-feature"><i class="bi bi-clock-history me-1 text-info"></i>Forward-Fill Temporal</span>
+                        <span class="badge-feature"><i class="bi bi-diagram-3 me-1 text-warning"></i>5 Gráficos de Processo</span>
+                        <span class="badge-feature"><i class="bi bi-file-earmark-excel me-1 text-success"></i>Exportação Excel</span>
+                    </div>
+
+                    <!-- Action CTA -->
+                    <a href="{% url 'production:calandra_report' %}" class="btn btn-primary-custom w-100 py-2 rounded-3 shadow-sm d-flex align-items-center justify-content-center gap-2">
+                        <span>Abrir Relatório da Calandra</span>
+                        <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slot: Próximos Equipamentos -->
+        <div class="col-12 col-md-6 col-xl-4">
+            <div class="report-card shadow-sm border-dashed" style="border: 2px dashed #CBD5E1; background: #FAFBFD;">
+                <div class="report-card-header bg-transparent border-0 pb-0">
+                    <div class="report-card-icon" style="background: #F1F5F9; border-color: #E2E8F0; color: #94A3B8;">
+                        <i class="bi bi-plus-circle"></i>
+                    </div>
+                    <div>
+                        <h6 class="fw-bold mb-0 text-muted">Novos Equipamentos</h6>
+                        <small class="text-muted">Expansão de Relatórios</small>
+                    </div>
+                </div>
+                <div class="report-card-body">
+                    <p class="text-muted small mb-3 flex-grow-1">
+                        A Central de Relatórios está estruturada para receber futuramente históricos de outras máquinas da planta
+                        (Extrusoras, Cortadeiras, Prensas e Bobinadeiras).
+                    </p>
+                    <div class="d-flex flex-wrap gap-1 mb-4 opacity-75">
+                        <span class="badge-feature">Extrusora</span>
+                        <span class="badge-feature">Cortadeira</span>
+                        <span class="badge-feature">Bobinadeira</span>
+                    </div>
+                    <button class="btn btn-outline-secondary w-100 py-2 rounded-3" disabled>
+                        <i class="bi bi-hourglass-split me-1"></i>Em Planejamento
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+{% endblock %}

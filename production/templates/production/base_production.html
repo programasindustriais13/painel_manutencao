@@ -486,6 +486,12 @@
                                 <span>Programação PCP</span>
                             </a>
                         </li>
+                        <li>
+                            <a href="{% url 'production:machine_reports_hub' %}" class="sidebar-link {% if 'relatorios' in request.path %}active{% endif %}">
+                                <i class="bi bi-file-earmark-bar-graph-fill"></i>
+                                <span>Relatórios de Máquinas</span>
+                            </a>
+                        </li>
                     </ul>
                 </div>
 
@@ -615,8 +621,14 @@
                             </li>
                             <li>
                                 <a href="{% url 'production:pcp_plan_list' %}" class="sidebar-link {% if 'pcp' in request.resolver_match.url_name %}active{% endif %}">
-                                    <i class="bi bi-calendar-check-fill"></i>
-                                    <span>Programação PCP</span>
+                                <i class="bi bi-calendar-check-fill"></i>
+                                <span>Programação PCP</span>
+                            </a>
+                            </li>
+                            <li>
+                                <a href="{% url 'production:machine_reports_hub' %}" class="sidebar-link {% if 'relatorios' in request.path %}active{% endif %}">
+                                    <i class="bi bi-file-earmark-bar-graph-fill"></i>
+                                    <span>Relatórios de Máquinas</span>
                                 </a>
                             </li>
                         </ul>

@@ -1,0 +1,565 @@
+{% extends "production/base_production.html" %}
+
+{% block title %}Relatório Histórico da Calandra - Produção{% endblock %}
+
+{% block extra_css %}
+<style>
+    .calandra-header {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        border-radius: 14px;
+        padding: 1.5rem 1.75rem;
+        color: #FFFFFF;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(209, 156, 62, 0.25);
+    }
+    .filter-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .chart-container-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        padding: 1.25rem;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    .chart-wrapper {
+        position: relative;
+        flex: 1;
+        min-height: 280px;
+        width: 100%;
+    }
+    .badge-passada-1 {
+        background-color: #E0F2FE;
+        color: #0369A1;
+        border: 1px solid #BAE6FD;
+        font-weight: 600;
+    }
+    .badge-passada-2 {
+        background-color: #FEF3C7;
+        color: #B45309;
+        border: 1px solid #FDE68A;
+        font-weight: 600;
+    }
+    .quick-period-btn {
+        border-radius: 20px;
+        padding: 4px 14px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        border: 1px solid #CBD5E1;
+        background: #FFFFFF;
+        color: #475569;
+        text-decoration: none;
+        transition: all 0.2s ease;
+    }
+    .quick-period-btn:hover {
+        background: #F1F5F9;
+        color: #0F172A;
+    }
+    .quick-period-btn.active {
+        background: var(--freedom-gold-gradient);
+        color: #000000;
+        border-color: var(--freedom-gold);
+        box-shadow: var(--freedom-gold-glow);
+    }
+    .table-historical {
+        font-size: 0.8rem;
+    }
+    .table-historical th {
+        background-color: #0F172A;
+        color: #FFFFFF;
+        font-weight: 600;
+        text-align: center;
+        vertical-align: middle;
+        white-space: nowrap;
+        padding: 10px 8px;
+    }
+    .table-historical td {
+        vertical-align: middle;
+        white-space: nowrap;
+        padding: 6px 8px;
+    }
+</style>
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+
+    <!-- Breadcrumb Navigation -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-0 fs-7">
+                <li class="breadcrumb-item"><a href="{% url 'production:dashboard' %}" class="text-decoration-none text-muted">Produção</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'production:machine_reports_hub' %}" class="text-decoration-none text-muted">Relatórios de Máquinas</a></li>
+                <li class="breadcrumb-item active fw-bold text-dark" aria-current="page">Calandra</li>
+            </ol>
+        </nav>
+        <div class="d-flex gap-2">
+            <a href="{% url 'production:machine_reports_hub' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm">
+                <i class="bi bi-grid-fill me-1"></i>Central de Relatórios
+            </a>
+            <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm">
+                <i class="bi bi-speedometer2 me-1"></i>Dashboard Produção
+            </a>
+        </div>
+    </div>
+
+    <!-- Header Banner -->
+    <div class="calandra-header mb-4">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="badge bg-warning text-dark px-2 py-1 fw-bold">CALANDRA</span>
+                    <span class="badge bg-secondary text-white px-2 py-1">20 Variáveis Integradas</span>
+                </div>
+                <h3 class="fw-bold mb-1 text-white">Relatório Histórico da Calandra</h3>
+                <p class="text-white-50 mb-0 small">
+                    Análise detalhada do processo de emborrachamento de tecido — 1ª face e 2ª face / face oposta.
+                </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <a href="{% url 'production:calandra_export_excel' %}?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}" 
+                   class="btn btn-success btn-sm rounded-pill px-3 py-2 fw-semibold shadow-sm d-flex align-items-center gap-2"
+                   title="Exportar dados históricos sincronizados em formato Excel (.xlsx)">
+                    <i class="bi bi-file-earmark-excel-fill fs-6"></i>
+                    <span>Exportar Excel (.xlsx)</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Bar Card -->
+    <div class="filter-card p-3 mb-4">
+        <form method="get" action="." class="row g-2 align-items-center">
+            
+            <!-- Quick Period Shortcuts -->
+            <div class="col-12 col-xl-auto mb-2 mb-xl-0">
+                <div class="d-flex flex-wrap gap-1 align-items-center">
+                    <span class="text-muted small fw-semibold me-1">Período:</span>
+                    <a href="?periodo=hoje" class="quick-period-btn {% if periodo_ativo == 'hoje' %}active{% endif %}">Hoje</a>
+                    <a href="?periodo=ontem" class="quick-period-btn {% if periodo_ativo == 'ontem' %}active{% endif %}">Ontem</a>
+                    <a href="?periodo=7d" class="quick-period-btn {% if periodo_ativo == '7d' %}active{% endif %}">Últimos 7 dias</a>
+                    <a href="?periodo=30d" class="quick-period-btn {% if periodo_ativo == '30d' %}active{% endif %}">Últimos 30 dias</a>
+                </div>
+            </div>
+
+            <!-- Custom Date/Time Inputs -->
+            <div class="col-6 col-sm-3 col-xl-2">
+                <label class="form-label text-muted small mb-0 fs-8">Data Inicial</label>
+                <input type="date" name="data_inicio" class="form-control form-control-sm" value="{{ data_inicio_str }}">
+            </div>
+            <div class="col-6 col-sm-2 col-xl-1">
+                <label class="form-label text-muted small mb-0 fs-8">Hora Inicial</label>
+                <input type="time" name="hora_inicio" class="form-control form-control-sm" value="{{ hora_inicio_str }}">
+            </div>
+            <div class="col-6 col-sm-3 col-xl-2">
+                <label class="form-label text-muted small mb-0 fs-8">Data Final</label>
+                <input type="date" name="data_final" class="form-control form-control-sm" value="{{ data_final_str }}">
+            </div>
+            <div class="col-6 col-sm-2 col-xl-1">
+                <label class="form-label text-muted small mb-0 fs-8">Hora Final</label>
+                <input type="time" name="hora_final" class="form-control form-control-sm" value="{{ hora_final_str }}">
+            </div>
+
+            <div class="col-12 col-sm-2 col-xl-auto d-flex gap-2 align-items-end mt-sm-auto">
+                <input type="hidden" name="periodo" value="personalizado">
+                <button type="submit" class="btn btn-primary-custom btn-sm px-3 fw-semibold shadow-sm w-100 w-sm-auto">
+                    <i class="bi bi-filter me-1"></i>Filtrar
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Summary Stats Bar -->
+    <div class="row g-2 g-md-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
+                <span class="text-muted small d-block">Intervalo Selecionado</span>
+                <strong class="fs-7 text-dark d-block mt-1">{{ start_dt_formatted }} até {{ end_dt_formatted }}</strong>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
+                <span class="text-muted small d-block">Pontos Brutos SCADA</span>
+                <strong class="fs-5 text-primary d-block mt-1">{{ raw_points_count }}</strong>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
+                <span class="text-muted small d-block">Linhas de Estado Sincronizadas</span>
+                <strong class="fs-5 text-success d-block mt-1">{{ total_records }}</strong>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
+                <span class="text-muted small d-block">Variáveis no SCADA</span>
+                <strong class="fs-5 {% if variables_found_count == 20 %}text-success{% else %}text-warning{% endif %} d-block mt-1">
+                    {{ variables_found_count }} de 20
+                </strong>
+            </div>
+        </div>
+    </div>
+
+    {% if total_records == 0 %}
+    <div class="alert alert-info border-0 shadow-sm rounded-3 py-4 text-center mb-4">
+        <i class="bi bi-info-circle fs-3 text-info d-block mb-2"></i>
+        <h5 class="fw-bold mb-1">Nenhum registro histórico localizado no período</h5>
+        <p class="text-muted mb-0 small">
+            Selecione outro período ou verifique se a máquina esteve em operação no intervalo consultado.
+        </p>
+    </div>
+    {% endif %}
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         5 GRÁFICOS ORGANIZADOS POR GRUPO DE PROCESSO
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <div class="row g-3 mb-4">
+
+        <!-- GRÁFICO A: PRODUÇÃO (Velocidade, Metragem e Contexto de Passada) -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-speedometer2 text-info me-2"></i>Gráfico A — Produção &amp; Passadas
+                    </h6>
+                    <span class="badge bg-light text-secondary border fs-8">m/min &amp; m</span>
+                </div>
+                <small class="text-muted mb-2">Velocidade da Calandra, Metragem Bobinada e Transições de Passada (1ª e 2ª Face)</small>
+                <div class="chart-wrapper">
+                    <canvas id="chartProducao"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICO B: CARGAS / TENSÕES -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-arrows-expand text-warning me-2"></i>Gráfico B — Cargas &amp; Tensões (kg)
+                    </h6>
+                    <span class="badge bg-light text-secondary border fs-8">kg</span>
+                </div>
+                <small class="text-muted mb-2">Cargas de Bobinamento, Desbobinador, Pós-Calandra e Quebra-Trama</small>
+                <div class="chart-wrapper">
+                    <canvas id="chartCargas"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICO C: ESPESSURAS -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-bounding-box text-primary me-2"></i>Gráfico C — Espessuras (mm)
+                    </h6>
+                    <span class="badge bg-light text-secondary border fs-8">mm</span>
+                </div>
+                <small class="text-muted mb-2">Espessuras Esquerda Superior, Direita Superior, Direita Inferior e Esquerda Inferior</small>
+                <div class="chart-wrapper">
+                    <canvas id="chartEspessuras"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICO D: TEMPERATURA DA BORRACHA -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-fire text-danger me-2"></i>Gráfico D — Temperatura da Borracha (°C)
+                    </h6>
+                    <span class="badge bg-light text-secondary border fs-8">°C</span>
+                </div>
+                <small class="text-muted mb-2">Sequência do Processo: Saída Extrusão → Entrada Calandra → Saída Calandra</small>
+                <div class="chart-wrapper">
+                    <canvas id="chartTempBorracha"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICO E: TEMPERATURAS DO PROCESSO / MÁQUINA -->
+        <div class="col-12">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-thermometer-high text-danger me-2"></i>Gráfico E — Temperaturas do Equipamento (°C)
+                    </h6>
+                    <span class="badge bg-light text-secondary border fs-8">°C</span>
+                </div>
+                <small class="text-muted mb-2">Cilindros (Inferior, Intermediário, Superior), Furador, Aquecedor e TCU Extrusora</small>
+                <div class="chart-wrapper" style="min-height: 320px;">
+                    <canvas id="chartTempProcesso"></canvas>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         TABELA HISTÓRICA SINCRONIZADA (HORIZONTAL)
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <div class="card border-0 shadow-sm rounded-3 p-3 bg-white mb-4">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
+            <div>
+                <h5 class="fw-bold mb-0 text-dark">
+                    <i class="bi bi-table text-primary me-2"></i>Tabela Histórica de Estados Sincronizados
+                </h5>
+                <span class="text-muted small">
+                    Exibindo página {{ timeline_page.number }} de {{ timeline_page.paginator.num_pages }} (Total: {{ total_records }} registros)
+                </span>
+            </div>
+            <div>
+                <a href="{% url 'production:calandra_export_excel' %}?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}" 
+                   class="btn btn-outline-success btn-sm rounded-pill px-3 shadow-sm fw-semibold">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Baixar Excel Completo
+                </a>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover align-middle mb-0 table-historical">
+                <thead>
+                    <tr>
+                        <th style="background-color: #B8842E; color: #FFFFFF;">Data/Hora</th>
+                        <th style="background-color: #B8842E; color: #FFFFFF;">Passada</th>
+                        <th>Metragem (m)</th>
+                        <th>Vel. (m/min)</th>
+                        <th>Carga Bob. (kg)</th>
+                        <th>Carga Desb. (kg)</th>
+                        <th>Carga Pós-Cal. (kg)</th>
+                        <th>Carga Q-Trama (kg)</th>
+                        <th>Esp. Esq. Sup.</th>
+                        <th>Esp. Dir. Sup.</th>
+                        <th>Esp. Dir. Inf.</th>
+                        <th>Esp. Esq. Inf.</th>
+                        <th>T. Borr. Extr. (°C)</th>
+                        <th>T. Borr. Ent. (°C)</th>
+                        <th>T. Borr. Saí. (°C)</th>
+                        <th>T. Cil. Inf. (°C)</th>
+                        <th>T. Cil. Inter. (°C)</th>
+                        <th>T. Cil. Sup. (°C)</th>
+                        <th>T. Furador (°C)</th>
+                        <th>T. Aquec. (°C)</th>
+                        <th>T. TCU Extr. (°C)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in timeline_page %}
+                    <tr>
+                        <td class="text-center fw-semibold text-dark">{{ item.datetime_str }}</td>
+                        <td class="text-center">
+                            {% if "PASSADA 1" in item.passada_label %}
+                            <span class="badge badge-passada-1 px-2 py-1">{{ item.passada_label }}</span>
+                            {% elif "PASSADA 2" in item.passada_label %}
+                            <span class="badge badge-passada-2 px-2 py-1">{{ item.passada_label }}</span>
+                            {% else %}
+                            <span class="badge bg-light text-dark border px-2 py-1">{{ item.passada_label }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">{{ item.values.metragem_bobinada|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.vel_calandra|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.carga_bobinamento|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.carga_desbobinador|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.carga_pos_calandra|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.carga_quebra_trama|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.espessura_esq_sup|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.espessura_dir_sup|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.espessura_dir_inf|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.espessura_esq_inf|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_borracha_saida_extrusao|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_borracha_ent_calandra|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_borracha_saida_calandra|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_cilindro_inf|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_cilindro_inter|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_cilindro_sup|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_furador|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_aquecedor|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_tcu_extrusora|default:"-" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="21" class="text-center py-4 text-muted">
+                            Nenhum registro para exibir.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        {% if timeline_page.has_other_pages %}
+        <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top">
+            <span class="text-muted small">
+                Página {{ timeline_page.number }} de {{ timeline_page.paginator.num_pages }}
+            </span>
+            <ul class="pagination pagination-sm mb-0">
+                {% if timeline_page.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}&page=1">&laquo; Primeira</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}&page={{ timeline_page.previous_page_number }}">Anterior</a>
+                </li>
+                {% endif %}
+
+                <li class="page-item active"><span class="page-link">{{ timeline_page.number }}</span></li>
+
+                {% if timeline_page.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}&page={{ timeline_page.next_page_number }}">Próxima</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}&page={{ timeline_page.paginator.num_pages }}">Última &raquo;</a>
+                </li>
+                {% endif %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SCRIPTS DE INICIALIZAÇÃO DO CHART.JS
+══════════════════════════════════════════════════════════════════════════ -->
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const rawData = {{ chart_datasets_json|safe }};
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11, family: 'Inter, sans-serif' } } },
+            tooltip: { padding: 10, cornerRadius: 8 }
+        },
+        scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
+            y: { grid: { color: '#F1F5F9' }, ticks: { font: { size: 10 } } }
+        }
+    };
+
+    // 1. Gráfico A: Produção
+    const ctxA = document.getElementById('chartProducao');
+    if (ctxA && rawData.chart_a_producao) {
+        new Chart(ctxA, {
+            type: 'line',
+            data: {
+                labels: rawData.chart_a_producao.labels,
+                datasets: [
+                    {
+                        label: 'Velocidade (m/min)',
+                        data: rawData.chart_a_producao.velocidade,
+                        borderColor: '#0284C7',
+                        backgroundColor: 'rgba(2, 132, 199, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.2,
+                        yAxisID: 'y',
+                    },
+                    {
+                        label: 'Metragem Bobinada (m)',
+                        data: rawData.chart_a_producao.metragem,
+                        borderColor: '#D19C3E',
+                        backgroundColor: 'rgba(209, 156, 62, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.2,
+                        yAxisID: 'y1',
+                    }
+                ]
+            },
+            options: {
+                ...commonOptions,
+                scales: {
+                    x: commonOptions.scales.x,
+                    y: { ...commonOptions.scales.y, title: { display: true, text: 'Velocidade (m/min)', font: { size: 10 } } },
+                    y1: { position: 'right', grid: { display: false }, title: { display: true, text: 'Metragem (m)', font: { size: 10 } } }
+                }
+            }
+        });
+    }
+
+    // 2. Gráfico B: Cargas
+    const ctxB = document.getElementById('chartCargas');
+    if (ctxB && rawData.chart_b_cargas) {
+        new Chart(ctxB, {
+            type: 'line',
+            data: {
+                labels: rawData.chart_b_cargas.labels,
+                datasets: [
+                    { label: 'Carga Bobinamento (kg)', data: rawData.chart_b_cargas.bobinamento, borderColor: '#3B82F6', borderWidth: 2, tension: 0.2 },
+                    { label: 'Carga Desbobinador (kg)', data: rawData.chart_b_cargas.desbobinador, borderColor: '#10B981', borderWidth: 2, tension: 0.2 },
+                    { label: 'Carga Pós-Calandra (kg)', data: rawData.chart_b_cargas.pos_calandra, borderColor: '#F59E0B', borderWidth: 2, tension: 0.2 },
+                    { label: 'Carga Quebra-Trama (kg)', data: rawData.chart_b_cargas.quebra_trama, borderColor: '#8B5CF6', borderWidth: 2, tension: 0.2 }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // 3. Gráfico C: Espessuras
+    const ctxC = document.getElementById('chartEspessuras');
+    if (ctxC && rawData.chart_c_espessuras) {
+        new Chart(ctxC, {
+            type: 'line',
+            data: {
+                labels: rawData.chart_c_espessuras.labels,
+                datasets: [
+                    { label: 'Esq. Superior (mm)', data: rawData.chart_c_espessuras.esq_sup, borderColor: '#06B6D4', borderWidth: 2, tension: 0.2 },
+                    { label: 'Dir. Superior (mm)', data: rawData.chart_c_espessuras.dir_sup, borderColor: '#0EA5E9', borderWidth: 2, tension: 0.2 },
+                    { label: 'Dir. Inferior (mm)', data: rawData.chart_c_espessuras.dir_inf, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
+                    { label: 'Esq. Inferior (mm)', data: rawData.chart_c_espessuras.esq_inf, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // 4. Gráfico D: Temperatura da Borracha
+    const ctxD = document.getElementById('chartTempBorracha');
+    if (ctxD && rawData.chart_d_temp_borracha) {
+        new Chart(ctxD, {
+            type: 'line',
+            data: {
+                labels: rawData.chart_d_temp_borracha.labels,
+                datasets: [
+                    { label: '1. Saída Extrusão (°C)', data: rawData.chart_d_temp_borracha.saida_extrusao, borderColor: '#EF4444', borderWidth: 2, tension: 0.2 },
+                    { label: '2. Entrada Calandra (°C)', data: rawData.chart_d_temp_borracha.ent_calandra, borderColor: '#F97316', borderWidth: 2, tension: 0.2 },
+                    { label: '3. Saída Calandra (°C)', data: rawData.chart_d_temp_borracha.saida_calandra, borderColor: '#EAB308', borderWidth: 2, tension: 0.2 }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // 5. Gráfico E: Temperaturas do Processo
+    const ctxE = document.getElementById('chartTempProcesso');
+    if (ctxE && rawData.chart_e_temp_processo) {
+        new Chart(ctxE, {
+            type: 'line',
+            data: {
+                labels: rawData.chart_e_temp_processo.labels,
+                datasets: [
+                    { label: 'Cilindro Inferior (°C)', data: rawData.chart_e_temp_processo.cilindro_inf, borderColor: '#6366F1', borderWidth: 2, tension: 0.2 },
+                    { label: 'Cilindro Intermediário (°C)', data: rawData.chart_e_temp_processo.cilindro_inter, borderColor: '#8B5CF6', borderWidth: 2, tension: 0.2 },
+                    { label: 'Cilindro Superior (°C)', data: rawData.chart_e_temp_processo.cilindro_sup, borderColor: '#A855F7', borderWidth: 2, tension: 0.2 },
+                    { label: 'Furador (°C)', data: rawData.chart_e_temp_processo.furador, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
+                    { label: 'Aquecedor (°C)', data: rawData.chart_e_temp_processo.aquecedor, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 },
+                    { label: 'TCU Extrusora (°C)', data: rawData.chart_e_temp_processo.tcu_extrusora, borderColor: '#14B8A6', borderWidth: 2, tension: 0.2 }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+});
+</script>
+{% endblock %}
