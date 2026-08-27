@@ -921,6 +921,19 @@ def calandra_historical_report(request):
     except EmptyPage:
         page_obj = paginator.page(paginator.num_pages)
 
+    # Compactar timeline para o cliente (suporte à seleção temporal coordenada e recálculo instantâneo de cards em JS)
+    compact_timeline = [
+        {
+            "ts": item["ts"],
+            "datetime_str": item["datetime_str"],
+            "passada_val": item.get("passada_val"),
+            "passada_label": item.get("passada_label"),
+            "is_effective": item.get("is_effective", False),
+            "values": item["values"],
+        }
+        for item in timeline
+    ]
+
     context = {
         "periodo_ativo": periodo_ativo,
         "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
@@ -936,6 +949,10 @@ def calandra_historical_report(request):
         "variables_missing": history_data["variables_missing"],
         "variables_config": variables_config,
         "chart_datasets_json": json.dumps(history_data["chart_datasets"]),
+        "card_stats": history_data.get("card_stats", {}),
+        "effective_points_count": history_data.get("effective_points_count", 0),
+        "passada_context": history_data.get("passada_context", "Sem dados"),
+        "compact_timeline_json": json.dumps(compact_timeline),
     }
     return render(request, "production/calandra_report.html", context)
 

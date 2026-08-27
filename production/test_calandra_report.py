@@ -100,7 +100,8 @@ class CalandraReportTestCase(TestCase):
         self.client.force_login(self.user_lp)
         resp = self.client.get(reverse("production:calandra_report"))
         self.assertEqual(resp.status_code, 200)
-        self.assertContains(resp, "Relatório Histórico da Calandra")
+        self.assertContains(resp, "Calandra")
+        self.assertContains(resp, "Auditoria de Condições de Processo")
 
         self.client.force_login(self.user_tec)
         resp_blocked = self.client.get(reverse("production:calandra_report"))
@@ -188,13 +189,184 @@ class CalandraReportTestCase(TestCase):
     # ─────────────────────────────────────────────────────────────────────────
 
     def test_passada_formatting(self):
-        """Valida a conversão semântica da variável PASSADA."""
-        self.assertEqual(CalandraHistoricalService.format_passada_label(1), "PASSADA 1 (1ª face)")
-        self.assertEqual(CalandraHistoricalService.format_passada_label("1"), "PASSADA 1 (1ª face)")
-        self.assertEqual(CalandraHistoricalService.format_passada_label(1.0), "PASSADA 1 (1ª face)")
-        self.assertEqual(CalandraHistoricalService.format_passada_label(2), "PASSADA 2 (2ª face / face oposta)")
-        self.assertEqual(CalandraHistoricalService.format_passada_label("2"), "PASSADA 2 (2ª face / face oposta)")
+        """Valida a conversão semântica da variável PASSADA em rótulos contextuais padronizados."""
+        self.assertEqual(CalandraHistoricalService.format_passada_label(1), "PASSADA 1 — 1ª face")
+        self.assertEqual(CalandraHistoricalService.format_passada_label("1"), "PASSADA 1 — 1ª face")
+        self.assertEqual(CalandraHistoricalService.format_passada_label(1.0), "PASSADA 1 — 1ª face")
+        self.assertEqual(CalandraHistoricalService.format_passada_label(2), "PASSADA 2 — 2ª face / face oposta")
+        self.assertEqual(CalandraHistoricalService.format_passada_label("2"), "PASSADA 2 — 2ª face / face oposta")
         self.assertEqual(CalandraHistoricalService.format_passada_label(None), "Não informada")
+
+    def test_effective_process_rule_6_scenarios(self):
+        """
+        Valida os 6 cenários obrigatórios da regra de Processo Efetivo (Velocidade + Metragem):
+        1. vel > 0 + metragem aumentando -> True
+        2. vel = 0 + metragem parada -> False
+        3. vel > 0 + metragem estagnada/sem avanço -> False
+        4. vel = 0 + metragem aumentando -> False
+        5. reinício/reset de metragem -> True (com avanço posterior)
+        6. pequenas flutuações/ruído sem produção real -> False
+        """
+        # Cenário 1: vel > 0 + metragem aumentando
+        tl_1 = [
+            {"ts": 1000, "values": {"vel_calandra": 12.0, "metragem_bobinada": 100.0}},
+            {"ts": 2000, "values": {"vel_calandra": 12.5, "metragem_bobinada": 120.0}},
+        ]
+        CalandraHistoricalService.detect_effective_process(tl_1)
+        self.assertTrue(tl_1[0]["is_effective"])
+        self.assertTrue(tl_1[1]["is_effective"])
+
+        # Cenário 2: vel = 0 + metragem parada
+        tl_2 = [
+            {"ts": 1000, "values": {"vel_calandra": 0.0, "metragem_bobinada": 120.0}},
+            {"ts": 2000, "values": {"vel_calandra": 0.0, "metragem_bobinada": 120.0}},
+        ]
+        CalandraHistoricalService.detect_effective_process(tl_2)
+        self.assertFalse(tl_2[0]["is_effective"])
+        self.assertFalse(tl_2[1]["is_effective"])
+
+        # Cenário 3: vel > 0 + metragem sem avanço (estagnada)
+        tl_3 = [
+            {"ts": 1000, "values": {"vel_calandra": 10.0, "metragem_bobinada": 50.0}},
+            {"ts": 2000, "values": {"vel_calandra": 10.0, "metragem_bobinada": 50.0}},
+            {"ts": 3000, "values": {"vel_calandra": 10.0, "metragem_bobinada": 50.0}},
+        ]
+        CalandraHistoricalService.detect_effective_process(tl_3)
+        self.assertFalse(tl_3[0]["is_effective"])
+        self.assertFalse(tl_3[1]["is_effective"])
+        self.assertFalse(tl_3[2]["is_effective"])
+
+        # Cenário 4: vel = 0 + metragem aumentando (ruído/estática)
+        tl_4 = [
+            {"ts": 1000, "values": {"vel_calandra": 0.0, "metragem_bobinada": 50.0}},
+            {"ts": 2000, "values": {"vel_calandra": 0.0, "metragem_bobinada": 70.0}},
+        ]
+        CalandraHistoricalService.detect_effective_process(tl_4)
+        self.assertFalse(tl_4[0]["is_effective"])
+        self.assertFalse(tl_4[1]["is_effective"])
+
+        # Cenário 5: reinício/reset de metragem (troca de bobina com produção contínua)
+        tl_5 = [
+            {"ts": 1000, "values": {"vel_calandra": 15.0, "metragem_bobinada": 850.0}},
+            {"ts": 2000, "values": {"vel_calandra": 15.0, "metragem_bobinada": 0.0}},  # Reset de bobina
+            {"ts": 3000, "values": {"vel_calandra": 15.0, "metragem_bobinada": 25.0}}, # Avanço
+        ]
+        CalandraHistoricalService.detect_effective_process(tl_5)
+        self.assertTrue(tl_5[0]["is_effective"])
+        self.assertTrue(tl_5[1]["is_effective"])
+        self.assertTrue(tl_5[2]["is_effective"])
+
+        # Cenário 6: pequenas flutuações/ruídos (v <= 0.05)
+        tl_6 = [
+            {"ts": 1000, "values": {"vel_calandra": 0.02, "metragem_bobinada": 10.0}},
+            {"ts": 2000, "values": {"vel_calandra": 0.03, "metragem_bobinada": 10.0}},
+        ]
+        CalandraHistoricalService.detect_effective_process(tl_6)
+        self.assertFalse(tl_6[0]["is_effective"])
+        self.assertFalse(tl_6[1]["is_effective"])
+
+    def test_audit_cards_stats_computation(self):
+        """Valida o cálculo correto de média, mínimo e máximo dos 4 cards sobre processo efetivo."""
+        timeline = [
+            # Ponto 1: Em processo efetivo
+            {
+                "ts": 1000,
+                "is_effective": True,
+                "values": {
+                    "vel_calandra": 10.0, "metragem_bobinada": 10.0,
+                    "temp_borracha_saida_extrusao": 80.0,
+                    "temp_borracha_ent_calandra": 40.0,
+                    "temp_borracha_saida_calandra": 75.0,
+                    "temp_cilindro_inf": 60.0,
+                    "temp_cilindro_inter": 65.0,
+                    "temp_cilindro_sup": 70.0,
+                    "carga_desbobinador": 50.0,
+                    "carga_quebra_trama": 200.0,
+                    "carga_pos_calandra": 220.0,
+                    "carga_bobinamento": 180.0,
+                    "temp_furador": 30.0,
+                    "temp_aquecedor": 45.0,
+                    "temp_tcu_extrusora": 55.0,
+                }
+            },
+            # Ponto 2: Em processo efetivo
+            {
+                "ts": 2000,
+                "is_effective": True,
+                "values": {
+                    "vel_calandra": 12.0, "metragem_bobinada": 30.0,
+                    "temp_borracha_saida_extrusao": 90.0,
+                    "temp_borracha_ent_calandra": 42.0,
+                    "temp_borracha_saida_calandra": 85.0,
+                    "temp_cilindro_inf": 64.0,
+                    "temp_cilindro_inter": 67.0,
+                    "temp_cilindro_sup": 72.0,
+                    "carga_desbobinador": 70.0,
+                    "carga_quebra_trama": 210.0,
+                    "carga_pos_calandra": 230.0,
+                    "carga_bobinamento": 190.0,
+                    "temp_furador": 32.0,
+                    "temp_aquecedor": 47.0,
+                    "temp_tcu_extrusora": 57.0,
+                }
+            },
+            # Ponto 3: Máquina parada (NÃO deve distorcer as médias dos cards!)
+            {
+                "ts": 3000,
+                "is_effective": False,
+                "values": {
+                    "vel_calandra": 0.0, "metragem_bobinada": 30.0,
+                    "temp_borracha_saida_extrusao": 20.0, # Valor frio de parada
+                    "temp_cilindro_inf": 25.0,
+                    "carga_desbobinador": 0.0,
+                }
+            },
+        ]
+
+        stats = CalandraHistoricalService.compute_effective_process_stats(timeline)
+        self.assertTrue(stats["has_effective_process"])
+        self.assertEqual(stats["effective_points_count"], 2)
+
+        # Card 1: Temp Borracha (Médias de [80, 90] = 85.0, Mín 80.0, Máx 90.0)
+        c1 = stats["temp_borracha"]["saida_extrusao"]
+        self.assertEqual(c1["avg"], 85.0)
+        self.assertEqual(c1["min"], 80.0)
+        self.assertEqual(c1["max"], 90.0)
+
+        # Card 2: Cilindros (Inf: [60, 64] -> 62.0; Inter: [65, 67] -> 66.0; Sup: [70, 72] -> 71.0)
+        c2 = stats["temp_cilindros"]
+        self.assertEqual(c2["cilindro_inf"]["avg"], 62.0)
+        self.assertEqual(c2["cilindro_sup"]["avg"], 71.0)
+        # Delta Cilindros = 71.0 - 62.0 = 9.0
+        self.assertEqual(c2["delta_cilindros"], 9.0)
+
+        # Card 3: Cargas (Desbobinador: [50, 70] -> 60.0)
+        c3 = stats["cargas"]["desbobinador"]
+        self.assertEqual(c3["avg"], 60.0)
+        self.assertEqual(c3["min"], 50.0)
+        self.assertEqual(c3["max"], 70.0)
+
+    def test_audit_cards_no_effective_process(self):
+        """Valida que período sem processo efetivo retorna has_effective_process=False sem divisão por zero."""
+        timeline = [
+            {"ts": 1000, "is_effective": False, "values": {"vel_calandra": 0.0, "temp_borracha_saida_extrusao": 25.0}},
+            {"ts": 2000, "is_effective": False, "values": {"vel_calandra": 0.0, "temp_borracha_saida_extrusao": 24.0}},
+        ]
+        stats = CalandraHistoricalService.compute_effective_process_stats(timeline)
+        self.assertFalse(stats["has_effective_process"])
+        self.assertEqual(stats["effective_points_count"], 0)
+        self.assertIsNone(stats["temp_borracha"]["saida_extrusao"]["avg"])
+
+    def test_passada_window_context(self):
+        """Valida o contexto semântico de passada ativa na janela."""
+        t_p1 = [{"passada_val": 1.0}, {"passada_val": 1.0}]
+        self.assertEqual(CalandraHistoricalService.get_passada_window_context(t_p1), "PASSADA 1 — 1ª face")
+
+        t_p2 = [{"passada_val": 2.0}, {"passada_val": 2.0}]
+        self.assertEqual(CalandraHistoricalService.get_passada_window_context(t_p2), "PASSADA 2 — 2ª face / face oposta")
+
+        t_both = [{"passada_val": 1.0}, {"passada_val": 2.0}]
+        self.assertEqual(CalandraHistoricalService.get_passada_window_context(t_both), "PASSADA 1 e PASSADA 2")
 
     def test_forward_fill_state_synchronization(self):
         """
@@ -236,62 +408,67 @@ class CalandraReportTestCase(TestCase):
 
         # Ponto 1 (t1): deve herdar vel=10.5 e passada=1 do seed, e conter carga_bob=200.0
         row1 = timeline[0]
-        self.assertEqual(row1["passada_label"], "PASSADA 1 (1ª face)")
+        self.assertIn("PASSADA 1", row1["passada_label"])
         self.assertEqual(row1["values"]["vel_calandra"], 10.5)
         self.assertEqual(row1["values"]["carga_bobinamento"], 200.0)
 
         # Ponto 2 (t2): deve manter vel=10.5, carga_bob=200.0, passada=1 e atualizar temp=85.2
         row2 = timeline[1]
-        self.assertEqual(row2["passada_label"], "PASSADA 1 (1ª face)")
+        self.assertIn("PASSADA 1", row2["passada_label"])
         self.assertEqual(row2["values"]["vel_calandra"], 10.5)
         self.assertEqual(row2["values"]["carga_bobinamento"], 200.0)
         self.assertEqual(row2["values"]["temp_borracha_saida_extrusao"], 85.2)
 
         # Ponto 3 (t3): transição para PASSADA 2 (2ª face / face oposta)
         row3 = timeline[2]
-        self.assertEqual(row3["passada_label"], "PASSADA 2 (2ª face / face oposta)")
+        self.assertIn("PASSADA 2", row3["passada_label"])
         self.assertEqual(row3["values"]["vel_calandra"], 10.5)
         self.assertEqual(row3["values"]["temp_borracha_saida_extrusao"], 85.2)
 
     def test_chart_datasets_structure(self):
-        """Valida que os 5 datasets de gráficos contêm as chaves e séries corretas."""
+        """Valida que os 6 datasets de gráficos contêm as chaves e séries corretas (com Cilindros e Auxiliares separados)."""
         start_dt = timezone.now() - timedelta(hours=1)
         end_dt = timezone.now()
 
         history = CalandraHistoricalService.get_synchronized_history(start_dt, end_dt)
         charts = history["chart_datasets"]
 
-        self.assertIn("chart_a_producao", charts)
-        self.assertIn("chart_b_cargas", charts)
-        self.assertIn("chart_c_espessuras", charts)
-        self.assertIn("chart_d_temp_borracha", charts)
-        self.assertIn("chart_e_temp_processo", charts)
+        self.assertIn("chart_1_producao", charts)
+        self.assertIn("chart_2_cargas", charts)
+        self.assertIn("chart_3_espessuras", charts)
+        self.assertIn("chart_4_temp_borracha", charts)
+        self.assertIn("chart_5_temp_cilindros", charts)
+        self.assertIn("chart_6_temp_auxiliares", charts)
 
-        # Gráfico A
-        self.assertIn("velocidade", charts["chart_a_producao"])
-        self.assertIn("metragem", charts["chart_a_producao"])
-        self.assertIn("passada", charts["chart_a_producao"])
+        # Gráfico 1: Produção
+        self.assertIn("velocidade", charts["chart_1_producao"])
+        self.assertIn("metragem", charts["chart_1_producao"])
+        self.assertIn("passada", charts["chart_1_producao"])
 
-        # Gráfico B
-        self.assertIn("bobinamento", charts["chart_b_cargas"])
-        self.assertIn("desbobinador", charts["chart_b_cargas"])
+        # Gráfico 2: Cargas
+        self.assertIn("bobinamento", charts["chart_2_cargas"])
+        self.assertIn("desbobinador", charts["chart_2_cargas"])
+        self.assertIn("pos_calandra", charts["chart_2_cargas"])
+        self.assertIn("quebra_trama", charts["chart_2_cargas"])
 
-        # Gráfico C
-        self.assertIn("esq_sup", charts["chart_c_espessuras"])
-        self.assertIn("dir_sup", charts["chart_c_espessuras"])
+        # Gráfico 3: Espessuras
+        self.assertIn("esq_sup", charts["chart_3_espessuras"])
+        self.assertIn("dir_sup", charts["chart_3_espessuras"])
 
-        # Gráfico D
-        self.assertIn("saida_extrusao", charts["chart_d_temp_borracha"])
-        self.assertIn("ent_calandra", charts["chart_d_temp_borracha"])
-        self.assertIn("saida_calandra", charts["chart_d_temp_borracha"])
+        # Gráfico 4: Temp Borracha
+        self.assertIn("saida_extrusao", charts["chart_4_temp_borracha"])
+        self.assertIn("ent_calandra", charts["chart_4_temp_borracha"])
+        self.assertIn("saida_calandra", charts["chart_4_temp_borracha"])
 
-        # Gráfico E
-        self.assertIn("cilindro_inf", charts["chart_e_temp_processo"])
-        self.assertIn("cilindro_inter", charts["chart_e_temp_processo"])
-        self.assertIn("cilindro_sup", charts["chart_e_temp_processo"])
-        self.assertIn("furador", charts["chart_e_temp_processo"])
-        self.assertIn("aquecedor", charts["chart_e_temp_processo"])
-        self.assertIn("tcu_extrusora", charts["chart_e_temp_processo"])
+        # Gráfico 5: Temp Cilindros
+        self.assertIn("cilindro_inf", charts["chart_5_temp_cilindros"])
+        self.assertIn("cilindro_inter", charts["chart_5_temp_cilindros"])
+        self.assertIn("cilindro_sup", charts["chart_5_temp_cilindros"])
+
+        # Gráfico 6: Temp Auxiliares
+        self.assertIn("furador", charts["chart_6_temp_auxiliares"])
+        self.assertIn("aquecedor", charts["chart_6_temp_auxiliares"])
+        self.assertIn("tcu_extrusora", charts["chart_6_temp_auxiliares"])
 
     # ─────────────────────────────────────────────────────────────────────────
     # 4. TESTES DE GERAÇÃO EXCEL (.XLSX)
@@ -334,14 +511,14 @@ class CalandraReportTestCase(TestCase):
 
         # Linha 1 de dados (row=2)
         row1_passada = ws.cell(row=2, column=2).value
-        self.assertEqual(row1_passada, "PASSADA 1 (1ª face)")
+        self.assertIn("PASSADA 1", row1_passada)
         row1_metragem = ws.cell(row=2, column=3).value
         self.assertEqual(row1_metragem, 540.0)
         self.assertIsInstance(row1_metragem, (int, float))  # Numérico real!
 
         # Linha 2 de dados (row=3)
         row2_passada = ws.cell(row=3, column=2).value
-        self.assertEqual(row2_passada, "PASSADA 2 (2ª face / face oposta)")
+        self.assertIn("PASSADA 2", row2_passada)
         row2_vel = ws.cell(row=3, column=4).value
         self.assertEqual(row2_vel, 14.0)
         self.assertIsInstance(row2_vel, (int, float))

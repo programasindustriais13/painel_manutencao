@@ -3042,13 +3042,57 @@ Arquivos Modificados:
 
 Resumo de Testes Automatizados:
 - `production/test_calandra_report.py`: 13 testes (100% OK).
-- Suíte Global do Projeto: 284 testes com 100% de sucesso.
+==============================================================================
+50. SPEC — CALANDRA: AUDITORIA DE PROCESSO E QUALIDADE DO MATERIAL EMBORRACHADO
+Data: 2026-08-27 | Status: Concluída com Sucesso (Suíte 17/17 Testes Aprovados)
+==============================================================================
 
+Objetivo:
+Evoluir a tela de relatório histórico da Calandra (/producao/relatorios/calandra/) de uma visualização técnica para uma ferramenta de auditoria das condições de processo e qualidade do material emborrachado nas passadas 1 e 2 (1ª face e 2ª face / face oposta), sem inventar tolerâncias ou alarmes, preservando a segurança read-only do SCADA e oferecendo seleção temporal coordenada sem consultas extras ao banco.
 
+Novas Funcionalidades e Arquitetura:
+1. 4 Novos Cards Principais de Processo Efetivo:
+   - CARD 1: TEMPERATURA DA BORRACHA (°C) -> Saída Extrusão, Entrada Calandra, Saída Calandra (Média, Mínimo e Máximo).
+   - CARD 2: TEMPERATURA DOS CILINDROS (°C) -> Cilindro Inferior, Cilindro Intermediário, Cilindro Superior (Média, Mínimo e Máximo) + Δ Térmico entre Cilindros informativo.
+   - CARD 3: CARGAS DO PROCESSO (kg) -> Desbobinador, Quebra-Trama, Pós-Calandra, Bobinamento (Média, Mínimo e Máximo).
+   - CARD 4: TEMPERATURAS AUXILIARES (°C) -> Furador, Aquecedor, TCU Extrusora (Média, Mínimo e Máximo).
+   - Espessuras não são exibidas em cards KPI (mantidas no histórico/gráfico/tabela/Excel).
+   - Ausência de tolerâncias ou julgamentos de aprovação/reprovação.
+   - Tratamento para janelas sem processo efetivo: exibição do status "Sem dados de produção efetiva neste intervalo" sem divisão por zero ou dados distorcidos.
 
+2. Regra Matemática de Processo Efetivo:
+   - Baseada na combinação de Velocidade da Calandra (v > 0.05 m/min) e Avanço Real da Metragem Bobinada (incremento no bloco de produção, reconhecendo resets de bobina e descartando paradas, testes em vazio ou ruídos).
 
+3. 6 Gráficos de Linha Temporais:
+   - Gráfico 1: Produção (Velocidade m/min + Metragem Bobinada m + Contexto de Passada)
+   - Gráfico 2: Cargas do Processo (kg)
+   - Gráfico 3: Espessuras (mm)
+   - Gráfico 4: Temperatura da Borracha (°C)
+   - Gráfico 5: Temperatura dos Cilindros (°C)
+   - Gráfico 6: Temperaturas Auxiliares (°C) (segregadas dos cilindros para clareza visual)
 
+4. Janela de Análise Coordenada & Sincronização em Tempo Real:
+   - Seleção temporal (drag/brush) em qualquer um dos 6 gráficos atualiza simultaneamente todos os 6 gráficos.
+   - Recálculo instantâneo dos 4 cards de processo efetivo em memória no navegador (zero consultas extras ao SCADA).
+   - Atualização do indicador de Passada na janela ("PASSADA 1 — 1ª face", "PASSADA 2 — 2ª face / face oposta" ou "PASSADA 1 e PASSADA 2").
+   - Botão "Limpar seleção" restaura o período completo instantaneamente.
+   - Hover e cursor sincronizados entre gráficos.
 
+5. Informações Técnicas Recolhidas:
+   - Indicadores de diagnóstico (pontos brutos, linhas sincronizadas, variáveis) alocados em <details> recolhido por padrão.
 
+6. Segurança e Exportação:
+   - Banco `scada` estritamente somente-leitura (0 writes, 0 migrations).
+   - Exportação Excel (.xlsx) vinculada ao filtro principal, preservando 100% dos dados brutos sincronizados.
 
+Arquivos Modificados:
+- `regras_programacao/SPEC_HISTORICO_CALANDRA_RELATORIOS.md`: Especificação técnica atualizada.
+- `production/services_calandra.py`: Implementação de `detect_effective_process`, `compute_effective_process_stats`, `get_passada_window_context` e segregação dos 6 datasets de gráficos.
+- `production/views.py`: Envio de `card_stats`, `effective_points_count`, `passada_context` e `compact_timeline_json` para o template.
+- `production/templates/production/calandra_report.html`: 4 cards de auditoria, 6 gráficos de linha temporais, barra de janela em análise, seleção temporal coordenada, hover sincronizado e detalhes técnicos recolhidos.
+- `production/test_calandra_report.py`: 17 testes automatizados cobrindo os 6 cenários de processo efetivo, cálculo de cards, ausência de processo, 6 gráficos, passada e segurança read-only.
+- `Instrucoes.txt`: Este registro histórico.
+
+Resumo de Testes Automatizados:
+- `production/test_calandra_report.py`: 17 testes executados com 100% de sucesso.
 

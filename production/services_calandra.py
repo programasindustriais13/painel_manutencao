@@ -306,8 +306,8 @@ class CalandraHistoricalService:
     def format_passada_label(cls, val: Any) -> str:
         """
         Formata o valor da variável PASSADA em rótulo contextual:
-        - 1 / '1': PASSADA 1 (1ª face)
-        - 2 / '2': PASSADA 2 (2ª face / face oposta)
+        - 1 / '1': PASSADA 1 — 1ª face
+        - 2 / '2': PASSADA 2 — 2ª face / face oposta
         """
         if val is None or val == "":
             return "Não informada"
@@ -316,16 +316,49 @@ class CalandraHistoricalService:
             f = float(s)
             int_v = int(f)
             if int_v == 1:
-                return "PASSADA 1 (1ª face)"
+                return "PASSADA 1 — 1ª face"
             elif int_v == 2:
-                return "PASSADA 2 (2ª face / face oposta)"
+                return "PASSADA 2 — 2ª face / face oposta"
             return f"PASSADA {int_v}"
         except (ValueError, TypeError):
-            if s == "1":
-                return "PASSADA 1 (1ª face)"
-            elif s == "2":
-                return "PASSADA 2 (2ª face / face oposta)"
+            if s in ("1", "1.0"):
+                return "PASSADA 1 — 1ª face"
+            elif s in ("2", "2.0"):
+                return "PASSADA 2 — 2ª face / face oposta"
             return s
+
+    @classmethod
+    def get_passada_window_context(cls, timeline: List[Dict[str, Any]]) -> str:
+        """
+        Identifica o contexto semântico da PASSADA presente na janela da timeline:
+        - Se contiver apenas PASSADA 1: 'PASSADA 1 — 1ª face'
+        - Se contiver apenas PASSADA 2: 'PASSADA 2 — 2ª face / face oposta'
+        - Se contiver ambas: 'PASSADA 1 e PASSADA 2'
+        - Caso contrário: 'Não informada' ou descrição adequada
+        """
+        if not timeline:
+            return "Sem dados"
+
+        passadas_encontradas = set()
+        for item in timeline:
+            p_val = item.get("passada_val")
+            if p_val is not None and str(p_val).strip() != "":
+                try:
+                    f = float(p_val)
+                    passadas_encontradas.add(int(f))
+                except (ValueError, TypeError):
+                    passadas_encontradas.add(str(p_val).strip())
+
+        if 1 in passadas_encontradas and 2 in passadas_encontradas:
+            return "PASSADA 1 e PASSADA 2"
+        elif 1 in passadas_encontradas or "1" in passadas_encontradas:
+            return "PASSADA 1 — 1ª face"
+        elif 2 in passadas_encontradas or "2" in passadas_encontradas:
+            return "PASSADA 2 — 2ª face / face oposta"
+        elif len(passadas_encontradas) == 1:
+            val = list(passadas_encontradas)[0]
+            return cls.format_passada_label(val)
+        return "Não informada"
 
     @classmethod
     def parse_period_filters(
@@ -453,6 +486,170 @@ class CalandraHistoricalService:
         return resolved
 
     @classmethod
+    def detect_effective_process(cls, timeline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Classifica cada ponto da timeline como processo efetivo (is_effective = True/False)
+        baseado na combinação de velocidade da calandra e avanço real da metragem bobinada.
+        
+        Regras aplicadas:
+        1. Velocidade: v > 0.05 m/min (elimina ruído de parada).
+        2. Metragem: deve haver avanço positivo no bloco contínuo de produção.
+        3. Resets de metragem (ex: troca de rolo/bobina com avanço posterior) são reconhecidos.
+        4. Períodos estagnados, testes em vazio (v > 0 sem metragem avançar) ou paradas (v <= 0) são marcados como False.
+        """
+        if not timeline:
+            return timeline
+
+        n = len(timeline)
+        speeds: List[float] = []
+        meters: List[Optional[float]] = []
+
+        for item in timeline:
+            v_val = item["values"].get("vel_calandra")
+            m_val = item["values"].get("metragem_bobinada")
+            try:
+                v_f = float(v_val) if v_val is not None and str(v_val).strip() != "" else 0.0
+            except (ValueError, TypeError):
+                v_f = 0.0
+            try:
+                m_f = float(m_val) if m_val is not None and str(m_val).strip() != "" else None
+            except (ValueError, TypeError):
+                m_f = None
+            speeds.append(v_f)
+            meters.append(m_f)
+
+        is_effective_flags = [False] * n
+
+        i = 0
+        while i < n:
+            if speeds[i] > 0.05:
+                start_blk = i
+                while i < n and speeds[i] > 0.05:
+                    i += 1
+                end_blk = i  # Bloco contíguo de velocidade positiva: [start_blk:end_blk]
+
+                blk_meters = [meters[k] for k in range(start_blk, end_blk) if meters[k] is not None]
+
+                if not blk_meters:
+                    for k in range(start_blk, end_blk):
+                        is_effective_flags[k] = False
+                elif len(blk_meters) == 1:
+                    prev_m = meters[start_blk - 1] if start_blk > 0 else None
+                    curr_m = blk_meters[0]
+                    if prev_m is not None and curr_m > prev_m:
+                        is_effective_flags[start_blk] = True
+                    elif curr_m > 0:
+                        is_effective_flags[start_blk] = True
+                    else:
+                        is_effective_flags[start_blk] = False
+                else:
+                    # Múltiplos pontos no bloco. Verificar se há avanço positivo de metragem
+                    has_advance = False
+                    for k in range(start_blk, end_blk - 1):
+                        m_curr = meters[k]
+                        m_nxt = meters[k + 1]
+                        if m_curr is not None and m_nxt is not None:
+                            if m_nxt > m_curr:
+                                has_advance = True
+                                break
+                            elif m_nxt < m_curr and m_nxt >= 0:
+                                # Reset de bobina / nova metragem com produção contínua
+                                has_advance = True
+                                break
+
+                    if not has_advance and start_blk > 0 and meters[start_blk - 1] is not None and blk_meters[0] > meters[start_blk - 1]:
+                        has_advance = True
+
+                    for k in range(start_blk, end_blk):
+                        is_effective_flags[k] = has_advance
+            else:
+                is_effective_flags[i] = False
+                i += 1
+
+        for idx, item in enumerate(timeline):
+            item["is_effective"] = is_effective_flags[idx]
+
+        return timeline
+
+    @classmethod
+    def compute_effective_process_stats(cls, timeline: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Calcula as estatísticas descritivas (Média, Mínimo e Máximo) para os 4 cards principais
+        de auditoria, considerando estritamente os pontos classificados como Processo Efetivo.
+        """
+        effective_rows = [item for item in timeline if item.get("is_effective") is True]
+        has_effective = len(effective_rows) > 0
+
+        def _calc_var_stat(var_key: str) -> Dict[str, Optional[float]]:
+            if not has_effective:
+                return {"avg": None, "min": None, "max": None, "count": 0}
+            vals: List[float] = []
+            for r in effective_rows:
+                v = r["values"].get(var_key)
+                if v is not None and str(v).strip() != "":
+                    try:
+                        vals.append(float(v))
+                    except (ValueError, TypeError):
+                        pass
+            if not vals:
+                return {"avg": None, "min": None, "max": None, "count": 0}
+            return {
+                "avg": round(sum(vals) / len(vals), 1),
+                "min": round(min(vals), 1),
+                "max": round(max(vals), 1),
+                "count": len(vals),
+            }
+
+        # Card 1: Temperatura da Borracha (°C)
+        temp_borracha = {
+            "saida_extrusao": _calc_var_stat("temp_borracha_saida_extrusao"),
+            "ent_calandra": _calc_var_stat("temp_borracha_ent_calandra"),
+            "saida_calandra": _calc_var_stat("temp_borracha_saida_calandra"),
+        }
+
+        # Card 2: Temperatura dos Cilindros (°C)
+        cil_inf = _calc_var_stat("temp_cilindro_inf")
+        cil_inter = _calc_var_stat("temp_cilindro_inter")
+        cil_sup = _calc_var_stat("temp_cilindro_sup")
+        
+        delta_cilindros = None
+        cil_avgs = [c["avg"] for c in (cil_inf, cil_inter, cil_sup) if c["avg"] is not None]
+        if len(cil_avgs) >= 2:
+            delta_cilindros = round(max(cil_avgs) - min(cil_avgs), 1)
+
+        temp_cilindros = {
+            "cilindro_inf": cil_inf,
+            "cilindro_inter": cil_inter,
+            "cilindro_sup": cil_sup,
+            "delta_cilindros": delta_cilindros,
+        }
+
+        # Card 3: Cargas do Processo (kg)
+        cargas = {
+            "desbobinador": _calc_var_stat("carga_desbobinador"),
+            "quebra_trama": _calc_var_stat("carga_quebra_trama"),
+            "pos_calandra": _calc_var_stat("carga_pos_calandra"),
+            "bobinamento": _calc_var_stat("carga_bobinamento"),
+        }
+
+        # Card 4: Temperaturas Auxiliares (°C)
+        temp_auxiliares = {
+            "furador": _calc_var_stat("temp_furador"),
+            "aquecedor": _calc_var_stat("temp_aquecedor"),
+            "tcu_extrusora": _calc_var_stat("temp_tcu_extrusora"),
+        }
+
+        return {
+            "has_effective_process": has_effective,
+            "effective_points_count": len(effective_rows),
+            "total_points_count": len(timeline),
+            "temp_borracha": temp_borracha,
+            "temp_cilindros": temp_cilindros,
+            "cargas": cargas,
+            "temp_auxiliares": temp_auxiliares,
+        }
+
+    @classmethod
     def get_synchronized_history(
         cls,
         start_dt: datetime,
@@ -460,16 +657,7 @@ class CalandraHistoricalService:
     ) -> Dict[str, Any]:
         """
         Executa a consulta histórica indexada e executa o algoritmo de forward-fill temporal.
-        Retorna:
-        {
-            'timeline': List[Dict[str, Any]], # Lista de estados conhecidos por timestamp
-            'raw_points_count': int,
-            'variables_found_count': int,
-            'variables_missing': List[str],
-            'chart_datasets': Dict[str, Any], # Datasets preparados para os 5 gráficos
-            'start_dt': datetime,
-            'end_dt': datetime,
-        }
+        Aplica a classificação de Processo Efetivo e calcula as estatísticas para auditoria.
         """
         start_ms = int(start_dt.timestamp() * 1000)
         end_ms = int(end_dt.timestamp() * 1000)
@@ -487,12 +675,16 @@ class CalandraHistoricalService:
                 variables_missing.append(info["config"]["label"])
 
         if not active_dp_ids:
+            empty_charts = cls._empty_chart_datasets()
             return {
                 "timeline": [],
                 "raw_points_count": 0,
                 "variables_found_count": 0,
                 "variables_missing": variables_missing,
-                "chart_datasets": cls._empty_chart_datasets(),
+                "chart_datasets": empty_charts,
+                "card_stats": cls.compute_effective_process_stats([]),
+                "effective_points_count": 0,
+                "passada_context": "Sem dados",
                 "start_dt": start_dt,
                 "end_dt": end_dt,
             }
@@ -543,7 +735,6 @@ class CalandraHistoricalService:
         raw_points_count = len(raw_records)
 
         # 3. Algoritmo de Forward-Fill Temporal
-        # Agrupar registros por timestamp único
         events_by_ts: Dict[int, Dict[str, Any]] = {}
         for pv in raw_records:
             v_key = dp_id_to_key.get(pv.data_point_id)
@@ -585,7 +776,14 @@ class CalandraHistoricalService:
                 "values": current_state.copy(),
             })
 
-        # 4. Preparar datasets para os 5 gráficos com amostragem inteligente se necessário
+        # 4. Classificação de Processo Efetivo
+        cls.detect_effective_process(timeline)
+
+        # 5. Cálculo das estatísticas de auditoria dos 4 cards
+        card_stats = cls.compute_effective_process_stats(timeline)
+        passada_context = cls.get_passada_window_context(timeline)
+
+        # 6. Preparar datasets para os 6 gráficos
         chart_datasets = cls._build_chart_datasets(timeline)
 
         return {
@@ -594,6 +792,9 @@ class CalandraHistoricalService:
             "variables_found_count": len(active_dp_ids),
             "variables_missing": variables_missing,
             "chart_datasets": chart_datasets,
+            "card_stats": card_stats,
+            "effective_points_count": card_stats["effective_points_count"],
+            "passada_context": passada_context,
             "start_dt": start_dt,
             "end_dt": end_dt,
         }
@@ -601,6 +802,13 @@ class CalandraHistoricalService:
     @classmethod
     def _empty_chart_datasets(cls) -> Dict[str, Any]:
         return {
+            "chart_1_producao": {"labels": [], "timestamps": [], "velocidade": [], "metragem": [], "passada": [], "passada_labels": [], "is_effective": []},
+            "chart_2_cargas": {"labels": [], "timestamps": [], "desbobinador": [], "quebra_trama": [], "pos_calandra": [], "bobinamento": []},
+            "chart_3_espessuras": {"labels": [], "timestamps": [], "esq_sup": [], "dir_sup": [], "dir_inf": [], "esq_inf": []},
+            "chart_4_temp_borracha": {"labels": [], "timestamps": [], "saida_extrusao": [], "ent_calandra": [], "saida_calandra": []},
+            "chart_5_temp_cilindros": {"labels": [], "timestamps": [], "cilindro_inf": [], "cilindro_inter": [], "cilindro_sup": []},
+            "chart_6_temp_auxiliares": {"labels": [], "timestamps": [], "furador": [], "aquecedor": [], "tcu_extrusora": []},
+            # Aliases legados para retrocompatibilidade
             "chart_a_producao": {"labels": [], "velocidade": [], "metragem": [], "passada": []},
             "chart_b_cargas": {"labels": [], "bobinamento": [], "desbobinador": [], "pos_calandra": [], "quebra_trama": []},
             "chart_c_espessuras": {"labels": [], "esq_sup": [], "dir_sup": [], "dir_inf": [], "esq_inf": []},
@@ -611,8 +819,8 @@ class CalandraHistoricalService:
     @classmethod
     def _build_chart_datasets(cls, timeline: List[Dict[str, Any]], max_chart_points: int = 1500) -> Dict[str, Any]:
         """
-        Monta as séries de dados para Chart.js.
-        Aplica amostragem equidistante preservando transições de PASSADA se o volume de pontos for elevado.
+        Monta as séries de dados temporais para os 6 gráficos no Chart.js.
+        Preserva timestamps e flags de processo efetivo para seleção coordenada no cliente.
         """
         if not timeline:
             return cls._empty_chart_datasets()
@@ -624,14 +832,11 @@ class CalandraHistoricalService:
             sampled_timeline = timeline
         else:
             step = total / max_chart_points
-            last_passada = None
             for i in range(max_chart_points):
                 idx = min(int(i * step), total - 1)
-                item = timeline[idx]
-                sampled_timeline.append(item)
-                last_passada = item.get("passada_val")
+                sampled_timeline.append(timeline[idx])
 
-            # Garantir inclusão de transições de passada que poderiam ter sido puladas
+            # Garantir inclusão de transições de passada
             for idx in range(1, total):
                 if timeline[idx].get("passada_val") != timeline[idx - 1].get("passada_val"):
                     if timeline[idx] not in sampled_timeline:
@@ -639,55 +844,137 @@ class CalandraHistoricalService:
 
             sampled_timeline.sort(key=lambda x: x["ts"])
 
-        # Extrair vetores
+        # Vetores comuns
         labels = [item["datetime_str"] for item in sampled_timeline]
+        timestamps = [item["ts"] for item in sampled_timeline]
         passada_vals = [item.get("passada_val") for item in sampled_timeline]
+        passada_lbls = [item.get("passada_label", cls.format_passada_label(p)) for item, p in zip(sampled_timeline, passada_vals)]
+        is_effective_list = [item.get("is_effective", False) for item in sampled_timeline]
 
         def _get_float(item: Dict[str, Any], key: str) -> Optional[float]:
             v = item["values"].get(key)
-            if v is None:
+            if v is None or str(v).strip() == "":
                 return None
             try:
                 return round(float(v), 2)
             except (ValueError, TypeError):
                 return None
 
+        # Séries individuais
+        vel_list = [_get_float(item, "vel_calandra") for item in sampled_timeline]
+        metr_list = [_get_float(item, "metragem_bobinada") for item in sampled_timeline]
+
+        bob_list = [_get_float(item, "carga_bobinamento") for item in sampled_timeline]
+        desb_list = [_get_float(item, "carga_desbobinador") for item in sampled_timeline]
+        pos_list = [_get_float(item, "carga_pos_calandra") for item in sampled_timeline]
+        queb_list = [_get_float(item, "carga_quebra_trama") for item in sampled_timeline]
+
+        esq_sup = [_get_float(item, "espessura_esq_sup") for item in sampled_timeline]
+        dir_sup = [_get_float(item, "espessura_dir_sup") for item in sampled_timeline]
+        dir_inf = [_get_float(item, "espessura_dir_inf") for item in sampled_timeline]
+        esq_inf = [_get_float(item, "espessura_esq_inf") for item in sampled_timeline]
+
+        t_saida_extr = [_get_float(item, "temp_borracha_saida_extrusao") for item in sampled_timeline]
+        t_ent_cal = [_get_float(item, "temp_borracha_ent_calandra") for item in sampled_timeline]
+        t_saida_cal = [_get_float(item, "temp_borracha_saida_calandra") for item in sampled_timeline]
+
+        t_cil_inf = [_get_float(item, "temp_cilindro_inf") for item in sampled_timeline]
+        t_cil_inter = [_get_float(item, "temp_cilindro_inter") for item in sampled_timeline]
+        t_cil_sup = [_get_float(item, "temp_cilindro_sup") for item in sampled_timeline]
+
+        t_fur = [_get_float(item, "temp_furador") for item in sampled_timeline]
+        t_aquec = [_get_float(item, "temp_aquecedor") for item in sampled_timeline]
+        t_tcu = [_get_float(item, "temp_tcu_extrusora") for item in sampled_timeline]
+
         return {
+            # Gráfico 1: Produção (Velocidade + Metragem + Passada)
+            "chart_1_producao": {
+                "labels": labels,
+                "timestamps": timestamps,
+                "velocidade": vel_list,
+                "metragem": metr_list,
+                "passada": passada_vals,
+                "passada_labels": passada_lbls,
+                "is_effective": is_effective_list,
+            },
+            # Gráfico 2: Cargas do Processo (kg)
+            "chart_2_cargas": {
+                "labels": labels,
+                "timestamps": timestamps,
+                "desbobinador": desb_list,
+                "quebra_trama": queb_list,
+                "pos_calandra": pos_list,
+                "bobinamento": bob_list,
+            },
+            # Gráfico 3: Espessuras (mm)
+            "chart_3_espessuras": {
+                "labels": labels,
+                "timestamps": timestamps,
+                "esq_sup": esq_sup,
+                "dir_sup": dir_sup,
+                "dir_inf": dir_inf,
+                "esq_inf": esq_inf,
+            },
+            # Gráfico 4: Temperatura da Borracha (°C)
+            "chart_4_temp_borracha": {
+                "labels": labels,
+                "timestamps": timestamps,
+                "saida_extrusao": t_saida_extr,
+                "ent_calandra": t_ent_cal,
+                "saida_calandra": t_saida_cal,
+            },
+            # Gráfico 5: Temperatura dos Cilindros (°C)
+            "chart_5_temp_cilindros": {
+                "labels": labels,
+                "timestamps": timestamps,
+                "cilindro_inf": t_cil_inf,
+                "cilindro_inter": t_cil_inter,
+                "cilindro_sup": t_cil_sup,
+            },
+            # Gráfico 6: Temperaturas Auxiliares (°C)
+            "chart_6_temp_auxiliares": {
+                "labels": labels,
+                "timestamps": timestamps,
+                "furador": t_fur,
+                "aquecedor": t_aquec,
+                "tcu_extrusora": t_tcu,
+            },
+            # Aliases legados (retrocompatibilidade)
             "chart_a_producao": {
                 "labels": labels,
-                "velocidade": [_get_float(item, "vel_calandra") for item in sampled_timeline],
-                "metragem": [_get_float(item, "metragem_bobinada") for item in sampled_timeline],
+                "velocidade": vel_list,
+                "metragem": metr_list,
                 "passada": passada_vals,
-                "passada_labels": [cls.format_passada_label(p) for p in passada_vals],
+                "passada_labels": passada_lbls,
             },
             "chart_b_cargas": {
                 "labels": labels,
-                "bobinamento": [_get_float(item, "carga_bobinamento") for item in sampled_timeline],
-                "desbobinador": [_get_float(item, "carga_desbobinador") for item in sampled_timeline],
-                "pos_calandra": [_get_float(item, "carga_pos_calandra") for item in sampled_timeline],
-                "quebra_trama": [_get_float(item, "carga_quebra_trama") for item in sampled_timeline],
+                "bobinamento": bob_list,
+                "desbobinador": desb_list,
+                "pos_calandra": pos_list,
+                "quebra_trama": queb_list,
             },
             "chart_c_espessuras": {
                 "labels": labels,
-                "esq_sup": [_get_float(item, "espessura_esq_sup") for item in sampled_timeline],
-                "dir_sup": [_get_float(item, "espessura_dir_sup") for item in sampled_timeline],
-                "dir_inf": [_get_float(item, "espessura_dir_inf") for item in sampled_timeline],
-                "esq_inf": [_get_float(item, "espessura_esq_inf") for item in sampled_timeline],
+                "esq_sup": esq_sup,
+                "dir_sup": dir_sup,
+                "dir_inf": dir_inf,
+                "esq_inf": esq_inf,
             },
             "chart_d_temp_borracha": {
                 "labels": labels,
-                "saida_extrusao": [_get_float(item, "temp_borracha_saida_extrusao") for item in sampled_timeline],
-                "ent_calandra": [_get_float(item, "temp_borracha_ent_calandra") for item in sampled_timeline],
-                "saida_calandra": [_get_float(item, "temp_borracha_saida_calandra") for item in sampled_timeline],
+                "saida_extrusao": t_saida_extr,
+                "ent_calandra": t_ent_cal,
+                "saida_calandra": t_saida_cal,
             },
             "chart_e_temp_processo": {
                 "labels": labels,
-                "cilindro_inf": [_get_float(item, "temp_cilindro_inf") for item in sampled_timeline],
-                "cilindro_inter": [_get_float(item, "temp_cilindro_inter") for item in sampled_timeline],
-                "cilindro_sup": [_get_float(item, "temp_cilindro_sup") for item in sampled_timeline],
-                "furador": [_get_float(item, "temp_furador") for item in sampled_timeline],
-                "aquecedor": [_get_float(item, "temp_aquecedor") for item in sampled_timeline],
-                "tcu_extrusora": [_get_float(item, "temp_tcu_extrusora") for item in sampled_timeline],
+                "cilindro_inf": t_cil_inf,
+                "cilindro_inter": t_cil_inter,
+                "cilindro_sup": t_cil_sup,
+                "furador": t_fur,
+                "aquecedor": t_aquec,
+                "tcu_extrusora": t_tcu,
             },
         }
 

@@ -1,6 +1,6 @@
 {% extends "production/base_production.html" %}
 
-{% block title %}Relatório Histórico da Calandra - Produção{% endblock %}
+{% block title %}Calandra — Auditoria de Processo e Qualidade - Produção{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -18,6 +18,79 @@
         border-radius: 12px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
+    .audit-window-bar {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 0.9rem 1.25rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    }
+    .audit-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        padding: 1.15rem;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .audit-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    }
+    .audit-card-title {
+        font-size: 0.85rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        color: #0F172A;
+        margin-bottom: 0.75rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid #F1F5F9;
+        padding-bottom: 0.5rem;
+    }
+    .audit-table {
+        width: 100%;
+        font-size: 0.82rem;
+        margin-bottom: 0;
+    }
+    .audit-table th {
+        color: #64748B;
+        font-weight: 600;
+        text-align: right;
+        padding: 4px 6px;
+        border: none;
+        font-size: 0.75rem;
+    }
+    .audit-table th.col-var {
+        text-align: left;
+        padding-left: 0;
+    }
+    .audit-table td {
+        padding: 4px 6px;
+        vertical-align: middle;
+        text-align: right;
+        border: none;
+        border-top: 1px solid #F8FAFC;
+    }
+    .audit-table td.col-var {
+        text-align: left;
+        font-weight: 500;
+        color: #334155;
+        padding-left: 0;
+    }
+    .audit-val-avg {
+        font-weight: 700;
+        color: #0F172A;
+        font-size: 0.88rem;
+    }
+    .audit-val-minmax {
+        color: #64748B;
+        font-size: 0.8rem;
+    }
     .chart-container-card {
         background: #FFFFFF;
         border: 1px solid #E2E8F0;
@@ -27,12 +100,14 @@
         height: 100%;
         display: flex;
         flex-direction: column;
+        position: relative;
     }
     .chart-wrapper {
         position: relative;
         flex: 1;
-        min-height: 280px;
+        min-height: 270px;
         width: 100%;
+        cursor: crosshair;
     }
     .badge-passada-1 {
         background-color: #E0F2FE;
@@ -45,6 +120,12 @@
         color: #B45309;
         border: 1px solid #FDE68A;
         font-weight: 600;
+    }
+    .badge-passada-both {
+        background: linear-gradient(135deg, #E0F2FE 0%, #FEF3C7 100%);
+        color: #0F172A;
+        border: 1px solid #CBD5E1;
+        font-weight: 700;
     }
     .quick-period-btn {
         border-radius: 20px;
@@ -68,7 +149,7 @@
         box-shadow: var(--freedom-gold-glow);
     }
     .table-historical {
-        font-size: 0.8rem;
+        font-size: 0.78rem;
     }
     .table-historical th {
         background-color: #0F172A;
@@ -77,12 +158,27 @@
         text-align: center;
         vertical-align: middle;
         white-space: nowrap;
-        padding: 10px 8px;
+        padding: 8px 6px;
     }
     .table-historical td {
         vertical-align: middle;
         white-space: nowrap;
-        padding: 6px 8px;
+        padding: 5px 6px;
+    }
+    .chart-selection-hint {
+        font-size: 0.75rem;
+        color: #94A3B8;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    .technical-details summary {
+        cursor: pointer;
+        user-select: none;
+        outline: none;
+    }
+    .technical-details summary:hover {
+        color: #0F172A !important;
     }
 </style>
 <!-- Chart.js CDN -->
@@ -98,7 +194,7 @@
             <ol class="breadcrumb mb-0 fs-7">
                 <li class="breadcrumb-item"><a href="{% url 'production:dashboard' %}" class="text-decoration-none text-muted">Produção</a></li>
                 <li class="breadcrumb-item"><a href="{% url 'production:machine_reports_hub' %}" class="text-decoration-none text-muted">Relatórios de Máquinas</a></li>
-                <li class="breadcrumb-item active fw-bold text-dark" aria-current="page">Calandra</li>
+                <li class="breadcrumb-item active fw-bold text-dark" aria-current="page">Calandra — Auditoria de Processo</li>
             </ol>
         </nav>
         <div class="d-flex gap-2">
@@ -117,17 +213,18 @@
             <div>
                 <div class="d-flex align-items-center gap-2 mb-1">
                     <span class="badge bg-warning text-dark px-2 py-1 fw-bold">CALANDRA</span>
-                    <span class="badge bg-secondary text-white px-2 py-1">20 Variáveis Integradas</span>
+                    <span class="badge bg-secondary text-white px-2 py-1">Auditoria de Processo &amp; Qualidade</span>
+                    <span class="badge bg-dark border border-secondary text-white-50 px-2 py-1">20 XIDs</span>
                 </div>
-                <h3 class="fw-bold mb-1 text-white">Relatório Histórico da Calandra</h3>
+                <h3 class="fw-bold mb-1 text-white">Calandra — Auditoria de Condições de Processo e Qualidade</h3>
                 <p class="text-white-50 mb-0 small">
-                    Análise detalhada do processo de emborrachamento de tecido — 1ª face e 2ª face / face oposta.
+                    Investigação das condições térmicas, cargas mecânicas aplicadas e estabilidade nas passadas de emborrachamento.
                 </p>
             </div>
             <div class="d-flex flex-wrap gap-2 align-items-center">
                 <a href="{% url 'production:calandra_export_excel' %}?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}" 
                    class="btn btn-success btn-sm rounded-pill px-3 py-2 fw-semibold shadow-sm d-flex align-items-center gap-2"
-                   title="Exportar dados históricos sincronizados em formato Excel (.xlsx)">
+                   title="Exportar dados históricos sincronizados do filtro principal em formato Excel (.xlsx)">
                     <i class="bi bi-file-earmark-excel-fill fs-6"></i>
                     <span>Exportar Excel (.xlsx)</span>
                 </a>
@@ -136,7 +233,7 @@
     </div>
 
     <!-- Filter Bar Card -->
-    <div class="filter-card p-3 mb-4">
+    <div class="filter-card p-3 mb-3">
         <form method="get" action="." class="row g-2 align-items-center">
             
             <!-- Quick Period Shortcuts -->
@@ -171,133 +268,355 @@
             <div class="col-12 col-sm-2 col-xl-auto d-flex gap-2 align-items-end mt-sm-auto">
                 <input type="hidden" name="periodo" value="personalizado">
                 <button type="submit" class="btn btn-primary-custom btn-sm px-3 fw-semibold shadow-sm w-100 w-sm-auto">
-                    <i class="bi bi-filter me-1"></i>Filtrar
+                    <i class="bi bi-filter me-1"></i>Filtrar Histórico
                 </button>
             </div>
         </form>
     </div>
 
-    <!-- Summary Stats Bar -->
-    <div class="row g-2 g-md-3 mb-4">
-        <div class="col-6 col-md-3">
-            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
-                <span class="text-muted small d-block">Intervalo Selecionado</span>
-                <strong class="fs-7 text-dark d-block mt-1">{{ start_dt_formatted }} até {{ end_dt_formatted }}</strong>
+    <!-- Active Window & Passada Context Bar -->
+    <div class="audit-window-bar mb-4">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2">
+            <div class="d-flex flex-wrap align-items-center gap-3">
+                <div>
+                    <span class="text-muted small d-block">Período consultado (Filtro Principal):</span>
+                    <strong class="text-dark small">{{ start_dt_formatted }} → {{ end_dt_formatted }}</strong>
+                </div>
+                <div class="border-start ps-3">
+                    <span class="text-muted small d-block">Janela em análise:</span>
+                    <span id="labelJanelaAnalise" class="badge bg-primary text-white px-2 py-1 fw-semibold fs-8">Período completo</span>
+                </div>
+                <div class="border-start ps-3">
+                    <span class="text-muted small d-block">Passada no intervalo:</span>
+                    <span id="badgePassadaContext" class="badge bg-light text-dark border px-2 py-1 fw-bold fs-8">
+                        {{ passada_context }}
+                    </span>
+                </div>
             </div>
-        </div>
-        <div class="col-6 col-md-3">
-            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
-                <span class="text-muted small d-block">Pontos Brutos SCADA</span>
-                <strong class="fs-5 text-primary d-block mt-1">{{ raw_points_count }}</strong>
-            </div>
-        </div>
-        <div class="col-6 col-md-3">
-            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
-                <span class="text-muted small d-block">Linhas de Estado Sincronizadas</span>
-                <strong class="fs-5 text-success d-block mt-1">{{ total_records }}</strong>
-            </div>
-        </div>
-        <div class="col-6 col-md-3">
-            <div class="p-3 bg-white border rounded-3 shadow-sm text-center">
-                <span class="text-muted small d-block">Variáveis no SCADA</span>
-                <strong class="fs-5 {% if variables_found_count == 20 %}text-success{% else %}text-warning{% endif %} d-block mt-1">
-                    {{ variables_found_count }} de 20
-                </strong>
-            </div>
-        </div>
-    </div>
 
-    {% if total_records == 0 %}
-    <div class="alert alert-info border-0 shadow-sm rounded-3 py-4 text-center mb-4">
-        <i class="bi bi-info-circle fs-3 text-info d-block mb-2"></i>
-        <h5 class="fw-bold mb-1">Nenhum registro histórico localizado no período</h5>
-        <p class="text-muted mb-0 small">
-            Selecione outro período ou verifique se a máquina esteve em operação no intervalo consultado.
-        </p>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge bg-light text-secondary border px-2 py-1 small">
+                    <i class="bi bi-check2-circle text-success me-1"></i>Estatísticas: <strong>Somente processo efetivo</strong>
+                </span>
+                <button type="button" id="btnResetSelection" class="btn btn-sm btn-outline-danger rounded-pill px-3 fw-semibold shadow-sm d-none" onclick="resetTemporalSelection()">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>Limpar seleção
+                </button>
+            </div>
+        </div>
     </div>
-    {% endif %}
 
     <!-- ══════════════════════════════════════════════════════════════════════════
-         5 GRÁFICOS ORGANIZADOS POR GRUPO DE PROCESSO
+         4 CARDS PRINCIPAIS DE AUDITORIA DO PROCESSO (PROCESSO EFETIVO)
     ══════════════════════════════════════════════════════════════════════════ -->
     <div class="row g-3 mb-4">
 
-        <!-- GRÁFICO A: PRODUÇÃO (Velocidade, Metragem e Contexto de Passada) -->
+        <!-- CARD 1: TEMPERATURA DA BORRACHA -->
+        <div class="col-12 col-md-6 col-xl-3">
+            <div class="audit-card">
+                <div class="audit-card-title">
+                    <span><i class="bi bi-fire text-danger me-1"></i>Temp. da Borracha</span>
+                    <span class="badge bg-light text-muted border fs-9">°C</span>
+                </div>
+                <div id="cardBorrachaContent">
+                    {% if card_stats.has_effective_process %}
+                    <table class="table audit-table">
+                        <thead>
+                            <tr>
+                                <th class="col-var">Sensor</th>
+                                <th>Média</th>
+                                <th>Mín.</th>
+                                <th>Máx.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="col-var">Saída Extrusão</td>
+                                <td class="audit-val-avg" id="c1_ext_avg">{{ card_stats.temp_borracha.saida_extrusao.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c1_ext_min">{{ card_stats.temp_borracha.saida_extrusao.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c1_ext_max">{{ card_stats.temp_borracha.saida_extrusao.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Entrada Calandra</td>
+                                <td class="audit-val-avg" id="c1_ent_avg">{{ card_stats.temp_borracha.ent_calandra.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c1_ent_min">{{ card_stats.temp_borracha.ent_calandra.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c1_ent_max">{{ card_stats.temp_borracha.ent_calandra.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Saída Calandra</td>
+                                <td class="audit-val-avg" id="c1_sai_avg">{{ card_stats.temp_borracha.saida_calandra.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c1_sai_min">{{ card_stats.temp_borracha.saida_calandra.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c1_sai_max">{{ card_stats.temp_borracha.saida_calandra.max|default:"-" }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center py-3 text-muted small">
+                        <i class="bi bi-pause-circle fs-5 d-block mb-1 text-secondary"></i>
+                        <span>Sem dados de produção efetiva neste intervalo</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- CARD 2: TEMPERATURA DOS CILINDROS -->
+        <div class="col-12 col-md-6 col-xl-3">
+            <div class="audit-card">
+                <div class="audit-card-title">
+                    <span><i class="bi bi-thermometer-half text-warning me-1"></i>Temp. dos Cilindros</span>
+                    <span class="badge bg-light text-muted border fs-9">°C</span>
+                </div>
+                <div id="cardCilindrosContent">
+                    {% if card_stats.has_effective_process %}
+                    <table class="table audit-table">
+                        <thead>
+                            <tr>
+                                <th class="col-var">Cilindro</th>
+                                <th>Média</th>
+                                <th>Mín.</th>
+                                <th>Máx.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="col-var">Inferior</td>
+                                <td class="audit-val-avg" id="c2_inf_avg">{{ card_stats.temp_cilindros.cilindro_inf.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c2_inf_min">{{ card_stats.temp_cilindros.cilindro_inf.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c2_inf_max">{{ card_stats.temp_cilindros.cilindro_inf.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Intermediário</td>
+                                <td class="audit-val-avg" id="c2_inter_avg">{{ card_stats.temp_cilindros.cilindro_inter.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c2_inter_min">{{ card_stats.temp_cilindros.cilindro_inter.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c2_inter_max">{{ card_stats.temp_cilindros.cilindro_inter.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Superior</td>
+                                <td class="audit-val-avg" id="c2_sup_avg">{{ card_stats.temp_cilindros.cilindro_sup.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c2_sup_min">{{ card_stats.temp_cilindros.cilindro_sup.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c2_sup_max">{{ card_stats.temp_cilindros.cilindro_sup.max|default:"-" }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% if card_stats.temp_cilindros.delta_cilindros is not None %}
+                    <div class="mt-2 pt-2 border-top d-flex justify-content-between align-items-center">
+                        <span class="text-muted fs-8">Δ Térmico entre Cilindros:</span>
+                        <strong class="text-dark fs-8" id="c2_delta_val">{{ card_stats.temp_cilindros.delta_cilindros }} °C</strong>
+                    </div>
+                    {% endif %}
+                    {% else %}
+                    <div class="text-center py-3 text-muted small">
+                        <i class="bi bi-pause-circle fs-5 d-block mb-1 text-secondary"></i>
+                        <span>Sem dados de produção efetiva neste intervalo</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- CARD 3: CARGAS DO PROCESSO -->
+        <div class="col-12 col-md-6 col-xl-3">
+            <div class="audit-card">
+                <div class="audit-card-title">
+                    <span><i class="bi bi-arrows-expand text-primary me-1"></i>Cargas do Processo</span>
+                    <span class="badge bg-light text-muted border fs-9">kg</span>
+                </div>
+                <div id="cardCargasContent">
+                    {% if card_stats.has_effective_process %}
+                    <table class="table audit-table">
+                        <thead>
+                            <tr>
+                                <th class="col-var">Ponto</th>
+                                <th>Média</th>
+                                <th>Mín.</th>
+                                <th>Máx.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="col-var">Desbobinador</td>
+                                <td class="audit-val-avg" id="c3_desb_avg">{{ card_stats.cargas.desbobinador.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_desb_min">{{ card_stats.cargas.desbobinador.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_desb_max">{{ card_stats.cargas.desbobinador.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Quebra-Trama</td>
+                                <td class="audit-val-avg" id="c3_queb_avg">{{ card_stats.cargas.quebra_trama.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_queb_min">{{ card_stats.cargas.quebra_trama.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_queb_max">{{ card_stats.cargas.quebra_trama.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Pós-Calandra</td>
+                                <td class="audit-val-avg" id="c3_pos_avg">{{ card_stats.cargas.pos_calandra.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_pos_min">{{ card_stats.cargas.pos_calandra.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_pos_max">{{ card_stats.cargas.pos_calandra.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Bobinamento</td>
+                                <td class="audit-val-avg" id="c3_bob_avg">{{ card_stats.cargas.bobinamento.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_bob_min">{{ card_stats.cargas.bobinamento.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c3_bob_max">{{ card_stats.cargas.bobinamento.max|default:"-" }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center py-3 text-muted small">
+                        <i class="bi bi-pause-circle fs-5 d-block mb-1 text-secondary"></i>
+                        <span>Sem dados de produção efetiva neste intervalo</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- CARD 4: TEMPERATURAS AUXILIARES -->
+        <div class="col-12 col-md-6 col-xl-3">
+            <div class="audit-card">
+                <div class="audit-card-title">
+                    <span><i class="bi bi-gear-wide-connected text-secondary me-1"></i>Temp. Auxiliares</span>
+                    <span class="badge bg-light text-muted border fs-9">°C</span>
+                </div>
+                <div id="cardAuxiliaresContent">
+                    {% if card_stats.has_effective_process %}
+                    <table class="table audit-table">
+                        <thead>
+                            <tr>
+                                <th class="col-var">Equipamento</th>
+                                <th>Média</th>
+                                <th>Mín.</th>
+                                <th>Máx.</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="col-var">Furador</td>
+                                <td class="audit-val-avg" id="c4_fur_avg">{{ card_stats.temp_auxiliares.furador.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_fur_min">{{ card_stats.temp_auxiliares.furador.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_fur_max">{{ card_stats.temp_auxiliares.furador.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">Aquecedor</td>
+                                <td class="audit-val-avg" id="c4_aquec_avg">{{ card_stats.temp_auxiliares.aquecedor.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_aquec_min">{{ card_stats.temp_auxiliares.aquecedor.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_aquec_max">{{ card_stats.temp_auxiliares.aquecedor.max|default:"-" }}</td>
+                            </tr>
+                            <tr>
+                                <td class="col-var">TCU Extrusora</td>
+                                <td class="audit-val-avg" id="c4_tcu_avg">{{ card_stats.temp_auxiliares.tcu_extrusora.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_tcu_min">{{ card_stats.temp_auxiliares.tcu_extrusora.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_tcu_max">{{ card_stats.temp_auxiliares.tcu_extrusora.max|default:"-" }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <div class="text-center py-3 text-muted small">
+                        <i class="bi bi-pause-circle fs-5 d-block mb-1 text-secondary"></i>
+                        <span>Sem dados de produção efetiva neste intervalo</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         6 GRÁFICOS DE LINHA TEMPORAIS (ORGANIZADOS POR PROCESSO)
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <div class="row g-3 mb-4">
+
+        <!-- GRÁFICO 1: PRODUÇÃO -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
                     <h6 class="fw-bold mb-0 text-dark">
-                        <i class="bi bi-speedometer2 text-info me-2"></i>Gráfico A — Produção &amp; Passadas
+                        <i class="bi bi-speedometer2 text-info me-2"></i>1. Produção (Velocidade &amp; Metragem)
                     </h6>
-                    <span class="badge bg-light text-secondary border fs-8">m/min &amp; m</span>
+                    <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
                 </div>
-                <small class="text-muted mb-2">Velocidade da Calandra, Metragem Bobinada e Transições de Passada (1ª e 2ª Face)</small>
+                <small class="text-muted mb-2">Velocidade da Calandra (m/min), Metragem Bobinada (m) e Passadas (1ª e 2ª Face)</small>
                 <div class="chart-wrapper">
                     <canvas id="chartProducao"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- GRÁFICO B: CARGAS / TENSÕES -->
+        <!-- GRÁFICO 2: CARGAS DO PROCESSO -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
                     <h6 class="fw-bold mb-0 text-dark">
-                        <i class="bi bi-arrows-expand text-warning me-2"></i>Gráfico B — Cargas &amp; Tensões (kg)
+                        <i class="bi bi-arrows-expand text-primary me-2"></i>2. Cargas do Processo (kg)
                     </h6>
-                    <span class="badge bg-light text-secondary border fs-8">kg</span>
+                    <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
                 </div>
-                <small class="text-muted mb-2">Cargas de Bobinamento, Desbobinador, Pós-Calandra e Quebra-Trama</small>
+                <small class="text-muted mb-2">Desbobinador, Quebra-Trama, Pós-Calandra e Bobinamento</small>
                 <div class="chart-wrapper">
                     <canvas id="chartCargas"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- GRÁFICO C: ESPESSURAS -->
+        <!-- GRÁFICO 3: ESPESSURAS -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
                     <h6 class="fw-bold mb-0 text-dark">
-                        <i class="bi bi-bounding-box text-primary me-2"></i>Gráfico C — Espessuras (mm)
+                        <i class="bi bi-bounding-box text-secondary me-2"></i>3. Histórico de Espessuras (mm)
                     </h6>
-                    <span class="badge bg-light text-secondary border fs-8">mm</span>
+                    <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
                 </div>
-                <small class="text-muted mb-2">Espessuras Esquerda Superior, Direita Superior, Direita Inferior e Esquerda Inferior</small>
+                <small class="text-muted mb-2">Esq. Superior, Dir. Superior, Dir. Inferior e Esq. Inferior</small>
                 <div class="chart-wrapper">
                     <canvas id="chartEspessuras"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- GRÁFICO D: TEMPERATURA DA BORRACHA -->
+        <!-- GRÁFICO 4: TEMPERATURA DA BORRACHA -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
                     <h6 class="fw-bold mb-0 text-dark">
-                        <i class="bi bi-fire text-danger me-2"></i>Gráfico D — Temperatura da Borracha (°C)
+                        <i class="bi bi-fire text-danger me-2"></i>4. Temperatura da Borracha (°C)
                     </h6>
-                    <span class="badge bg-light text-secondary border fs-8">°C</span>
+                    <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
                 </div>
-                <small class="text-muted mb-2">Sequência do Processo: Saída Extrusão → Entrada Calandra → Saída Calandra</small>
+                <small class="text-muted mb-2">Sequência: Saída Extrusão → Entrada Calandra → Saída Calandra</small>
                 <div class="chart-wrapper">
                     <canvas id="chartTempBorracha"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- GRÁFICO E: TEMPERATURAS DO PROCESSO / MÁQUINA -->
-        <div class="col-12">
+        <!-- GRÁFICO 5: TEMPERATURA DOS CILINDROS -->
+        <div class="col-12 col-xl-6">
             <div class="chart-container-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-1">
                     <h6 class="fw-bold mb-0 text-dark">
-                        <i class="bi bi-thermometer-high text-danger me-2"></i>Gráfico E — Temperaturas do Equipamento (°C)
+                        <i class="bi bi-thermometer-high text-warning me-2"></i>5. Temperatura dos Cilindros (°C)
                     </h6>
-                    <span class="badge bg-light text-secondary border fs-8">°C</span>
+                    <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
                 </div>
-                <small class="text-muted mb-2">Cilindros (Inferior, Intermediário, Superior), Furador, Aquecedor e TCU Extrusora</small>
-                <div class="chart-wrapper" style="min-height: 320px;">
-                    <canvas id="chartTempProcesso"></canvas>
+                <small class="text-muted mb-2">Cilindro Inferior, Cilindro Intermediário e Cilindro Superior</small>
+                <div class="chart-wrapper">
+                    <canvas id="chartTempCilindros"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICO 6: TEMPERATURAS AUXILIARES -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <h6 class="fw-bold mb-0 text-dark">
+                        <i class="bi bi-gear-wide-connected text-success me-2"></i>6. Temperaturas Auxiliares (°C)
+                    </h6>
+                    <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
+                </div>
+                <small class="text-muted mb-2">Furador, Aquecedor e TCU Extrusora</small>
+                <div class="chart-wrapper">
+                    <canvas id="chartTempAuxiliares"></canvas>
                 </div>
             </div>
         </div>
@@ -311,10 +630,10 @@
         <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-3 gap-2">
             <div>
                 <h5 class="fw-bold mb-0 text-dark">
-                    <i class="bi bi-table text-primary me-2"></i>Tabela Histórica de Estados Sincronizados
+                    <i class="bi bi-table text-primary me-2"></i>Tabela de Histórico Sincronizado
                 </h5>
                 <span class="text-muted small">
-                    Exibindo página {{ timeline_page.number }} de {{ timeline_page.paginator.num_pages }} (Total: {{ total_records }} registros)
+                    Exibindo página {{ timeline_page.number }} de {{ timeline_page.paginator.num_pages }} (Total no período: {{ total_records }} registros)
                 </span>
             </div>
             <div>
@@ -388,7 +707,7 @@
                     {% empty %}
                     <tr>
                         <td colspan="21" class="text-center py-4 text-muted">
-                            Nenhum registro para exibir.
+                            Nenhum registro para exibir no período.
                         </td>
                     </tr>
                     {% endfor %}
@@ -427,21 +746,65 @@
         {% endif %}
     </div>
 
+    <!-- ══════════════════════════════════════════════════════════════════════════
+         INFORMAÇÕES TÉCNICAS (RECOLHIDAS POR PADRÃO)
+    ══════════════════════════════════════════════════════════════════════════ -->
+    <details class="technical-details card border-0 shadow-sm rounded-3 p-3 bg-light mb-4">
+        <summary class="fw-semibold text-muted fs-8 d-flex align-items-center gap-2">
+            <i class="bi bi-cpu text-secondary"></i>
+            <span>Informações técnicas do SCADA ▾</span>
+        </summary>
+        <div class="row g-2 mt-2 pt-2 border-top text-muted small">
+            <div class="col-12 col-md-4">
+                <span>Pontos brutos lidos no SCADA:</span>
+                <strong class="text-dark">{{ raw_points_count }}</strong>
+            </div>
+            <div class="col-12 col-md-4">
+                <span>Linhas de estado sincronizadas:</span>
+                <strong class="text-dark">{{ total_records }}</strong>
+            </div>
+            <div class="col-12 col-md-4">
+                <span>Variáveis encontradas no SCADA:</span>
+                <strong class="{% if variables_found_count == 20 %}text-success{% else %}text-warning{% endif %}">
+                    {{ variables_found_count }} de 20
+                </strong>
+            </div>
+        </div>
+    </details>
+
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════════════════
-     SCRIPTS DE INICIALIZAÇÃO DO CHART.JS
+     SCRIPTS DE INICIALIZAÇÃO, SELEÇÃO TEMPORAL COORDENADA & RECÁLCULO
 ══════════════════════════════════════════════════════════════════════════ -->
 <script>
 document.addEventListener("DOMContentLoaded", function() {
     const rawData = {{ chart_datasets_json|safe }};
+    const fullTimeline = {{ compact_timeline_json|safe }};
+    
+    const chartInstances = {};
+    let isSelectionActive = false;
+
+    // Opções base de gráfico
     const commonOptions = {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
         plugins: {
             legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11, family: 'Inter, sans-serif' } } },
-            tooltip: { padding: 10, cornerRadius: 8 }
+            tooltip: {
+                padding: 10,
+                cornerRadius: 8,
+                callbacks: {
+                    title: function(items) {
+                        if (!items.length) return '';
+                        const idx = items[0].dataIndex;
+                        const pLabel = (rawData.chart_1_producao && rawData.chart_1_producao.passada_labels) ? rawData.chart_1_producao.passada_labels[idx] : '';
+                        const dateStr = items[0].label;
+                        return pLabel ? `${dateStr}  •  ${pLabel}` : dateStr;
+                    }
+                }
+            }
         },
         scales: {
             x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } },
@@ -449,28 +812,28 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     };
 
-    // 1. Gráfico A: Produção
-    const ctxA = document.getElementById('chartProducao');
-    if (ctxA && rawData.chart_a_producao) {
-        new Chart(ctxA, {
+    // 1. Gráfico 1: Produção
+    const ctx1 = document.getElementById('chartProducao');
+    if (ctx1 && rawData.chart_1_producao) {
+        chartInstances.producao = new Chart(ctx1, {
             type: 'line',
             data: {
-                labels: rawData.chart_a_producao.labels,
+                labels: rawData.chart_1_producao.labels,
                 datasets: [
                     {
                         label: 'Velocidade (m/min)',
-                        data: rawData.chart_a_producao.velocidade,
+                        data: rawData.chart_1_producao.velocidade,
                         borderColor: '#0284C7',
-                        backgroundColor: 'rgba(2, 132, 199, 0.1)',
+                        backgroundColor: 'rgba(2, 132, 199, 0.08)',
                         borderWidth: 2,
                         tension: 0.2,
                         yAxisID: 'y',
                     },
                     {
                         label: 'Metragem Bobinada (m)',
-                        data: rawData.chart_a_producao.metragem,
+                        data: rawData.chart_1_producao.metragem,
                         borderColor: '#D19C3E',
-                        backgroundColor: 'rgba(209, 156, 62, 0.1)',
+                        backgroundColor: 'rgba(209, 156, 62, 0.08)',
                         borderWidth: 2,
                         tension: 0.2,
                         yAxisID: 'y1',
@@ -481,85 +844,360 @@ document.addEventListener("DOMContentLoaded", function() {
                 ...commonOptions,
                 scales: {
                     x: commonOptions.scales.x,
-                    y: { ...commonOptions.scales.y, title: { display: true, text: 'Velocidade (m/min)', font: { size: 10 } } },
+                    y: { ...commonOptions.scales.y, title: { display: true, text: 'Vel. (m/min)', font: { size: 10 } } },
                     y1: { position: 'right', grid: { display: false }, title: { display: true, text: 'Metragem (m)', font: { size: 10 } } }
                 }
             }
         });
     }
 
-    // 2. Gráfico B: Cargas
-    const ctxB = document.getElementById('chartCargas');
-    if (ctxB && rawData.chart_b_cargas) {
-        new Chart(ctxB, {
+    // 2. Gráfico 2: Cargas do Processo
+    const ctx2 = document.getElementById('chartCargas');
+    if (ctx2 && rawData.chart_2_cargas) {
+        chartInstances.cargas = new Chart(ctx2, {
             type: 'line',
             data: {
-                labels: rawData.chart_b_cargas.labels,
+                labels: rawData.chart_2_cargas.labels,
                 datasets: [
-                    { label: 'Carga Bobinamento (kg)', data: rawData.chart_b_cargas.bobinamento, borderColor: '#3B82F6', borderWidth: 2, tension: 0.2 },
-                    { label: 'Carga Desbobinador (kg)', data: rawData.chart_b_cargas.desbobinador, borderColor: '#10B981', borderWidth: 2, tension: 0.2 },
-                    { label: 'Carga Pós-Calandra (kg)', data: rawData.chart_b_cargas.pos_calandra, borderColor: '#F59E0B', borderWidth: 2, tension: 0.2 },
-                    { label: 'Carga Quebra-Trama (kg)', data: rawData.chart_b_cargas.quebra_trama, borderColor: '#8B5CF6', borderWidth: 2, tension: 0.2 }
+                    { label: 'Desbobinador (kg)', data: rawData.chart_2_cargas.desbobinador, borderColor: '#10B981', borderWidth: 2, tension: 0.2 },
+                    { label: 'Quebra-Trama (kg)', data: rawData.chart_2_cargas.quebra_trama, borderColor: '#8B5CF6', borderWidth: 2, tension: 0.2 },
+                    { label: 'Pós-Calandra (kg)', data: rawData.chart_2_cargas.pos_calandra, borderColor: '#F59E0B', borderWidth: 2, tension: 0.2 },
+                    { label: 'Bobinamento (kg)', data: rawData.chart_2_cargas.bobinamento, borderColor: '#3B82F6', borderWidth: 2, tension: 0.2 }
                 ]
             },
             options: commonOptions
         });
     }
 
-    // 3. Gráfico C: Espessuras
-    const ctxC = document.getElementById('chartEspessuras');
-    if (ctxC && rawData.chart_c_espessuras) {
-        new Chart(ctxC, {
+    // 3. Gráfico 3: Espessuras
+    const ctx3 = document.getElementById('chartEspessuras');
+    if (ctx3 && rawData.chart_3_espessuras) {
+        chartInstances.espessuras = new Chart(ctx3, {
             type: 'line',
             data: {
-                labels: rawData.chart_c_espessuras.labels,
+                labels: rawData.chart_3_espessuras.labels,
                 datasets: [
-                    { label: 'Esq. Superior (mm)', data: rawData.chart_c_espessuras.esq_sup, borderColor: '#06B6D4', borderWidth: 2, tension: 0.2 },
-                    { label: 'Dir. Superior (mm)', data: rawData.chart_c_espessuras.dir_sup, borderColor: '#0EA5E9', borderWidth: 2, tension: 0.2 },
-                    { label: 'Dir. Inferior (mm)', data: rawData.chart_c_espessuras.dir_inf, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
-                    { label: 'Esq. Inferior (mm)', data: rawData.chart_c_espessuras.esq_inf, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 }
+                    { label: 'Esq. Superior (mm)', data: rawData.chart_3_espessuras.esq_sup, borderColor: '#06B6D4', borderWidth: 2, tension: 0.2 },
+                    { label: 'Dir. Superior (mm)', data: rawData.chart_3_espessuras.dir_sup, borderColor: '#0EA5E9', borderWidth: 2, tension: 0.2 },
+                    { label: 'Dir. Inferior (mm)', data: rawData.chart_3_espessuras.dir_inf, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
+                    { label: 'Esq. Inferior (mm)', data: rawData.chart_3_espessuras.esq_inf, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 }
                 ]
             },
             options: commonOptions
         });
     }
 
-    // 4. Gráfico D: Temperatura da Borracha
-    const ctxD = document.getElementById('chartTempBorracha');
-    if (ctxD && rawData.chart_d_temp_borracha) {
-        new Chart(ctxD, {
+    // 4. Gráfico 4: Temperatura da Borracha
+    const ctx4 = document.getElementById('chartTempBorracha');
+    if (ctx4 && rawData.chart_4_temp_borracha) {
+        chartInstances.tempBorracha = new Chart(ctx4, {
             type: 'line',
             data: {
-                labels: rawData.chart_d_temp_borracha.labels,
+                labels: rawData.chart_4_temp_borracha.labels,
                 datasets: [
-                    { label: '1. Saída Extrusão (°C)', data: rawData.chart_d_temp_borracha.saida_extrusao, borderColor: '#EF4444', borderWidth: 2, tension: 0.2 },
-                    { label: '2. Entrada Calandra (°C)', data: rawData.chart_d_temp_borracha.ent_calandra, borderColor: '#F97316', borderWidth: 2, tension: 0.2 },
-                    { label: '3. Saída Calandra (°C)', data: rawData.chart_d_temp_borracha.saida_calandra, borderColor: '#EAB308', borderWidth: 2, tension: 0.2 }
+                    { label: '1. Saída Extrusão (°C)', data: rawData.chart_4_temp_borracha.saida_extrusao, borderColor: '#EF4444', borderWidth: 2, tension: 0.2 },
+                    { label: '2. Entrada Calandra (°C)', data: rawData.chart_4_temp_borracha.ent_calandra, borderColor: '#F97316', borderWidth: 2, tension: 0.2 },
+                    { label: '3. Saída Calandra (°C)', data: rawData.chart_4_temp_borracha.saida_calandra, borderColor: '#EAB308', borderWidth: 2, tension: 0.2 }
                 ]
             },
             options: commonOptions
         });
     }
 
-    // 5. Gráfico E: Temperaturas do Processo
-    const ctxE = document.getElementById('chartTempProcesso');
-    if (ctxE && rawData.chart_e_temp_processo) {
-        new Chart(ctxE, {
+    // 5. Gráfico 5: Temperatura dos Cilindros
+    const ctx5 = document.getElementById('chartTempCilindros');
+    if (ctx5 && rawData.chart_5_temp_cilindros) {
+        chartInstances.tempCilindros = new Chart(ctx5, {
             type: 'line',
             data: {
-                labels: rawData.chart_e_temp_processo.labels,
+                labels: rawData.chart_5_temp_cilindros.labels,
                 datasets: [
-                    { label: 'Cilindro Inferior (°C)', data: rawData.chart_e_temp_processo.cilindro_inf, borderColor: '#6366F1', borderWidth: 2, tension: 0.2 },
-                    { label: 'Cilindro Intermediário (°C)', data: rawData.chart_e_temp_processo.cilindro_inter, borderColor: '#8B5CF6', borderWidth: 2, tension: 0.2 },
-                    { label: 'Cilindro Superior (°C)', data: rawData.chart_e_temp_processo.cilindro_sup, borderColor: '#A855F7', borderWidth: 2, tension: 0.2 },
-                    { label: 'Furador (°C)', data: rawData.chart_e_temp_processo.furador, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
-                    { label: 'Aquecedor (°C)', data: rawData.chart_e_temp_processo.aquecedor, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 },
-                    { label: 'TCU Extrusora (°C)', data: rawData.chart_e_temp_processo.tcu_extrusora, borderColor: '#14B8A6', borderWidth: 2, tension: 0.2 }
+                    { label: 'Cilindro Inferior (°C)', data: rawData.chart_5_temp_cilindros.cilindro_inf, borderColor: '#6366F1', borderWidth: 2, tension: 0.2 },
+                    { label: 'Cilindro Intermediário (°C)', data: rawData.chart_5_temp_cilindros.cilindro_inter, borderColor: '#8B5CF6', borderWidth: 2, tension: 0.2 },
+                    { label: 'Cilindro Superior (°C)', data: rawData.chart_5_temp_cilindros.cilindro_sup, borderColor: '#A855F7', borderWidth: 2, tension: 0.2 }
                 ]
             },
             options: commonOptions
         });
     }
+
+    // 6. Gráfico 6: Temperaturas Auxiliares
+    const ctx6 = document.getElementById('chartTempAuxiliares');
+    if (ctx6 && rawData.chart_6_temp_auxiliares) {
+        chartInstances.tempAuxiliares = new Chart(ctx6, {
+            type: 'line',
+            data: {
+                labels: rawData.chart_6_temp_auxiliares.labels,
+                datasets: [
+                    { label: 'Furador (°C)', data: rawData.chart_6_temp_auxiliares.furador, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
+                    { label: 'Aquecedor (°C)', data: rawData.chart_6_temp_auxiliares.aquecedor, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 },
+                    { label: 'TCU Extrusora (°C)', data: rawData.chart_6_temp_auxiliares.tcu_extrusora, borderColor: '#14B8A6', borderWidth: 2, tension: 0.2 }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SINCRONIZAÇÃO DE HOVER / CURSOR TEMPORAL
+    // ══════════════════════════════════════════════════════════════════════════
+    const chartKeys = Object.keys(chartInstances);
+    chartKeys.forEach(key => {
+        const chart = chartInstances[key];
+        const canvas = chart.canvas;
+
+        canvas.addEventListener('mousemove', function(evt) {
+            const points = chart.getElementsAtEventForMode(evt, 'index', { intersect: false }, true);
+            if (points.length) {
+                const dataIndex = points[0].index;
+                chartKeys.forEach(otherKey => {
+                    if (otherKey !== key) {
+                        const otherChart = chartInstances[otherKey];
+                        if (otherChart && otherChart.data.datasets.length) {
+                            otherChart.setActiveElements([{ datasetIndex: 0, index: dataIndex }]);
+                            otherChart.tooltip.setActiveElements([{ datasetIndex: 0, index: dataIndex }], { x: 0, y: 0 });
+                            otherChart.update('none');
+                        }
+                    }
+                });
+            }
+        });
+
+        canvas.addEventListener('mouseleave', function() {
+            chartKeys.forEach(k => {
+                const ch = chartInstances[k];
+                if (ch) {
+                    ch.setActiveElements([]);
+                    ch.tooltip.setActiveElements([], { x: 0, y: 0 });
+                    ch.update('none');
+                }
+            });
+        });
+    });
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // SELEÇÃO TEMPORAL COORDENADA (DRAG SELECTION SOBRE O CANVAS)
+    // ══════════════════════════════════════════════════════════════════════════
+    let dragStartX = null;
+    let isDragging = false;
+
+    chartKeys.forEach(key => {
+        const chart = chartInstances[key];
+        const canvas = chart.canvas;
+
+        canvas.addEventListener('mousedown', function(e) {
+            const rect = canvas.getBoundingClientRect();
+            dragStartX = e.clientX - rect.left;
+            isDragging = true;
+        });
+
+        canvas.addEventListener('mouseup', function(e) {
+            if (!isDragging || dragStartX === null) return;
+            isDragging = false;
+            const rect = canvas.getBoundingClientRect();
+            const dragEndX = e.clientX - rect.left;
+
+            if (Math.abs(dragEndX - dragStartX) > 15) {
+                applyCoordinatedZoom(chart, Math.min(dragStartX, dragEndX), Math.max(dragStartX, dragEndX));
+            }
+            dragStartX = null;
+        });
+    });
+
+    function applyCoordinatedZoom(sourceChart, startPixel, endPixel) {
+        const xScale = sourceChart.scales.x;
+        const totalLabels = sourceChart.data.labels.length;
+        if (totalLabels < 2) return;
+
+        // Converter pixels para índices
+        const startValue = xScale.getValueForPixel(startPixel);
+        const endValue = xScale.getValueForPixel(endPixel);
+
+        const startIdx = Math.max(0, Math.min(Math.round(startValue), totalLabels - 1));
+        const endIdx = Math.max(0, Math.min(Math.round(endValue), totalLabels - 1));
+
+        if (startIdx >= endIdx) return;
+
+        const startLabel = sourceChart.data.labels[startIdx];
+        const endLabel = sourceChart.data.labels[endIdx];
+
+        // 1. Atualizar limites de exibição de todos os 6 gráficos
+        chartKeys.forEach(k => {
+            const ch = chartInstances[k];
+            if (ch && ch.scales.x) {
+                ch.options.scales.x.min = startIdx;
+                ch.options.scales.x.max = endIdx;
+                ch.update();
+            }
+        });
+
+        // 2. Atualizar UI da janela em análise
+        const labelJanela = document.getElementById('labelJanelaAnalise');
+        if (labelJanela) {
+            labelJanela.textContent = `${startLabel} → ${endLabel}`;
+            labelJanela.className = "badge bg-warning text-dark px-2 py-1 fw-bold fs-8 shadow-sm";
+        }
+        const btnReset = document.getElementById('btnResetSelection');
+        if (btnReset) btnReset.classList.remove('d-none');
+
+        // 3. Recalcular os 4 cards instantaneamente no navegador sobre fullTimeline
+        recomputeCardsInBrowser(startLabel, endLabel);
+    }
+
+    function recomputeCardsInBrowser(startLabel, endLabel) {
+        if (!fullTimeline || !fullTimeline.length) return;
+
+        // Filtrar registros dentro do intervalo de strings de data/hora ou timestamps
+        let inWindow = [];
+        let startIndex = fullTimeline.findIndex(item => item.datetime_str >= startLabel);
+        let endIndex = fullTimeline.findLastIndex ? fullTimeline.findLastIndex(item => item.datetime_str <= endLabel) : -1;
+
+        if (startIndex === -1) startIndex = 0;
+        if (endIndex === -1) endIndex = fullTimeline.length - 1;
+
+        inWindow = fullTimeline.slice(startIndex, endIndex + 1);
+        if (!inWindow.length) inWindow = fullTimeline;
+
+        // Atualizar contexto de Passada na janela
+        const passadasSet = new Set();
+        inWindow.forEach(item => {
+            if (item.passada_val !== null && item.passada_val !== undefined) {
+                const s = String(item.passada_val).trim();
+                if (s === "1" || s === "1.0") passadasSet.add(1);
+                else if (s === "2" || s === "2.0") passadasSet.add(2);
+                else if (s) passadasSet.add(s);
+            }
+        });
+
+        const badgePassada = document.getElementById('badgePassadaContext');
+        if (badgePassada) {
+            if (passadasSet.has(1) && passadasSet.has(2)) {
+                badgePassada.textContent = "PASSADA 1 e PASSADA 2";
+                badgePassada.className = "badge badge-passada-both px-2 py-1 fw-bold fs-8 shadow-sm";
+            } else if (passadasSet.has(1)) {
+                badgePassada.textContent = "PASSADA 1 — 1ª face";
+                badgePassada.className = "badge badge-passada-1 px-2 py-1 fw-bold fs-8 shadow-sm";
+            } else if (passadasSet.has(2)) {
+                badgePassada.textContent = "PASSADA 2 — 2ª face / face oposta";
+                badgePassada.className = "badge badge-passada-2 px-2 py-1 fw-bold fs-8 shadow-sm";
+            } else {
+                badgePassada.textContent = "Não informada";
+                badgePassada.className = "badge bg-light text-dark border px-2 py-1 fw-bold fs-8";
+            }
+        }
+
+        // Filtrar pontos com processo efetivo
+        const effectiveRows = inWindow.filter(item => item.is_effective === true);
+
+        function _calc(key) {
+            if (!effectiveRows.length) return { avg: "-", min: "-", max: "-" };
+            const vals = [];
+            effectiveRows.forEach(r => {
+                const v = r.values ? r.values[key] : null;
+                if (v !== null && v !== undefined && String(v).trim() !== "") {
+                    const f = parseFloat(v);
+                    if (!isNaN(f)) vals.push(f);
+                }
+            });
+            if (!vals.length) return { avg: "-", min: "-", max: "-" };
+            const sum = vals.reduce((a, b) => a + b, 0);
+            return {
+                avg: (sum / vals.length).toFixed(1),
+                min: Math.min(...vals).toFixed(1),
+                max: Math.max(...vals).toFixed(1)
+            };
+        }
+
+        if (!effectiveRows.length) {
+            // Exibir aviso de ausência de processo efetivo nos cards
+            ['cardBorrachaContent', 'cardCilindrosContent', 'cardCargasContent', 'cardAuxiliaresContent'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.innerHTML = `
+                        <div class="text-center py-3 text-muted small">
+                            <i class="bi bi-pause-circle fs-5 d-block mb-1 text-secondary"></i>
+                            <span>Sem dados de produção efetiva neste intervalo</span>
+                        </div>
+                    `;
+                }
+            });
+            return;
+        }
+
+        // Atualizar Card 1: Borracha
+        const ext = _calc('temp_borracha_saida_extrusao');
+        const ent = _calc('temp_borracha_ent_calandra');
+        const sai = _calc('temp_borracha_saida_calandra');
+        
+        setEl('c1_ext_avg', ext.avg); setEl('c1_ext_min', ext.min); setEl('c1_ext_max', ext.max);
+        setEl('c1_ent_avg', ent.avg); setEl('c1_ent_min', ent.min); setEl('c1_ent_max', ent.max);
+        setEl('c1_sai_avg', sai.avg); setEl('c1_sai_min', sai.min); setEl('c1_sai_max', sai.max);
+
+        // Atualizar Card 2: Cilindros
+        const inf = _calc('temp_cilindro_inf');
+        const inter = _calc('temp_cilindro_inter');
+        const sup = _calc('temp_cilindro_sup');
+
+        setEl('c2_inf_avg', inf.avg); setEl('c2_inf_min', inf.min); setEl('c2_inf_max', inf.max);
+        setEl('c2_inter_avg', inter.avg); setEl('c2_inter_min', inter.min); setEl('c2_inter_max', inter.max);
+        setEl('c2_sup_avg', sup.avg); setEl('c2_sup_min', sup.min); setEl('c2_sup_max', sup.max);
+
+        const deltaEl = document.getElementById('c2_delta_val');
+        if (deltaEl && inf.avg !== "-" && inter.avg !== "-" && sup.avg !== "-") {
+            const avgs = [parseFloat(inf.avg), parseFloat(inter.avg), parseFloat(sup.avg)];
+            const delta = (Math.max(...avgs) - Math.min(...avgs)).toFixed(1);
+            deltaEl.textContent = `${delta} °C`;
+        }
+
+        // Atualizar Card 3: Cargas
+        const desb = _calc('carga_desbobinador');
+        const queb = _calc('carga_quebra_trama');
+        const pos = _calc('carga_pos_calandra');
+        const bob = _calc('carga_bobinamento');
+
+        setEl('c3_desb_avg', desb.avg); setEl('c3_desb_min', desb.min); setEl('c3_desb_max', desb.max);
+        setEl('c3_queb_avg', queb.avg); setEl('c3_queb_min', queb.min); setEl('c3_queb_max', queb.max);
+        setEl('c3_pos_avg', pos.avg); setEl('c3_pos_min', pos.min); setEl('c3_pos_max', pos.max);
+        setEl('c3_bob_avg', bob.avg); setEl('c3_bob_min', bob.min); setEl('c3_bob_max', bob.max);
+
+        // Atualizar Card 4: Auxiliares
+        const fur = _calc('temp_furador');
+        const aquec = _calc('temp_aquecedor');
+        const tcu = _calc('temp_tcu_extrusora');
+
+        setEl('c4_fur_avg', fur.avg); setEl('c4_fur_min', fur.min); setEl('c4_fur_max', fur.max);
+        setEl('c4_aquec_avg', aquec.avg); setEl('c4_aquec_min', aquec.min); setEl('c4_aquec_max', aquec.max);
+        setEl('c4_tcu_avg', tcu.avg); setEl('c4_tcu_min', tcu.min); setEl('c4_tcu_max', tcu.max);
+    }
+
+    function setEl(id, val) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+    }
+
+    window.resetTemporalSelection = function() {
+        chartKeys.forEach(k => {
+            const ch = chartInstances[k];
+            if (ch && ch.scales.x) {
+                delete ch.options.scales.x.min;
+                delete ch.options.scales.x.max;
+                ch.update();
+            }
+        });
+
+        const labelJanela = document.getElementById('labelJanelaAnalise');
+        if (labelJanela) {
+            labelJanela.textContent = "Período completo";
+            labelJanela.className = "badge bg-primary text-white px-2 py-1 fw-semibold fs-8";
+        }
+        const btnReset = document.getElementById('btnResetSelection');
+        if (btnReset) btnReset.classList.add('d-none');
+
+        // Recalcular para toda a timeline
+        if (fullTimeline.length) {
+            recomputeCardsInBrowser(fullTimeline[0].datetime_str, fullTimeline[fullTimeline.length - 1].datetime_str);
+        }
+    };
 });
 </script>
 {% endblock %}
