@@ -1694,7 +1694,11 @@ class ProductionStateService:
             .prefetch_related("cavities")
             .order_by("ordem_exibicao", "machine__nome")
         )
-        global_params = list(ProductionGlobalParameter.objects.all().order_by("ordem", "nome"))
+        global_params = list(
+            ProductionGlobalParameter.objects.exclude(
+                Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra")
+            ).order_by("ordem", "nome")
+        )
         global_alarms = list(ProductionGlobalAlarm.objects.all().order_by("ordem", "nome"))
 
         all_xids = set()

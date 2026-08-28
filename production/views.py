@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db import transaction
+from django.db.models import Q
 from maintenance.models import Machine
 from .decorators import lider_producao_required, lider_ou_pcp_required, superuser_required
 from .services import ProductionStateService, PCPCalculationService, BladderTrackingService, scada_reader
@@ -731,7 +732,11 @@ def xid_global_config(request):
             else:
                 messages.error(request, f"Erro ao salvar alarme global: {form.errors.as_text()}")
 
-    global_params = list(ProductionGlobalParameter.objects.all().order_by("ordem", "nome"))
+    global_params = list(
+        ProductionGlobalParameter.objects.exclude(
+            Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra")
+        ).order_by("ordem", "nome")
+    )
     global_alarms = list(ProductionGlobalAlarm.objects.all().order_by("ordem", "nome"))
     param_form = ProductionGlobalParameterForm()
     alarm_form = ProductionGlobalAlarmForm()

@@ -403,6 +403,35 @@ class XIDGlobalConfigViewTestCase(TestCase):
         self.assertEqual(alarm.nome, "Alarme Falha de Ar")
         self.assertEqual(alarm.xid, "DP_ALARME_AR")
 
+    def test_global_parameter_list_excludes_calandra_parameters(self):
+        """Garante que a lista de parâmetros globais exclua variáveis da Calandra."""
+        ProductionGlobalParameter.objects.create(
+            nome="Pressão de Ar Pneumático",
+            chave="pressao_ar",
+            xid="DP_AR",
+            ordem=1
+        )
+        ProductionGlobalParameter.objects.create(
+            nome="Calandra - Passada",
+            chave="calandra_passada",
+            xid="DP_CAL_PASSADA",
+            ordem=2
+        )
+        ProductionGlobalParameter.objects.create(
+            nome="Calandra - Furador",
+            chave="calandra_furador",
+            xid="DP_CAL_FURADOR",
+            ordem=3
+        )
+
+        res = self.client.get(self.url)
+        self.assertEqual(res.status_code, 200)
+        params = res.context["global_params"]
+        param_keys = [p.chave for p in params]
+        self.assertIn("pressao_ar", param_keys)
+        self.assertNotIn("calandra_passada", param_keys)
+        self.assertNotIn("calandra_furador", param_keys)
+
 
 class XIDTestAPITestCase(TestCase):
     """

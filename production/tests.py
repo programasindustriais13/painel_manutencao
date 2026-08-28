@@ -606,6 +606,28 @@ class ProductionStateServiceTestCase(TestCase):
         self.assertEqual(state["sem_comunicacao_count"], 2)
         self.assertTrue(state["scada_offline"])
 
+    def test_dashboard_state_excludes_calandra_parameters(self):
+        """Garante que variáveis da Calandra não sejam retornadas em global_parameters do dashboard."""
+        ProductionGlobalParameter.objects.create(
+            nome="Calandra - Velocidade",
+            chave="calandra_velocidade",
+            xid="DP_CAL_VEL",
+            ordem=10
+        )
+        ProductionGlobalParameter.objects.create(
+            nome="Calandra - Passada",
+            chave="calandra_passada",
+            xid="DP_CAL_PASS",
+            ordem=11
+        )
+
+        state = ProductionStateService.get_dashboard_state()
+        chaves_retornadas = [p["chave"] for p in state["global_parameters"]]
+        self.assertIn("vacuo_geral", chaves_retornadas)
+        self.assertNotIn("calandra_velocidade", chaves_retornadas)
+        self.assertNotIn("calandra_passada", chaves_retornadas)
+
+
 
 class ProductionDashboardViewTestCase(TestCase):
     databases = {"default", "scada"}

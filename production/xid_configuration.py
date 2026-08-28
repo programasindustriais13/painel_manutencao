@@ -232,7 +232,11 @@ class XIDDiagnosticsService:
         else:
             machines_qs = base_qs
 
-        global_params = list(ProductionGlobalParameter.objects.all().order_by("ordem", "nome"))
+        global_params = list(
+            ProductionGlobalParameter.objects.exclude(
+                Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra")
+            ).order_by("ordem", "nome")
+        )
         global_alarms = list(ProductionGlobalAlarm.objects.all().order_by("ordem", "nome"))
         process_params = list(ProductionParameterConfig.objects.filter(ativo=True).order_by("ordem", "nome"))
 
