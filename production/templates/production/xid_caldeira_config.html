@@ -1,0 +1,274 @@
+{% extends "production/base_production.html" %}
+{% load static %}
+
+{% block title %}Configuração de XIDs da Caldeira 2 - Produção{% endblock %}
+
+{% block extra_css %}
+<style>
+    .scada-header-box {
+        background: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    .group-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        margin-bottom: 1.5rem;
+        overflow: hidden;
+    }
+    .group-card-header {
+        background: #F8FAFC;
+        padding: 1rem 1.25rem;
+        border-bottom: 1px solid #E2E8F0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .var-row {
+        padding: 0.85rem 1.25rem;
+        border-bottom: 1px solid #F1F5F9;
+        transition: background-color 0.15s ease;
+    }
+    .var-row:last-child {
+        border-bottom: none;
+    }
+    .var-row:hover {
+        background-color: #FAFBFD;
+    }
+    .xid-input {
+        font-family: 'Courier New', Courier, monospace;
+        font-weight: 600;
+        font-size: 0.88rem;
+    }
+    .floating-actions-bar {
+        position: sticky;
+        bottom: 0;
+        background: rgba(15, 23, 42, 0.92);
+        backdrop-filter: blur(12px);
+        color: #FFFFFF;
+        padding: 1rem 1.5rem;
+        border-radius: 14px 14px 0 0;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+        z-index: 100;
+        margin-top: 2rem;
+    }
+    .badge-customized {
+        font-size: 0.7rem;
+        background-color: #FEF3C7;
+        color: #92400E;
+        border: 1px solid #FDE68A;
+        border-radius: 12px;
+        padding: 2px 8px;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3 px-3 px-md-4">
+
+    <!-- Header Box Section -->
+    <div class="scada-header-box">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-start align-items-lg-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="badge bg-dark text-warning border border-warning px-2 py-1" style="font-size: 0.72rem;">
+                        <i class="bi bi-shield-lock-fill"></i> RESTRITO SUPERUSER
+                    </span>
+                    <span class="badge bg-warning text-dark px-2 py-1 fw-bold">CALDEIRA 2</span>
+                    <span class="text-muted small">9 Variáveis de Vapor e Utilidades</span>
+                </div>
+                <h2 class="h3 fw-bold text-dark mb-1">
+                    <i class="bi bi-fire text-warning me-2"></i>Configuração de XIDs da Caldeira 2
+                </h2>
+                <p class="text-muted small mb-0">
+                    Defina e teste em tempo real a comunicação com os DataPoints do Scada-LTS para vapor, setpoint, linhas de distribuição, condensado e utilidades industriais.
+                </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'production:caldeira_report' %}" class="btn btn-outline-warning text-dark fw-bold btn-sm d-flex align-items-center gap-1 shadow-sm">
+                    <i class="bi bi-graph-up-arrow"></i>
+                    <span>Ver Relatório da Caldeira</span>
+                </a>
+                <a href="{% url 'production:xid_calandra_config' %}" class="btn btn-outline-secondary btn-sm d-flex align-items-center gap-1">
+                    <i class="bi bi-layers-half"></i>
+                    <span>Calandra</span>
+                </a>
+                <a href="{% url 'production:xid_config_dashboard' %}" class="btn btn-light border text-muted btn-sm d-flex align-items-center gap-1">
+                    <i class="bi bi-arrow-left"></i>
+                    <span>Central SCADA</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Principal -->
+    <form method="post" action="." id="caldeiraXidForm">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="save_caldeira_xids" id="formAction">
+
+        {% for grp in groups %}
+        <div class="group-card">
+            <div class="group-card-header">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi {{ grp.icon }} text-warning fs-5"></i>
+                    <h5 class="fw-bold mb-0 text-dark">{{ grp.title }}</h5>
+                </div>
+                <span class="badge bg-light text-secondary border">{{ grp.badge }}</span>
+            </div>
+            <div class="group-card-body">
+                {% for var in grp.vars %}
+                <div class="var-row">
+                    <div class="row align-items-center g-2">
+                        <!-- Identificação da Variável -->
+                        <div class="col-12 col-md-4 col-lg-4">
+                            <div class="d-flex align-items-center gap-2 mb-1">
+                                <strong class="text-dark fs-7">{{ var.friendly_name }}</strong>
+                                {% if var.unit %}
+                                <span class="badge bg-light text-muted border fs-8">{{ var.unit }}</span>
+                                {% endif %}
+                                {% if var.is_customized %}
+                                <span class="badge-customized" title="XID customizado em relação ao padrão"><i class="bi bi-pencil-fill me-1"></i>Personalizado</span>
+                                {% endif %}
+                            </div>
+                            <small class="text-muted d-block fs-8 text-truncate" title="{{ var.description }}">
+                                {{ var.description }}
+                            </small>
+                            <small class="text-muted d-block fs-8 text-truncate" title="Padrão Canônico: {{ var.tag_name }}">
+                                Padrão: <code>{{ var.tag_name }}</code>
+                            </small>
+                        </div>
+
+                        <!-- Campo de Entrada do XID -->
+                        <div class="col-12 col-md-5 col-lg-5">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text bg-light text-muted"><i class="bi bi-tag-fill"></i></span>
+                                <input type="text" 
+                                       name="xid_{{ var.key }}" 
+                                       id="input_xid_{{ var.key }}"
+                                       class="form-control xid-input" 
+                                       value="{{ var.current_xid }}"
+                                       placeholder="Digite o XID ou Nome do Ponto no SCADA">
+                            </div>
+                        </div>
+
+                        <!-- Botão de Teste e Status em Tempo Real -->
+                        <div class="col-12 col-md-3 col-lg-3 d-flex align-items-center gap-2">
+                            <button type="button" 
+                                    class="btn btn-outline-secondary btn-sm px-2 py-1 btn-test-xid fw-semibold"
+                                    data-key="{{ var.key }}"
+                                    title="Testar leitura em tempo real deste XID no Scada-LTS">
+                                <i class="bi bi-play-circle me-1"></i>Testar
+                            </button>
+                            <span id="status_{{ var.key }}" class="badge bg-light text-muted border fs-8 py-1 px-2 text-truncate" style="max-width: 140px;">
+                                Não testado
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Barra Fixa de Ações -->
+        <div class="floating-actions-bar d-flex flex-column flex-sm-row justify-content-between align-items-center gap-3">
+            <div class="d-flex align-items-center gap-2">
+                <i class="bi bi-info-circle text-warning fs-5"></i>
+                <small class="text-white-50">
+                    Ao salvar, o sistema atualizará a resolução de telemetria da Caldeira 2 sem necessidade de reiniciar serviços.
+                </small>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-outline-light btn-sm px-3" id="btnRestoreDefaults">
+                    <i class="bi bi-arrow-counterclockwise me-1"></i>Restaurar Padrões
+                </button>
+                <button type="submit" class="btn btn-primary-custom btn-sm px-4 fw-bold shadow">
+                    <i class="bi bi-check-circle-fill me-1"></i>Salvar XIDs da Caldeira
+                </button>
+            </div>
+        </div>
+    </form>
+
+</div>
+
+<!-- Script de Teste Assíncrono Inline de XID -->
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const testButtons = document.querySelectorAll(".btn-test-xid");
+    const testUrl = "{% url 'production:xid_test_api' %}";
+    const csrfToken = document.querySelector("[name=csrfmiddlewaretoken]").value;
+
+    testButtons.forEach(btn => {
+        btn.addEventListener("click", function() {
+            const key = this.getAttribute("data-key");
+            const input = document.getElementById("input_xid_" + key);
+            const statusBadge = document.getElementById("status_" + key);
+            const xidVal = input ? input.value.trim() : "";
+
+            if (!xidVal) {
+                statusBadge.className = "badge bg-warning text-dark py-1 px-2";
+                statusBadge.textContent = "XID vazio";
+                return;
+            }
+
+            // Estado de carregamento
+            statusBadge.className = "badge bg-info text-white py-1 px-2";
+            statusBadge.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Testando...';
+            btn.disabled = true;
+
+            fetch(testUrl, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": csrfToken
+                },
+                body: JSON.stringify({ xid: xidVal })
+            })
+            .then(res => res.json())
+            .then(data => {
+                btn.disabled = false;
+                if (data.status === "OK") {
+                    statusBadge.className = "badge bg-success py-1 px-2";
+                    statusBadge.innerHTML = '<i class="bi bi-check-circle me-1"></i>OK: ' + (data.value_display || data.str_value || data.value || "0");
+                    statusBadge.title = "Lido com sucesso: " + (data.str_value || data.value);
+                } else if (data.status === "NOT_FOUND") {
+                    statusBadge.className = "badge bg-danger py-1 px-2";
+                    statusBadge.textContent = "Não localizado";
+                    statusBadge.title = data.message || "XID não existe no SCADA";
+                } else if (data.status === "NO_READINGS") {
+                    statusBadge.className = "badge bg-warning text-dark py-1 px-2";
+                    statusBadge.textContent = "Sem leituras";
+                    statusBadge.title = data.message || "Ponto cadastrado mas sem histórico";
+                } else {
+                    statusBadge.className = "badge bg-danger py-1 px-2";
+                    statusBadge.textContent = "Erro/Offline";
+                    statusBadge.title = data.message || "Falha de conexão com o SCADA";
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                statusBadge.className = "badge bg-danger py-1 px-2";
+                statusBadge.textContent = "Erro na rede";
+            });
+        });
+    });
+
+    // Botão de Restaurar Padrões
+    const btnRestore = document.getElementById("btnRestoreDefaults");
+    if (btnRestore) {
+        btnRestore.addEventListener("click", function() {
+            if (confirm("Deseja realmente restaurar todos os 9 XIDs da Caldeira para as tags canônicas padrão do sistema?")) {
+                document.getElementById("formAction").value = "restore_defaults";
+                document.getElementById("caldeiraXidForm").submit();
+            }
+        });
+    }
+});
+</script>
+{% endblock %}

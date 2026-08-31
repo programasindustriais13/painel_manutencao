@@ -10,6 +10,7 @@ from maintenance.models import Machine
 from .decorators import lider_producao_required, lider_ou_pcp_required, superuser_required
 from .services import ProductionStateService, PCPCalculationService, BladderTrackingService, scada_reader
 from .services_calandra import CalandraHistoricalService
+from .services_caldeira import CaldeiraHistoricalService, CALDEIRA_VARIABLES_CONFIG
 from .xid_configuration import XIDRegistry, XIDDiagnosticsService, XIDTestService
 from .models import (
 
@@ -734,7 +735,8 @@ def xid_global_config(request):
 
     global_params = list(
         ProductionGlobalParameter.objects.exclude(
-            Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra")
+            Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra") |
+            Q(chave__startswith="caldeira_") | Q(nome__istartswith="caldeira")
         ).order_by("ordem", "nome")
     )
     global_alarms = list(ProductionGlobalAlarm.objects.all().order_by("ordem", "nome"))
@@ -857,8 +859,81 @@ def xid_calandra_config(request):
     })
 
 
+@superuser_required
+def xid_caldeira_config(request):
+    """
+    Configuração e mapeamento dos 9 XIDs da Caldeira 2 e Utilidades no Scada-LTS.
+    Agrupamento em: Geração de vapor, Linhas de alta, Linhas de baixa, Condensado e Utilidades auxiliares.
+    """
+    if request.method == "POST":
+        action = request.POST.get("action", "")
+
+        if action == "save_caldeira_xids":
+            with transaction.atomic(using="default"):
+                for var in CALDEIRA_VARIABLES_CONFIG:
+                    key = var["key"]
+                    db_key = f"caldeira_{key}"
+                    form_xid = request.POST.get(f"xid_{key}", "").strip()
+
+                    obj, _ = ProductionGlobalParameter.objects.get_or_create(
+                        chave=db_key,
+                        defaults={
+                            "nome": f"Caldeira - {var['label']}",
+                            "unidade": var["unit"],
+                            "ordem": var["order"],
+                        }
+                    )
+                    obj.nome = f"Caldeira - {var['label']}"
+                    obj.xid = form_xid if form_xid else var["tag_name"]
+                    obj.unidade = var["unit"]
+                    obj.ordem = var["order"]
+                    obj.save()
+
+                scada_reader.clear_caches()
+            messages.success(request, "Configurações de XIDs da Caldeira salvas com sucesso!")
+            return redirect("production:xid_caldeira_config")
+
+        elif action == "restore_defaults":
+            with transaction.atomic(using="default"):
+                ProductionGlobalParameter.objects.filter(chave__startswith="caldeira_").delete()
+                scada_reader.clear_caches()
+            messages.success(request, "Configurações da Caldeira restauradas para os padrões canônicos!")
+            return redirect("production:xid_caldeira_config")
+
+    # Carregar estado atual para renderização
+    db_map = {
+        p.chave: p.xid
+        for p in ProductionGlobalParameter.objects.filter(chave__startswith="caldeira_")
+    }
+
+    groups = [
+        {"id": "geracao_vapor", "title": "1. Geração de Vapor", "badge": "2 Variáveis", "icon": "bi-fire", "vars": []},
+        {"id": "linhas_alta", "title": "2. Linhas de Alta", "badge": "2 Variáveis", "icon": "bi-arrow-up-circle-fill", "vars": []},
+        {"id": "linhas_baixa", "title": "3. Linhas de Baixa", "badge": "2 Variáveis", "icon": "bi-arrow-down-circle-fill", "vars": []},
+        {"id": "condensado", "title": "4. Condensado", "badge": "1 Variável (Totalizador)", "icon": "bi-droplet-fill", "vars": []},
+        {"id": "utilidades_auxiliares", "title": "5. Utilidades Auxiliares", "badge": "2 Variáveis", "icon": "bi-gear-wide-connected", "vars": []},
+    ]
+    group_dict = {g["id"]: g for g in groups}
+
+    for var in CALDEIRA_VARIABLES_CONFIG:
+        db_key = f"caldeira_{var['key']}"
+        current_xid = db_map.get(db_key) or var["tag_name"]
+        item = {
+            **var,
+            "current_xid": current_xid,
+            "is_customized": (db_key in db_map and db_map[db_key] != var["tag_name"]),
+        }
+        if var["group"] in group_dict:
+            group_dict[var["group"]]["vars"].append(item)
+
+    return render(request, "production/xid_caldeira_config.html", {
+        "groups": groups,
+        "total_vars": len(CALDEIRA_VARIABLES_CONFIG),
+    })
+
+
 # ==============================================================================
-# CENTRAL DE RELATÓRIOS DE MÁQUINAS & HISTÓRICO DA CALANDRA
+# CENTRAL DE RELATÓRIOS DE MÁQUINAS & HISTÓRICOS (CALANDRA & CALDEIRA 2)
 # ==============================================================================
 
 @lider_producao_required
@@ -880,6 +955,18 @@ def machine_reports_hub(request):
             "is_active": True,
             "badge_label": "Ativo",
             "badge_class": "success",
+        },
+        {
+            "slug": "caldeira",
+            "name": "Caldeira 2",
+            "tag": "CALDEIRA 2",
+            "process": "Geração e Distribuição de Vapor",
+            "description": "Histórico das 9 variáveis de vapor, setpoint, linhas de alta e baixa (prensas 1-7 e 8-12), totalizador de condensado, ar comprimido e vácuo.",
+            "url_name": "production:caldeira_report",
+            "icon": "bi-fire",
+            "is_active": True,
+            "badge_label": "Ativo",
+            "badge_class": "warning",
         },
     ]
     return render(request, "production/machine_reports_hub.html", {
@@ -990,6 +1077,100 @@ def calandra_export_excel(request):
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+@lider_producao_required
+def caldeira_historical_report(request):
+    """
+    Relatório Histórico da Caldeira 2 (/producao/relatorios/caldeira/).
+    Apresenta indicadores de vapor, setpoint, desvios amostra a amostra,
+    diferenças entre linhas, totalizador de condensado e utilidades auxiliares.
+    """
+    periodo = request.GET.get("periodo", "").strip()
+    data_inicio = request.GET.get("data_inicio", "").strip()
+    hora_inicio = request.GET.get("hora_inicio", "").strip()
+    data_final = request.GET.get("data_final", "").strip()
+    hora_final = request.GET.get("hora_final", "").strip()
+    page_num = request.GET.get("page", "1").strip()
+
+    start_dt, end_dt, periodo_ativo, error_msg = CaldeiraHistoricalService.parse_period_filters(
+        periodo=periodo if periodo else None,
+        data_inicio=data_inicio if data_inicio else None,
+        hora_inicio=hora_inicio if hora_inicio else None,
+        data_final=data_final if data_final else None,
+        hora_final=hora_final if hora_final else None,
+    )
+
+    if error_msg:
+        messages.warning(request, error_msg)
+
+    # Consulta e sincronização temporal do histórico
+    history_data = CaldeiraHistoricalService.get_synchronized_history(start_dt, end_dt)
+    timeline = history_data["timeline"]
+    variables_config = CaldeiraHistoricalService.get_variables_config()
+
+    # Paginação da tabela (50 registros por página)
+    paginator = Paginator(timeline, 50)
+    try:
+        page_obj = paginator.page(page_num)
+    except PageNotAnInteger:
+        page_obj = paginator.page(1)
+    except EmptyPage:
+        page_obj = paginator.page(paginator.num_pages)
+
+    context = {
+        "periodo_ativo": periodo_ativo,
+        "data_inicio_str": start_dt.strftime("%Y-%m-%d"),
+        "hora_inicio_str": start_dt.strftime("%H:%M"),
+        "data_final_str": end_dt.strftime("%Y-%m-%d"),
+        "hora_final_str": end_dt.strftime("%H:%M"),
+        "start_dt_formatted": start_dt.strftime("%d/%m/%Y %H:%M"),
+        "end_dt_formatted": end_dt.strftime("%d/%m/%Y %H:%M"),
+        "timeline_page": page_obj,
+        "total_records": len(timeline),
+        "raw_points_count": history_data["raw_points_count"],
+        "variables_found_count": history_data["variables_found_count"],
+        "variables_missing": history_data["variables_missing"],
+        "variables_config": variables_config,
+        "chart_datasets_json": json.dumps(history_data["chart_datasets"]),
+        "stats": history_data.get("stats", {}),
+        "card_stats": history_data.get("card_stats", {}),
+        "condensate_stats": history_data.get("condensate_stats", {}),
+        "has_data": history_data.get("has_data", False),
+    }
+    return render(request, "production/caldeira_report.html", context)
+
+
+@lider_producao_required
+def caldeira_export_excel(request):
+    """
+    Exportação do Histórico Sincronizado e Resumo Gerencial da Caldeira 2 em formato Excel (.xlsx).
+    """
+    periodo = request.GET.get("periodo", "").strip()
+    data_inicio = request.GET.get("data_inicio", "").strip()
+    hora_inicio = request.GET.get("hora_inicio", "").strip()
+    data_final = request.GET.get("data_final", "").strip()
+    hora_final = request.GET.get("hora_final", "").strip()
+
+    start_dt, end_dt, _, _ = CaldeiraHistoricalService.parse_period_filters(
+        periodo=periodo if periodo else None,
+        data_inicio=data_inicio if data_inicio else None,
+        hora_inicio=hora_inicio if hora_inicio else None,
+        data_final=data_final if data_final else None,
+        hora_final=hora_final if hora_final else None,
+    )
+
+    user_name = request.user.get_full_name() or request.user.username or "Sistema"
+    excel_bytes = CaldeiraHistoricalService.generate_excel_report(start_dt, end_dt, generated_by=user_name)
+
+    filename = f"relatorio_caldeira_{start_dt.strftime('%Y%m%d_%H%M')}_ate_{end_dt.strftime('%Y%m%d_%H%M')}.xlsx"
+    response = HttpResponse(
+        excel_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
 
 
 

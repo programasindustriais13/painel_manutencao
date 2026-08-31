@@ -140,6 +140,40 @@
             </div>
         </div>
 
+        <!-- Card: Caldeira 2 -->
+        <div class="col-12 col-md-6 col-xl-4">
+            <div class="report-card shadow-sm">
+                <div class="report-card-header">
+                    <div class="report-card-icon" style="background: rgba(234, 88, 12, 0.15); color: #C2410C; border-color: rgba(234, 88, 12, 0.3);">
+                        <i class="bi bi-fire"></i>
+                    </div>
+                    <div>
+                        <h5 class="fw-bold mb-0 text-dark">Caldeira 2</h5>
+                        <small class="text-muted">Geração &amp; Distribuição de Vapor</small>
+                    </div>
+                </div>
+                <div class="report-card-body">
+                    <p class="text-secondary small mb-3 flex-grow-1">
+                        Histórico completo das 9 variáveis de utilidades: pressão da caldeira, setpoint regulado, linhas de alta e baixa (prensas 1-7 e 8-12), totalizador de condensado, ar comprimido e vácuo.
+                    </p>
+
+                    <!-- Features Tags -->
+                    <div class="d-flex flex-wrap gap-1 mb-4">
+                        <span class="badge-feature"><i class="bi bi-cpu me-1 text-primary"></i>9 Variáveis</span>
+                        <span class="badge-feature"><i class="bi bi-droplet-fill me-1 text-success"></i>Consumo Condensado</span>
+                        <span class="badge-feature"><i class="bi bi-graph-up me-1 text-warning"></i>6 Gráficos</span>
+                        <span class="badge-feature"><i class="bi bi-file-earmark-excel me-1 text-success"></i>Exportação Excel</span>
+                    </div>
+
+                    <!-- Action CTA -->
+                    <a href="{% url 'production:caldeira_report' %}" class="btn btn-warning text-dark fw-bold w-100 py-2 rounded-3 shadow-sm d-flex align-items-center justify-content-center gap-2">
+                        <span>Abrir Relatório da Caldeira</span>
+                        <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+
         <!-- Slot: Próximos Equipamentos -->
         <div class="col-12 col-md-6 col-xl-4">
             <div class="report-card shadow-sm border-dashed" style="border: 2px dashed #CBD5E1; background: #FAFBFD;">

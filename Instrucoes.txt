@@ -3095,4 +3095,81 @@ Arquivos Modificados:
 
 Resumo de Testes Automatizados:
 - `production/test_calandra_report.py`: 17 testes executados com 100% de sucesso.
+
+================================================================================
+RELATÓRIO DA CALDEIRA 2, CADASTRO DE XIDS E EXPORTAÇÃO EXCEL MULTI-ABAS
+================================================================================
+Data: 28/08/2026
+Autor: Antigravity AI
+Referência da SPEC: regras_programacao/SPEC_RELATORIO_CALDEIRA_XIDS_EXCEL.md
+
+Objetivo:
+Implementar no módulo de Produção o novo relatório analítico histórico da Caldeira 2, integrado à Central de Relatórios de Máquinas existente (/producao/relatorios/), com tela de configuração amigável dos 9 XIDs no Scada-LTS, cálculos analíticos de pressão, desvios amostra a amostra do setpoint, diferenças entre linhas, cálculo do volume de condensado por totalizador acumulativo com tratamento de resets e exportação executiva em Excel multi-abas com logo oficial da Freedom e formatação pronta para impressão A4 em paisagem.
+
+Rotas Adicionadas:
+- `/producao/relatorios/caldeira/` (name: `production:caldeira_report`): Relatório web com indicadores, 6 gráficos Chart.js e tabela paginada.
+- `/producao/relatorios/caldeira/exportar-excel/` (name: `production:caldeira_export_excel`): Exportação do arquivo `.xlsx` respeitando exatamente o mesmo período filtrado na interface web.
+- `/producao/configuracao-scada/caldeira/` (name: `production:xid_caldeira_config`): Central amigável de configuração dos 9 XIDs para superusuários com teste em tempo real.
+
+As 9 Variáveis Canônicas da Caldeira 2:
+1. Geração de Vapor:
+   - `pressao_caldeira` (`CALDEIRA 2 - PRESSCAL`): Pressão de vapor medida na caldeira (bar, instantânea).
+   - `setpoint_pressao_alta` (`VALVULA_VAPOR - setPress`): Pressão de alta configurada / Setpoint (bar, instantânea).
+2. Linhas de Alta:
+   - `pressao_alta_prensas_1_7` (`VALVULA_VAPOR - Press1_PRENSAS 1 A 7`): Pressão de alta prensas 1 a 7 - máx. 14 cavidades (bar, instantânea).
+   - `pressao_alta_prensas_8_12` (`VALVULA_VAPOR - Press2_PRENSAS 8 A 12`): Pressão de alta prensas 8 a 12 - máx. 18 cavidades (bar, instantânea).
+3. Linhas de Baixa:
+   - `pressao_baixa_prensas_1_7` (`VALVULA_VAPOR - PressBX1_PRENSAS 1 A 7`): Pressão de baixa prensas 1 a 7 (bar, instantânea).
+   - `pressao_baixa_prensas_8_12` (`VALVULA_VAPOR - PressBX2_PRENSAS 8 A 12`): Pressão de baixa prensas 8 a 12 (bar, instantânea).
+4. Condensado:
+   - `volume_condensado` (`Meta_Calculos_Prensas - VOLUME_CAL - Volume Condensado` / `DP_153208`): Totalizador acumulado do volume medido na linha consumido diretamente em litros.
+5. Utilidades Auxiliares:
+   - `pressao_ar_comprimido` (`VALVULA_VAPOR - AR_COMPRIMIDO_VULC`): Pressão do ar comprimido da vulcanização (bar, instantânea).
+   - `pressao_vacuo` (`UNIDADE DE VÁCUO - PRESS_VACUO`): Pressão da unidade de vácuo (bar, instantânea).
+
+Tratamento e Natureza de VOLUME_CAL:
+- O Meta Data Point no Scada-LTS já calcula o volume final em litros a partir do pulso bruto e K-Factor (17314). O Django consome VOLUME_CAL diretamente em litros, sem repetir conversões.
+- O cálculo do volume do período é realizado pelas diferenças consecutivas entre leituras: se delta >= 0, soma ao volume; se delta < 0, registra reset/rollover do contador e inicia novo segmento sem subtrair do volume.
+- Vazão média horária derivada (L/h) é calculada dividindo o volume total pelo tempo efetivamente coberto entre a primeira e a última amostra.
+
+Contexto Industrial & Assimetria das Linhas:
+- Linha 1 a 7: 7 prensas × 2 cavidades = até 14 cavidades.
+- Linha 8 a 12: Prensa 8 (2 cavidades) + Prensas 9 a 12 (4 cavidades cada) = até 18 cavidades.
+- O relatório é descritivo e comparativo e não classifica oscilações automaticamente como defeito ou falha.
+- Nota de interpretação incluída na tela e no Excel: "Oscilações de pressão podem ocorrer quando várias prensas ou cavidades solicitam vapor simultaneamente. Este relatório apresenta o comportamento medido e não classifica automaticamente uma oscilação como falha. As linhas possuem capacidades instaladas diferentes: até 14 cavidades nas prensas 1 a 7 e até 18 cavidades nas prensas 8 a 12."
+
+Exportação Excel (.xlsx) Multi-Abas:
+- Nome do arquivo: `relatorio_caldeira_YYYYMMDD_HHMM_ate_YYYYMMDD_HHMM.xlsx`.
+- Localização da Logo: `maintenance/static/maintenance/img/logo_pneus_freedom_black.png` inserida na aba 1 com fallback textual.
+- Aba 1 (Resumo Gerencial): Logo Freedom, título, metadados, resumo de indicadores (médias, min, max, desvios absolutos médios, volume de condensado, vazão L/h, utilidades), notas e impressão configurada em A4 paisagem (ajustada para 1 página de largura). Aba selecionada por padrão ao abrir.
+- Aba 2 (Gráficos): Gráficos nativos do Excel (openpyxl LineChart e BarChart) para impressão.
+- Aba 3 (Dados Históricos): Tabela completa sincronizada, auto-filtro, congelamento de painel (freeze_panes="A2"), formatação brasileira (`#,##0.00`) e ausência de conversão de valores nulos em zero.
+
+Segurança e Permissões:
+- Consulta do Relatório e Exportação Excel: `@lider_producao_required` (Liderança de Produção, Operadores, PCP, Superusuários).
+- Configuração e Teste de XIDs: `@superuser_required`.
+- Banco SCADA: 100% somente-leitura através do `ScadaRouter`, zero migrations e zero queries de escrita.
+- Persistência das customizações de XID: Tabela padrão `ProductionGlobalParameter` com prefixo `chave="caldeira_<key>"`.
+
+Arquivos Criados:
+- `regras_programacao/SPEC_RELATORIO_CALDEIRA_XIDS_EXCEL.md`: Especificação técnica completa.
+- `production/services_caldeira.py`: Serviço analítico, cálculos de pressão, condensado e exportação Excel.
+- `production/templates/production/caldeira_report.html`: Template web com filtros, KPIs, 6 gráficos e tabela.
+- `production/templates/production/xid_caldeira_config.html`: Template para configuração e teste de XIDs.
+- `production/test_caldeira_report.py`: 13 testes automatizados específicos cobrindo permissões, cálculos, condensado, Excel e regressões.
+
+Arquivos Modificados:
+- `production/views.py`: Adicionadas views `caldeira_historical_report`, `caldeira_export_excel`, `xid_caldeira_config` e atualização de `machine_reports_hub` e `xid_global_config`.
+- `production/urls.py`: Adicionadas rotas da Caldeira 2.
+- `production/xid_configuration.py`: Exclusão de parâmetros `caldeira_` da listagem de parâmetros globais genéricos.
+- `production/templates/production/machine_reports_hub.html`: Inserido card interativo "Caldeira 2".
+- `production/templates/production/xid_config_dashboard.html`: Inserido botão para "Configuração Caldeira 2".
+- `Instrucoes.txt`: Este registro histórico.
+
+Comandos de Teste:
+- `python manage.py check`: 0 erros.
+- `python manage.py makemigrations --check`: Nenhuma migração pendente.
+- `python manage.py test production.test_caldeira_report production.test_calandra_report`: 30 testes executados com 100% de sucesso.
+- `python manage.py test production.test_xid_configuration production.test_bladder_system production.test_pcp_system`: 64 testes executados com 100% de sucesso.
+
 

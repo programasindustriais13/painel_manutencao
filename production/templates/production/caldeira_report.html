@@ -1,0 +1,775 @@
+{% extends "production/base_production.html" %}
+{% load static %}
+
+{% block title %}Relatório da Caldeira 2 - Produção{% endblock %}
+
+{% block extra_css %}
+<style>
+    .caldeira-header {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        border-radius: 14px;
+        padding: 1.5rem 1.75rem;
+        color: #FFFFFF;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+        border: 1px solid rgba(209, 156, 62, 0.25);
+    }
+    .filter-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        padding: 1.25rem;
+    }
+    .kpi-card-caldeira {
+        background: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        padding: 1.25rem 1rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .kpi-card-caldeira:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+        border-color: #CBD5E1;
+    }
+    .kpi-icon-circle {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+        flex-shrink: 0;
+    }
+    .chart-container-card {
+        background: #FFFFFF;
+        border-radius: 12px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+        padding: 1.25rem;
+        margin-bottom: 1.5rem;
+    }
+    .chart-box {
+        position: relative;
+        height: 320px;
+        width: 100%;
+    }
+    .badge-filter-btn {
+        border-radius: 8px;
+        font-size: 0.83rem;
+        font-weight: 600;
+        padding: 6px 14px;
+        text-decoration: none;
+    }
+    .table-historical {
+        font-size: 0.82rem;
+    }
+    .table-historical th {
+        background: #0F172A;
+        color: #FFFFFF;
+        font-weight: 600;
+        text-align: center;
+        vertical-align: middle;
+        white-space: nowrap;
+        padding: 8px 10px;
+    }
+    .table-historical td {
+        vertical-align: middle;
+        white-space: nowrap;
+        padding: 6px 10px;
+    }
+    .table-historical tr:hover td {
+        background-color: #F1F5F9;
+    }
+    .info-note-box {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-left: 4px solid var(--freedom-gold);
+        border-radius: 8px;
+        padding: 0.85rem 1.25rem;
+        font-size: 0.82rem;
+        color: #475569;
+    }
+</style>
+<!-- Chart.js CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-3 px-md-4 py-3">
+
+    <!-- Breadcrumb & Top Actions -->
+    <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb mb-0 fs-7">
+                <li class="breadcrumb-item"><a href="{% url 'production:dashboard' %}" class="text-decoration-none text-muted">Produção</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'production:machine_reports_hub' %}" class="text-decoration-none text-muted">Relatórios de Máquinas</a></li>
+                <li class="breadcrumb-item active fw-bold text-dark" aria-current="page">Caldeira 2 &amp; Distribuição de Vapor</li>
+            </ol>
+        </nav>
+        <div class="d-flex gap-2">
+            <a href="{% url 'production:machine_reports_hub' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm">
+                <i class="bi bi-grid-fill me-1"></i>Central de Relatórios
+            </a>
+            <a href="{% url 'production:dashboard' %}" class="btn btn-outline-secondary btn-sm rounded-pill px-3 shadow-sm">
+                <i class="bi bi-speedometer2 me-1"></i>Dashboard Produção
+            </a>
+        </div>
+    </div>
+
+    <!-- Header Banner -->
+    <div class="caldeira-header mb-4">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="badge bg-warning text-dark px-2 py-1 fw-bold">CALDEIRA 2</span>
+                    <span class="badge bg-secondary text-white px-2 py-1">Vapor, Condensado &amp; Utilidades</span>
+                    <span class="badge bg-dark border border-secondary text-white-50 px-2 py-1">9 Variáveis</span>
+                </div>
+                <h3 class="fw-bold mb-1 text-white">Caldeira 2 — Distribuição de Vapor e Utilidades</h3>
+                <p class="text-white-50 mb-0 small">
+                    Acompanhamento contínuo da pressão da caldeira, setpoint regulado, linhas de alta (1-7 e 8-12), linhas de baixa, condensado, ar comprimido e vácuo.
+                </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                <a href="{% url 'production:caldeira_export_excel' %}?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}" 
+                   class="btn btn-success btn-sm rounded-pill px-3 py-2 fw-semibold shadow-sm d-flex align-items-center gap-2"
+                   title="Exportar relatório gerencial e histórico completo em Excel (.xlsx) pronto para impressão">
+                    <i class="bi bi-file-earmark-excel-fill fs-6"></i>
+                    <span>Exportar Excel (.xlsx)</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Toolbar -->
+    <div class="filter-card mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <!-- Preset Period Buttons -->
+            <div class="d-flex flex-wrap gap-1 align-items-center">
+                <span class="text-muted small fw-bold text-uppercase me-2" style="font-size: 0.72rem; letter-spacing: 0.5px;">
+                    <i class="bi bi-calendar3 me-1"></i>Período:
+                </span>
+                <a href="?periodo=hoje" class="btn badge-filter-btn {% if periodo_ativo == 'hoje' %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+                    Hoje
+                </a>
+                <a href="?periodo=ontem" class="btn badge-filter-btn {% if periodo_ativo == 'ontem' %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+                    Ontem
+                </a>
+                <a href="?periodo=7d" class="btn badge-filter-btn {% if periodo_ativo == '7d' %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+                    Últimos 7 Dias
+                </a>
+                <a href="?periodo=30d" class="btn badge-filter-btn {% if periodo_ativo == '30d' %}btn-dark{% else %}btn-outline-secondary{% endif %}">
+                    Últimos 30 Dias
+                </a>
+            </div>
+
+            <!-- Interval Active Label -->
+            <div class="text-muted small">
+                <i class="bi bi-clock-history me-1 text-primary"></i>
+                Intervalo: <strong>{{ start_dt_formatted }}</strong> até <strong>{{ end_dt_formatted }}</strong>
+                <span class="badge bg-light text-secondary border ms-2">{{ total_records }} amostras</span>
+            </div>
+        </div>
+
+        <!-- Custom Date & Time Form -->
+        <form method="get" class="row g-2 align-items-end mt-2 pt-2 border-top">
+            <input type="hidden" name="periodo" value="personalizado">
+            <div class="col-6 col-md-3 col-lg-2">
+                <label class="form-label text-muted small mb-1">Data Inicial</label>
+                <input type="date" name="data_inicio" value="{{ data_inicio_str }}" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-6 col-md-2 col-lg-2">
+                <label class="form-label text-muted small mb-1">Hora Inicial</label>
+                <input type="time" name="hora_inicio" value="{{ hora_inicio_str }}" class="form-control form-control-sm">
+            </div>
+            <div class="col-6 col-md-3 col-lg-2">
+                <label class="form-label text-muted small mb-1">Data Final</label>
+                <input type="date" name="data_final" value="{{ data_final_str }}" class="form-control form-control-sm" required>
+            </div>
+            <div class="col-6 col-md-2 col-lg-2">
+                <label class="form-label text-muted small mb-1">Hora Final</label>
+                <input type="time" name="hora_final" value="{{ hora_final_str }}" class="form-control form-control-sm">
+            </div>
+            <div class="col-12 col-md-2 col-lg-2 d-flex gap-1">
+                <button type="submit" class="btn btn-primary-custom btn-sm w-100 py-1 fw-semibold">
+                    <i class="bi bi-search me-1"></i>Filtrar
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Empty State Alert (if no data) -->
+    {% if not has_data %}
+    <div class="alert alert-info border-0 shadow-sm rounded-3 p-4 text-center mb-4">
+        <i class="bi bi-info-circle-fill fs-2 text-primary d-block mb-2"></i>
+        <h5 class="fw-bold text-dark mb-1">Não existem leituras da Caldeira para o período selecionado.</h5>
+        <p class="text-muted small mb-0">Tente selecionar outro intervalo ou certifique-se de que os XIDs estão mapeados e que o coletor SCADA está em execução.</p>
+    </div>
+    {% endif %}
+
+    <!-- 1. Summary Cards Row -->
+    <div class="row g-3 mb-4">
+        
+        <!-- Card 1: Pressão da Caldeira -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card-caldeira">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="text-muted small fw-semibold d-block">Pressão da Caldeira 2</span>
+                        <h4 class="fw-bold text-dark mb-0 mt-1">
+                            {% if card_stats.pressao_caldeira.avg is not None %}
+                                {{ card_stats.pressao_caldeira.avg|floatformat:2 }} <small class="fs-7 text-muted">bar</small>
+                            {% else %}
+                                <span class="fs-6 text-muted">Dados insuficientes</span>
+                            {% endif %}
+                        </h4>
+                    </div>
+                    <div class="kpi-icon-circle bg-warning bg-opacity-15 text-warning">
+                        <i class="bi bi-fire"></i>
+                    </div>
+                </div>
+                <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
+                    <span>Mín: <strong>{{ card_stats.pressao_caldeira.min|default:"-" }} bar</strong></span>
+                    <span>Máx: <strong>{{ card_stats.pressao_caldeira.max|default:"-" }} bar</strong></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 2: Pressão Alta Prensas 1-7 -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card-caldeira">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="text-muted small fw-semibold d-block">Alta — Prensas 1 a 7</span>
+                        <h4 class="fw-bold text-dark mb-0 mt-1">
+                            {% if card_stats.pressao_alta_1_7.avg is not None %}
+                                {{ card_stats.pressao_alta_1_7.avg|floatformat:2 }} <small class="fs-7 text-muted">bar</small>
+                            {% else %}
+                                <span class="fs-6 text-muted">Dados insuficientes</span>
+                            {% endif %}
+                        </h4>
+                    </div>
+                    <div class="kpi-icon-circle bg-primary bg-opacity-10 text-primary">
+                        <i class="bi bi-arrow-up-circle"></i>
+                    </div>
+                </div>
+                <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
+                    <span>Desvio Médio SP: <strong>{{ card_stats.pressao_alta_1_7.desvio_abs_medio|default:"-" }} bar</strong></span>
+                    <span class="badge bg-light text-secondary border">Até 14 cav.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 3: Pressão Alta Prensas 8-12 -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card-caldeira">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="text-muted small fw-semibold d-block">Alta — Prensas 8 a 12</span>
+                        <h4 class="fw-bold text-dark mb-0 mt-1">
+                            {% if card_stats.pressao_alta_8_12.avg is not None %}
+                                {{ card_stats.pressao_alta_8_12.avg|floatformat:2 }} <small class="fs-7 text-muted">bar</small>
+                            {% else %}
+                                <span class="fs-6 text-muted">Dados insuficientes</span>
+                            {% endif %}
+                        </h4>
+                    </div>
+                    <div class="kpi-icon-circle bg-info bg-opacity-10 text-info">
+                        <i class="bi bi-arrow-up-circle-fill"></i>
+                    </div>
+                </div>
+                <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
+                    <span>Desvio Médio SP: <strong>{{ card_stats.pressao_alta_8_12.desvio_abs_medio|default:"-" }} bar</strong></span>
+                    <span class="badge bg-light text-secondary border">Até 18 cav.</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 4: Condensado no Período -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card-caldeira">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="text-muted small fw-semibold d-block">Condensado Medido</span>
+                        <h4 class="fw-bold text-dark mb-0 mt-1">
+                            {% if condensate_stats.has_data %}
+                                {{ condensate_stats.formatted_liters }}
+                            {% else %}
+                                <span class="fs-6 text-muted">Sem dados</span>
+                            {% endif %}
+                        </h4>
+                    </div>
+                    <div class="kpi-icon-circle bg-success bg-opacity-10 text-success">
+                        <i class="bi bi-droplet-fill"></i>
+                    </div>
+                </div>
+                <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
+                    <span>Média: <strong>{{ condensate_stats.formatted_avg_lh|default:"-" }}</strong></span>
+                    {% if condensate_stats.resets_count > 0 %}
+                    <span class="badge bg-warning-subtle text-warning border border-warning-subtle">{{ condensate_stats.resets_count }} reset(s)</span>
+                    {% else %}
+                    <span class="badge bg-success-subtle text-success border border-success-subtle">Contínuo</span>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 5: Pressões Auxiliares -->
+        <div class="col-12 col-sm-6 col-xl">
+            <div class="kpi-card-caldeira">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="text-muted small fw-semibold d-block">Utilidades Auxiliares</span>
+                        <div class="mt-1">
+                            <div class="fs-7 text-dark fw-bold">
+                                Ar: {{ card_stats.ar_comprimido.avg|default:"-" }} bar
+                            </div>
+                            <div class="fs-7 text-dark fw-bold">
+                                Vácuo: {{ card_stats.vacuo.avg|default:"-" }} bar
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kpi-icon-circle bg-secondary bg-opacity-10 text-secondary">
+                        <i class="bi bi-gear-wide-connected"></i>
+                    </div>
+                </div>
+                <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
+                    <span>Setpoint: <strong>{{ card_stats.setpoint_pressao_alta.avg|default:"-" }} bar</strong></span>
+                    <span class="text-muted">Pneumático &amp; Vácuo</span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Informative Engineering Note -->
+    <div class="info-note-box mb-4">
+        <i class="bi bi-info-circle-fill text-warning me-1"></i>
+        <strong>Nota de Interpretação:</strong> Oscilações de pressão podem ocorrer quando várias prensas ou cavidades solicitam vapor simultaneamente. Este relatório apresenta o comportamento medido e não classifica automaticamente uma oscilação como falha. As linhas possuem capacidades instaladas diferentes: até 14 cavidades nas prensas 1 a 7 e até 18 cavidades nas prensas 8 a 12.
+    </div>
+
+    <!-- 2. Interactive Charts Grid (6 Charts) -->
+    <div class="row g-4 mb-4">
+        
+        <!-- Gráfico 1: Geração e Distribuição de Vapor -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-fire text-warning me-1"></i>1. Pressão da Caldeira, Setpoint e Linhas de Alta
+                    </h6>
+                    <span class="badge bg-light text-muted border fs-8">bar</span>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chart1Vapor"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gráfico 2: Acompanhamento do Setpoint -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-bullseye text-primary me-1"></i>2. Diferença das Linhas de Alta em Relação ao Setpoint
+                    </h6>
+                    <span class="badge bg-light text-muted border fs-8">bar (Ref: 0)</span>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chart2Setpoint"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gráfico 3: Linhas de Baixa -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-arrow-down-circle-fill text-info me-1"></i>3. Pressão das Linhas de Baixa
+                    </h6>
+                    <span class="badge bg-light text-muted border fs-8">bar</span>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chart3Baixa"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gráfico 4: Volume de Condensado por Hora -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-droplet-fill text-success me-1"></i>4. Volume de Condensado por Hora
+                    </h6>
+                    <span class="badge bg-light text-muted border fs-8">Litros (L)</span>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chart4Condensado"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gráfico 5: Ar Comprimido -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-wind text-secondary me-1"></i>5. Pressão do Ar Comprimido da Vulcanização
+                    </h6>
+                    <span class="badge bg-light text-muted border fs-8">bar</span>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chart5Ar"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Gráfico 6: Vácuo -->
+        <div class="col-12 col-xl-6">
+            <div class="chart-container-card">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="fw-bold text-dark mb-0">
+                        <i class="bi bi-speedometer text-danger me-1"></i>6. Pressão da Unidade de Vácuo
+                    </h6>
+                    <span class="badge bg-light text-muted border fs-8">bar</span>
+                </div>
+                <div class="chart-box">
+                    <canvas id="chart6Vacuo"></canvas>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- 3. Synchronized Historical Table -->
+    <div class="card card-custom p-3 mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
+            <div>
+                <h5 class="fw-bold text-dark mb-0">
+                    <i class="bi bi-table text-primary me-2"></i>Histórico Sincronizado de Telemetria
+                </h5>
+                <span class="text-muted small">Amostras consolidadas ordenadas cronologicamente com cálculo derivado de desvios.</span>
+            </div>
+            <div class="text-muted small">
+                Exibindo página {{ timeline_page.number }} de {{ timeline_page.paginator.num_pages }} ({{ total_records }} registros)
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="table table-sm table-bordered table-striped table-historical mb-0">
+                <thead>
+                    <tr>
+                        <th>Data e Hora</th>
+                        <th>Caldeira (bar)</th>
+                        <th>Setpoint (bar)</th>
+                        <th>Alta 1-7 (bar)</th>
+                        <th>Alta 8-12 (bar)</th>
+                        <th>Desvio 1-7 (bar)</th>
+                        <th>Desvio 8-12 (bar)</th>
+                        <th>Dif. Alta (bar)</th>
+                        <th>Baixa 1-7 (bar)</th>
+                        <th>Baixa 8-12 (bar)</th>
+                        <th>Condensado (L)</th>
+                        <th>Ar (bar)</th>
+                        <th>Vácuo (bar)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in timeline_page %}
+                    <tr>
+                        <td class="text-center fw-semibold text-dark">{{ item.datetime_str }}</td>
+                        <td class="text-end">{{ item.values.pressao_caldeira|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.setpoint_pressao_alta|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.pressao_alta_prensas_1_7|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.pressao_alta_prensas_8_12|default:"-" }}</td>
+                        <td class="text-end {% if item.desvio_1_7 > 0 %}text-primary{% elif item.desvio_1_7 < 0 %}text-danger{% endif %}">
+                            {{ item.desvio_1_7|default:"-" }}
+                        </td>
+                        <td class="text-end {% if item.desvio_8_12 > 0 %}text-primary{% elif item.desvio_8_12 < 0 %}text-danger{% endif %}">
+                            {{ item.desvio_8_12|default:"-" }}
+                        </td>
+                        <td class="text-end">{{ item.diferenca_alta|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.pressao_baixa_prensas_1_7|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.pressao_baixa_prensas_8_12|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.volume_condensado|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.pressao_ar_comprimido|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.pressao_vacuo|default:"-" }}</td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="13" class="text-center text-muted py-4">
+                            Nenhum registro encontrado para os filtros selecionados.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        {% if timeline_page.has_other_pages %}
+        <nav aria-label="Paginação" class="mt-3">
+            <ul class="pagination pagination-sm justify-content-center mb-0">
+                {% if timeline_page.has_previous %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ timeline_page.previous_page_number }}&periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}">Anterior</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+                {% endif %}
+
+                <li class="page-item active">
+                    <span class="page-link">{{ timeline_page.number }} / {{ timeline_page.paginator.num_pages }}</span>
+                </li>
+
+                {% if timeline_page.has_next %}
+                <li class="page-item">
+                    <a class="page-link" href="?page={{ timeline_page.next_page_number }}&periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}">Próxima</a>
+                </li>
+                {% else %}
+                <li class="page-item disabled"><span class="page-link">Próxima</span></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- Chart.js Rendering Script -->
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    const rawDatasets = {{ chart_datasets_json|safe }};
+    if (!rawDatasets) return;
+
+    const commonOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+            mode: 'index',
+            intersect: false,
+        },
+        plugins: {
+            legend: {
+                position: 'top',
+                labels: {
+                    boxWidth: 12,
+                    font: { family: 'Segoe UI', size: 11 }
+                }
+            },
+            tooltip: {
+                padding: 10,
+                backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                titleFont: { family: 'Segoe UI', size: 12, weight: 'bold' },
+                bodyFont: { family: 'Segoe UI', size: 11 }
+            }
+        },
+        scales: {
+            x: {
+                ticks: { maxTicksLimit: 8, font: { family: 'Segoe UI', size: 10 } },
+                grid: { display: false }
+            },
+            y: {
+                ticks: { font: { family: 'Segoe UI', size: 10 } },
+                grid: { color: '#E2E8F0' }
+            }
+        }
+    };
+
+    // 1. Gráfico 1: Vapor
+    const ctx1 = document.getElementById("chart1Vapor");
+    if (ctx1 && rawDatasets.chart_1_vapor) {
+        new Chart(ctx1, {
+            type: 'line',
+            data: {
+                labels: rawDatasets.chart_1_vapor.labels,
+                datasets: [
+                    {
+                        label: 'Caldeira 2 (bar)',
+                        data: rawDatasets.chart_1_vapor.pressao_caldeira,
+                        borderColor: '#DC2626',
+                        backgroundColor: 'rgba(220, 38, 38, 0.1)',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Setpoint (bar)',
+                        data: rawDatasets.chart_1_vapor.setpoint,
+                        borderColor: '#B8842E',
+                        borderDash: [5, 5],
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Alta 1-7 (bar)',
+                        data: rawDatasets.chart_1_vapor.alta_1_7,
+                        borderColor: '#0284C7',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Alta 8-12 (bar)',
+                        data: rawDatasets.chart_1_vapor.alta_8_12,
+                        borderColor: '#7C3AED',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // 2. Gráfico 2: Desvio do Setpoint
+    const ctx2 = document.getElementById("chart2Setpoint");
+    if (ctx2 && rawDatasets.chart_2_setpoint_desvio) {
+        new Chart(ctx2, {
+            type: 'line',
+            data: {
+                labels: rawDatasets.chart_2_setpoint_desvio.labels,
+                datasets: [
+                    {
+                        label: 'Desvio Linha 1-7 (bar)',
+                        data: rawDatasets.chart_2_setpoint_desvio.desvio_1_7,
+                        borderColor: '#0284C7',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Desvio Linha 8-12 (bar)',
+                        data: rawDatasets.chart_2_setpoint_desvio.desvio_8_12,
+                        borderColor: '#7C3AED',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                ...commonOptions,
+                plugins: {
+                    ...commonOptions.plugins
+                }
+            }
+        });
+    }
+
+    // 3. Gráfico 3: Linhas de Baixa
+    const ctx3 = document.getElementById("chart3Baixa");
+    if (ctx3 && rawDatasets.chart_3_baixa) {
+        new Chart(ctx3, {
+            type: 'line',
+            data: {
+                labels: rawDatasets.chart_3_baixa.labels,
+                datasets: [
+                    {
+                        label: 'Baixa 1-7 (bar)',
+                        data: rawDatasets.chart_3_baixa.baixa_1_7,
+                        borderColor: '#059669',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Baixa 8-12 (bar)',
+                        data: rawDatasets.chart_3_baixa.baixa_8_12,
+                        borderColor: '#D97706',
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // 4. Gráfico 4: Condensado por Hora
+    const ctx4 = document.getElementById("chart4Condensado");
+    if (ctx4 && rawDatasets.chart_4_condensado_hora) {
+        new Chart(ctx4, {
+            type: 'bar',
+            data: {
+                labels: rawDatasets.chart_4_condensado_hora.labels,
+                datasets: [
+                    {
+                        label: 'Volume Derivado (Litros)',
+                        data: rawDatasets.chart_4_condensado_hora.volumes,
+                        backgroundColor: '#10B981',
+                        borderRadius: 4
+                    }
+                ]
+            },
+            options: {
+                ...commonOptions,
+                plugins: {
+                    ...commonOptions.plugins
+                }
+            }
+        });
+    }
+
+    // 5. Gráfico 5: Ar Comprimido
+    const ctx5 = document.getElementById("chart5Ar");
+    if (ctx5 && rawDatasets.chart_5_ar_comprimido) {
+        new Chart(ctx5, {
+            type: 'line',
+            data: {
+                labels: rawDatasets.chart_5_ar_comprimido.labels,
+                datasets: [
+                    {
+                        label: 'Ar Comprimido Vulcanização (bar)',
+                        data: rawDatasets.chart_5_ar_comprimido.ar_comprimido,
+                        borderColor: '#2563EB',
+                        backgroundColor: 'rgba(37, 99, 235, 0.08)',
+                        fill: true,
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+
+    // 6. Gráfico 6: Vácuo
+    const ctx6 = document.getElementById("chart6Vacuo");
+    if (ctx6 && rawDatasets.chart_6_vacuo) {
+        new Chart(ctx6, {
+            type: 'line',
+            data: {
+                labels: rawDatasets.chart_6_vacuo.labels,
+                datasets: [
+                    {
+                        label: 'Unidade de Vácuo (bar)',
+                        data: rawDatasets.chart_6_vacuo.vacuo,
+                        borderColor: '#475569',
+                        backgroundColor: 'rgba(71, 85, 105, 0.08)',
+                        fill: true,
+                        borderWidth: 1.8,
+                        pointRadius: 0,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: commonOptions
+        });
+    }
+});
+</script>
+{% endblock %}

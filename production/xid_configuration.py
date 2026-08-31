@@ -234,7 +234,8 @@ class XIDDiagnosticsService:
 
         global_params = list(
             ProductionGlobalParameter.objects.exclude(
-                Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra")
+                Q(chave__startswith="calandra_") | Q(nome__istartswith="calandra") |
+                Q(chave__startswith="caldeira_") | Q(nome__istartswith="caldeira")
             ).order_by("ordem", "nome")
         )
         global_alarms = list(ProductionGlobalAlarm.objects.all().order_by("ordem", "nome"))

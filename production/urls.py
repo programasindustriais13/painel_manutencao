@@ -29,11 +29,14 @@ urlpatterns = [
     path("configuracao-scada/maquinas/<int:pk>/", views.xid_machine_config, name="xid_machine_config"),
     path("configuracao-scada/globais/", views.xid_global_config, name="xid_global_config"),
     path("configuracao-scada/calandra/", views.xid_calandra_config, name="xid_calandra_config"),
+    path("configuracao-scada/caldeira/", views.xid_caldeira_config, name="xid_caldeira_config"),
     path("configuracao-scada/api/testar-xid/", views.xid_test_api, name="xid_test_api"),
-    # Central de Relatórios de Máquinas & Histórico da Calandra
+    # Central de Relatórios de Máquinas & Históricos
     path("relatorios/", views.machine_reports_hub, name="machine_reports_hub"),
     path("relatorios/calandra/", views.calandra_historical_report, name="calandra_report"),
     path("relatorios/calandra/exportar-excel/", views.calandra_export_excel, name="calandra_export_excel"),
+    path("relatorios/caldeira/", views.caldeira_historical_report, name="caldeira_report"),
+    path("relatorios/caldeira/exportar-excel/", views.caldeira_export_excel, name="caldeira_export_excel"),
 ]
 
 
