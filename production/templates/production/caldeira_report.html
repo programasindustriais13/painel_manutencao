@@ -236,8 +236,8 @@
                     </div>
                 </div>
                 <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
-                    <span>Mín: <strong>{{ card_stats.pressao_caldeira.min|default:"-" }} bar</strong></span>
-                    <span>Máx: <strong>{{ card_stats.pressao_caldeira.max|default:"-" }} bar</strong></span>
+                    <span>Mín: <strong>{{ card_stats.pressao_caldeira.min|default:"-" }}</strong> | Máx: <strong>{{ card_stats.pressao_caldeira.max|default:"-" }}</strong></span>
+                    <span title="Setpoint médio de pressão de alta configurado">SP Alta: <strong>{{ card_stats.setpoint_pressao_alta.avg|default:"-" }} bar</strong></span>
                 </div>
             </div>
         </div>
@@ -341,8 +341,8 @@
                     </div>
                 </div>
                 <div class="border-top pt-2 mt-auto d-flex justify-content-between text-muted fs-8">
-                    <span>Setpoint: <strong>{{ card_stats.setpoint_pressao_alta.avg|default:"-" }} bar</strong></span>
-                    <span class="text-muted">Pneumático &amp; Vácuo</span>
+                    <span>Pneumático (Ar)</span>
+                    <span class="text-muted">Drenagem (Vácuo)</span>
                 </div>
             </div>
         </div>
