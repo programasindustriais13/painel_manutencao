@@ -287,6 +287,7 @@ class CalandraReportTestCase(TestCase):
                     "temp_furador": 30.0,
                     "temp_aquecedor": 45.0,
                     "temp_tcu_extrusora": 55.0,
+                    "temp_geladeira": 18.0,
                 }
             },
             # Ponto 2: Em processo efetivo
@@ -308,6 +309,7 @@ class CalandraReportTestCase(TestCase):
                     "temp_furador": 32.0,
                     "temp_aquecedor": 47.0,
                     "temp_tcu_extrusora": 57.0,
+                    "temp_geladeira": 22.0,
                 }
             },
             # Ponto 3: Máquina parada (NÃO deve distorcer as médias dos cards!)
@@ -319,6 +321,7 @@ class CalandraReportTestCase(TestCase):
                     "temp_borracha_saida_extrusao": 20.0, # Valor frio de parada
                     "temp_cilindro_inf": 25.0,
                     "carga_desbobinador": 0.0,
+                    "temp_geladeira": 10.0,
                 }
             },
         ]
@@ -345,6 +348,15 @@ class CalandraReportTestCase(TestCase):
         self.assertEqual(c3["avg"], 60.0)
         self.assertEqual(c3["min"], 50.0)
         self.assertEqual(c3["max"], 70.0)
+
+        # Card 4: Temperaturas Auxiliares (Geladeira: [18, 22] -> 20.0)
+        c4 = stats["temp_auxiliares"]
+        self.assertEqual(c4["furador"]["avg"], 31.0)
+        self.assertEqual(c4["aquecedor"]["avg"], 46.0)
+        self.assertEqual(c4["tcu_extrusora"]["avg"], 56.0)
+        self.assertEqual(c4["geladeira"]["avg"], 20.0)
+        self.assertEqual(c4["geladeira"]["min"], 18.0)
+        self.assertEqual(c4["geladeira"]["max"], 22.0)
 
     def test_audit_cards_no_effective_process(self):
         """Valida que período sem processo efetivo retorna has_effective_process=False sem divisão por zero."""
@@ -426,7 +438,7 @@ class CalandraReportTestCase(TestCase):
         self.assertEqual(row3["values"]["temp_borracha_saida_extrusao"], 85.2)
 
     def test_chart_datasets_structure(self):
-        """Valida que os 6 datasets de gráficos contêm as chaves e séries corretas (com Cilindros e Auxiliares separados)."""
+        """Valida que os 6 datasets de gráficos contêm as chaves e séries corretas (com Geladeira incluída em Auxiliares)."""
         start_dt = timezone.now() - timedelta(hours=1)
         end_dt = timezone.now()
 
@@ -465,17 +477,18 @@ class CalandraReportTestCase(TestCase):
         self.assertIn("cilindro_inter", charts["chart_5_temp_cilindros"])
         self.assertIn("cilindro_sup", charts["chart_5_temp_cilindros"])
 
-        # Gráfico 6: Temp Auxiliares
+        # Gráfico 6: Temp Auxiliares (Furador, Aquecedor, TCU Extrusora e Geladeira)
         self.assertIn("furador", charts["chart_6_temp_auxiliares"])
         self.assertIn("aquecedor", charts["chart_6_temp_auxiliares"])
         self.assertIn("tcu_extrusora", charts["chart_6_temp_auxiliares"])
+        self.assertIn("geladeira", charts["chart_6_temp_auxiliares"])
 
     # ─────────────────────────────────────────────────────────────────────────
     # 4. TESTES DE GERAÇÃO EXCEL (.XLSX)
     # ─────────────────────────────────────────────────────────────────────────
 
     def test_excel_export_structure_and_types(self):
-        """Valida que o arquivo Excel gerado segue rigorosamente as regras de cabeçalho, tipos e colunas."""
+        """Valida que o arquivo Excel gerado segue rigorosamente as regras de cabeçalho, tipos e colunas (22 colunas)."""
         base_time = timezone.now()
         t1 = int((base_time - timedelta(minutes=5)).timestamp() * 1000)
         t2 = int((base_time - timedelta(minutes=2)).timestamp() * 1000)
@@ -484,8 +497,10 @@ class CalandraReportTestCase(TestCase):
             cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["passada"], 2, 1.0, t1))
             cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["vel_calandra"], 3, 12.5, t1))
             cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["metragem_bobinada"], 3, 540.0, t1))
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["temp_geladeira"], 3, 18.5, t1))
             cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["passada"], 2, 2.0, t2))
             cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["vel_calandra"], 3, 14.0, t2))
+            cursor.execute("INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s);", (self.dp_map["temp_geladeira"], 3, 19.0, t2))
 
         start_dt = base_time - timedelta(minutes=10)
         end_dt = base_time
@@ -502,9 +517,11 @@ class CalandraReportTestCase(TestCase):
         self.assertEqual(ws.cell(row=1, column=2).value, "PASSADA")
         self.assertEqual(ws.cell(row=1, column=3).value, "METRAGEM BOBINADA (m)")
         self.assertEqual(ws.cell(row=1, column=4).value, "VEL. CALANDRA (m/min)")
+        # Última coluna: TEMP. GELADEIRA (°C)
+        self.assertEqual(ws.cell(row=1, column=22).value, "TEMP. GELADEIRA (°C)")
 
-        # Total de colunas: 1 (Data/Hora) + 1 (Passada) + 19 (demais variáveis) = 21 colunas
-        self.assertEqual(ws.max_column, 21)
+        # Total de colunas: 1 (Data/Hora) + 1 (Passada) + 20 (demais variáveis) = 22 colunas
+        self.assertEqual(ws.max_column, 22)
 
         # Linhas de dados: 2 registros
         self.assertEqual(ws.max_row, 3)  # 1 cabeçalho + 2 dados
@@ -515,6 +532,8 @@ class CalandraReportTestCase(TestCase):
         row1_metragem = ws.cell(row=2, column=3).value
         self.assertEqual(row1_metragem, 540.0)
         self.assertIsInstance(row1_metragem, (int, float))  # Numérico real!
+        row1_gel = ws.cell(row=2, column=22).value
+        self.assertEqual(row1_gel, 18.5)
 
         # Linha 2 de dados (row=3)
         row2_passada = ws.cell(row=3, column=2).value
@@ -522,6 +541,8 @@ class CalandraReportTestCase(TestCase):
         row2_vel = ws.cell(row=3, column=4).value
         self.assertEqual(row2_vel, 14.0)
         self.assertIsInstance(row2_vel, (int, float))
+        row2_gel = ws.cell(row=3, column=22).value
+        self.assertEqual(row2_gel, 19.0)
 
         # Congelamento e autofiltro
         self.assertEqual(ws.freeze_panes, "A2")
@@ -597,4 +618,41 @@ class CalandraReportTestCase(TestCase):
         cfg_restored_map = {c["key"]: c["tag_name"] for c in configs_restored}
         self.assertEqual(cfg_restored_map["passada"], "CALANDRA_meta - PASSADA")
         self.assertEqual(cfg_restored_map["vel_calandra"], "CALANDRA - VEL_CALANDRA (m/min)")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # 7. TESTES ESPECÍFICOS DA NOVA VARIÁVEL GELADEIRA & RENDERIZAÇÃO
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def test_geladeira_variable_attributes(self):
+        """Valida que a 21ª variável Geladeira possui todas as propriedades canônicas exigidas."""
+        configs = CalandraHistoricalService.get_variables_config()
+        self.assertEqual(len(configs), 21)
+
+        gel_cfg = next((c for c in configs if c["key"] == "temp_geladeira"), None)
+        self.assertIsNotNone(gel_cfg)
+        self.assertIn("GELADEIRA", gel_cfg["tag_name"])
+        self.assertEqual(gel_cfg["label"], "Geladeira")
+        self.assertEqual(gel_cfg["excel_header"], "TEMP. GELADEIRA (°C)")
+        self.assertEqual(gel_cfg["unit"], "°C")
+        self.assertEqual(gel_cfg["data_type"], 3)
+        self.assertEqual(gel_cfg["order"], 21)
+        self.assertTrue(gel_cfg["is_numeric"])
+        self.assertEqual(gel_cfg["group"], "temperaturas_processo")
+
+    def test_calandra_report_renders_geladeira_and_21_vars(self):
+        """Valida que a página de relatório renderiza o Card de Geladeira, Gráfico, Tabela e contagem de 21 XIDs."""
+        self.client.force_login(self.user_lp)
+        resp = self.client.get(reverse("production:calandra_report"))
+        self.assertEqual(resp.status_code, 200)
+
+        # Badge e contagem
+        self.assertContains(resp, "21 XIDs")
+        # Card 4
+        self.assertContains(resp, "Geladeira")
+        self.assertContains(resp, "c4_gel_avg")
+        # Gráfico 6
+        self.assertContains(resp, "chartTempAuxiliares")
+        # Tabela
+        self.assertContains(resp, "T. Geladeira (°C)")
+
 

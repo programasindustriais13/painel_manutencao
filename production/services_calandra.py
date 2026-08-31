@@ -267,6 +267,18 @@ CALANDRA_VARIABLES_CONFIG: List[Dict[str, Any]] = [
         "order": 20,
         "is_numeric": True,
     },
+    {
+        "key": "temp_geladeira",
+        "tag_name": "CALANDRA_TEMPERATURA - GELADEIRA (ºC)",
+        "label": "Geladeira",
+        "excel_header": "TEMP. GELADEIRA (°C)",
+        "group": "temperaturas_processo",
+        "group_label": "Temperaturas do Processo",
+        "unit": "°C",
+        "data_type": 3,
+        "order": 21,
+        "is_numeric": True,
+    },
 ]
 
 
@@ -439,18 +451,24 @@ class CalandraHistoricalService:
     @classmethod
     def resolve_calandra_datapoints(cls) -> Dict[str, Dict[str, Any]]:
         """
-        Localiza os DataPoints do Scada-LTS para as 20 variáveis.
+        Localiza os DataPoints do Scada-LTS para as 21 variáveis.
         Busca de forma flexível por `xid` ou `pointName` para garantir compatibilidade.
         Retorna dicionário {var_key: {'dp_id': int, 'xid': str, 'point_name': str, 'config': dict}}.
         """
         configs = cls.get_variables_config()
         tag_names = [c["tag_name"] for c in configs]
+        extended_tag_names = set(tag_names)
+        for t in tag_names:
+            if "ºC" in t:
+                extended_tag_names.add(t.replace("ºC", "°C"))
+            elif "°C" in t:
+                extended_tag_names.add(t.replace("°C", "ºC"))
 
         resolved: Dict[str, Dict[str, Any]] = {}
         try:
             dps = list(
                 ScadaDataPoint.objects.using("scada")
-                .filter(Q(xid__in=tag_names) | Q(point_name__in=tag_names))
+                .filter(Q(xid__in=extended_tag_names) | Q(point_name__in=extended_tag_names))
                 .values("id", "xid", "point_name")
             )
             dp_by_xid = {dp["xid"]: dp for dp in dps}
@@ -458,7 +476,11 @@ class CalandraHistoricalService:
 
             for c in configs:
                 tag = c["tag_name"]
-                dp_match = dp_by_xid.get(tag) or dp_by_name.get(tag)
+                alt_tag = tag.replace("ºC", "°C") if "ºC" in tag else (tag.replace("°C", "ºC") if "°C" in tag else tag)
+                dp_match = (
+                    dp_by_xid.get(tag) or dp_by_name.get(tag) or
+                    dp_by_xid.get(alt_tag) or dp_by_name.get(alt_tag)
+                )
                 if dp_match:
                     resolved[c["key"]] = {
                         "dp_id": dp_match["id"],
@@ -637,6 +659,7 @@ class CalandraHistoricalService:
             "furador": _calc_var_stat("temp_furador"),
             "aquecedor": _calc_var_stat("temp_aquecedor"),
             "tcu_extrusora": _calc_var_stat("temp_tcu_extrusora"),
+            "geladeira": _calc_var_stat("temp_geladeira"),
         }
 
         return {
@@ -807,13 +830,13 @@ class CalandraHistoricalService:
             "chart_3_espessuras": {"labels": [], "timestamps": [], "esq_sup": [], "dir_sup": [], "dir_inf": [], "esq_inf": []},
             "chart_4_temp_borracha": {"labels": [], "timestamps": [], "saida_extrusao": [], "ent_calandra": [], "saida_calandra": []},
             "chart_5_temp_cilindros": {"labels": [], "timestamps": [], "cilindro_inf": [], "cilindro_inter": [], "cilindro_sup": []},
-            "chart_6_temp_auxiliares": {"labels": [], "timestamps": [], "furador": [], "aquecedor": [], "tcu_extrusora": []},
+            "chart_6_temp_auxiliares": {"labels": [], "timestamps": [], "furador": [], "aquecedor": [], "tcu_extrusora": [], "geladeira": []},
             # Aliases legados para retrocompatibilidade
             "chart_a_producao": {"labels": [], "velocidade": [], "metragem": [], "passada": []},
             "chart_b_cargas": {"labels": [], "bobinamento": [], "desbobinador": [], "pos_calandra": [], "quebra_trama": []},
             "chart_c_espessuras": {"labels": [], "esq_sup": [], "dir_sup": [], "dir_inf": [], "esq_inf": []},
             "chart_d_temp_borracha": {"labels": [], "saida_extrusao": [], "ent_calandra": [], "saida_calandra": []},
-            "chart_e_temp_processo": {"labels": [], "cilindro_inf": [], "cilindro_inter": [], "cilindro_sup": [], "furador": [], "aquecedor": [], "tcu_extrusora": []},
+            "chart_e_temp_processo": {"labels": [], "cilindro_inf": [], "cilindro_inter": [], "cilindro_sup": [], "furador": [], "aquecedor": [], "tcu_extrusora": [], "geladeira": []},
         }
 
     @classmethod
@@ -885,6 +908,7 @@ class CalandraHistoricalService:
         t_fur = [_get_float(item, "temp_furador") for item in sampled_timeline]
         t_aquec = [_get_float(item, "temp_aquecedor") for item in sampled_timeline]
         t_tcu = [_get_float(item, "temp_tcu_extrusora") for item in sampled_timeline]
+        t_gel = [_get_float(item, "temp_geladeira") for item in sampled_timeline]
 
         return {
             # Gráfico 1: Produção (Velocidade + Metragem + Passada)
@@ -938,6 +962,7 @@ class CalandraHistoricalService:
                 "furador": t_fur,
                 "aquecedor": t_aquec,
                 "tcu_extrusora": t_tcu,
+                "geladeira": t_gel,
             },
             # Aliases legados (retrocompatibilidade)
             "chart_a_producao": {
@@ -975,6 +1000,7 @@ class CalandraHistoricalService:
                 "furador": t_fur,
                 "aquecedor": t_aquec,
                 "tcu_extrusora": t_tcu,
+                "geladeira": t_gel,
             },
         }
 

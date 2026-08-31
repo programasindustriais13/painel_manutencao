@@ -214,7 +214,7 @@
                 <div class="d-flex align-items-center gap-2 mb-1">
                     <span class="badge bg-warning text-dark px-2 py-1 fw-bold">CALANDRA</span>
                     <span class="badge bg-secondary text-white px-2 py-1">Auditoria de Processo &amp; Qualidade</span>
-                    <span class="badge bg-dark border border-secondary text-white-50 px-2 py-1">20 XIDs</span>
+                    <span class="badge bg-dark border border-secondary text-white-50 px-2 py-1">{{ total_vars|default:21 }} XIDs</span>
                 </div>
                 <h3 class="fw-bold mb-1 text-white">Calandra — Auditoria de Condições de Processo e Qualidade</h3>
                 <p class="text-white-50 mb-0 small">
@@ -506,6 +506,12 @@
                                 <td class="audit-val-minmax" id="c4_tcu_min">{{ card_stats.temp_auxiliares.tcu_extrusora.min|default:"-" }}</td>
                                 <td class="audit-val-minmax" id="c4_tcu_max">{{ card_stats.temp_auxiliares.tcu_extrusora.max|default:"-" }}</td>
                             </tr>
+                            <tr>
+                                <td class="col-var">Geladeira</td>
+                                <td class="audit-val-avg" id="c4_gel_avg">{{ card_stats.temp_auxiliares.geladeira.avg|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_gel_min">{{ card_stats.temp_auxiliares.geladeira.min|default:"-" }}</td>
+                                <td class="audit-val-minmax" id="c4_gel_max">{{ card_stats.temp_auxiliares.geladeira.max|default:"-" }}</td>
+                            </tr>
                         </tbody>
                     </table>
                     {% else %}
@@ -614,7 +620,7 @@
                     </h6>
                     <span class="chart-selection-hint"><i class="bi bi-arrows-expand"></i>Arraste para selecionar</span>
                 </div>
-                <small class="text-muted mb-2">Furador, Aquecedor e TCU Extrusora</small>
+                <small class="text-muted mb-2">Furador, Aquecedor, TCU Extrusora e Geladeira</small>
                 <div class="chart-wrapper">
                     <canvas id="chartTempAuxiliares"></canvas>
                 </div>
@@ -669,6 +675,7 @@
                         <th>T. Furador (°C)</th>
                         <th>T. Aquec. (°C)</th>
                         <th>T. TCU Extr. (°C)</th>
+                        <th>T. Geladeira (°C)</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -703,10 +710,11 @@
                         <td class="text-end">{{ item.values.temp_furador|default:"-" }}</td>
                         <td class="text-end">{{ item.values.temp_aquecedor|default:"-" }}</td>
                         <td class="text-end">{{ item.values.temp_tcu_extrusora|default:"-" }}</td>
+                        <td class="text-end">{{ item.values.temp_geladeira|default:"-" }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="21" class="text-center py-4 text-muted">
+                        <td colspan="22" class="text-center py-4 text-muted">
                             Nenhum registro para exibir no período.
                         </td>
                     </tr>
@@ -765,8 +773,8 @@
             </div>
             <div class="col-12 col-md-4">
                 <span>Variáveis encontradas no SCADA:</span>
-                <strong class="{% if variables_found_count == 20 %}text-success{% else %}text-warning{% endif %}">
-                    {{ variables_found_count }} de 20
+                <strong class="{% if variables_found_count == total_vars|default:21 %}text-success{% else %}text-warning{% endif %}">
+                    {{ variables_found_count }} de {{ total_vars|default:21 }}
                 </strong>
             </div>
         </div>
@@ -785,11 +793,22 @@ document.addEventListener("DOMContentLoaded", function() {
     const chartInstances = {};
     let isSelectionActive = false;
 
-    // Opções base de gráfico
+    // Opções base de gráfico (Linhas limpas sem marcadores em massa)
     const commonOptions = {
         responsive: true,
         maintainAspectRatio: false,
         interaction: { mode: 'index', intersect: false },
+        elements: {
+            point: {
+                radius: 0,
+                hoverRadius: 5,
+                hitRadius: 8
+            },
+            line: {
+                borderWidth: 2,
+                tension: 0.2
+            }
+        },
         plugins: {
             legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11, family: 'Inter, sans-serif' } } },
             tooltip: {
@@ -931,7 +950,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 datasets: [
                     { label: 'Furador (°C)', data: rawData.chart_6_temp_auxiliares.furador, borderColor: '#EC4899', borderWidth: 2, tension: 0.2 },
                     { label: 'Aquecedor (°C)', data: rawData.chart_6_temp_auxiliares.aquecedor, borderColor: '#F43F5E', borderWidth: 2, tension: 0.2 },
-                    { label: 'TCU Extrusora (°C)', data: rawData.chart_6_temp_auxiliares.tcu_extrusora, borderColor: '#14B8A6', borderWidth: 2, tension: 0.2 }
+                    { label: 'TCU Extrusora (°C)', data: rawData.chart_6_temp_auxiliares.tcu_extrusora, borderColor: '#14B8A6', borderWidth: 2, tension: 0.2 },
+                    { label: 'Geladeira (°C)', data: rawData.chart_6_temp_auxiliares.geladeira, borderColor: '#0284C7', borderWidth: 2, tension: 0.2 }
                 ]
             },
             options: commonOptions
@@ -1164,10 +1184,12 @@ document.addEventListener("DOMContentLoaded", function() {
         const fur = _calc('temp_furador');
         const aquec = _calc('temp_aquecedor');
         const tcu = _calc('temp_tcu_extrusora');
+        const gel = _calc('temp_geladeira');
 
         setEl('c4_fur_avg', fur.avg); setEl('c4_fur_min', fur.min); setEl('c4_fur_max', fur.max);
         setEl('c4_aquec_avg', aquec.avg); setEl('c4_aquec_min', aquec.min); setEl('c4_aquec_max', aquec.max);
         setEl('c4_tcu_avg', tcu.avg); setEl('c4_tcu_min', tcu.min); setEl('c4_tcu_max', tcu.max);
+        setEl('c4_gel_avg', gel.avg); setEl('c4_gel_min', gel.min); setEl('c4_gel_max', gel.max);
     }
 
     function setEl(id, val) {

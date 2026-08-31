@@ -3172,4 +3172,53 @@ Comandos de Teste:
 - `python manage.py test production.test_caldeira_report production.test_calandra_report`: 30 testes executados com 100% de sucesso.
 - `python manage.py test production.test_xid_configuration production.test_bladder_system production.test_pcp_system`: 64 testes executados com 100% de sucesso.
 
+================================================================================
+EVOLUÇÃO DO RELATÓRIO DA CALANDRA: 21ª VARIÁVEL (GELADEIRA) & GRÁFICOS LIMPOS
+================================================================================
+Data: 31/08/2026
+Autor: Antigravity AI
+Referência da SPEC: regras_programacao/SPEC_HISTORICO_CALANDRA_RELATORIOS.md
+
+Objetivo:
+Evoluir a página de auditoria da Calandra (/producao/relatorios/calandra/) integrando a nova variável térmica CALANDRA_TEMPERATURA - GELADEIRA (ºC) (passando o conjunto histórico de 20 para 21 variáveis) e limpando a visualização gráfica de todos os 6 gráficos temporais, eliminando marcadores circulares/bolinhas em massa na linha e mantendo hover sincronizado e tooltips intactos.
+
+A 21ª Variável Canônica da Calandra:
+- Chave interna: `temp_geladeira`
+- Tag/XID Canônico: `CALANDRA_TEMPERATURA - GELADEIRA (ºC)`
+- Rótulo amigável: `Geladeira` / `Temp. Geladeira`
+- Cabeçalho Excel: `TEMP. GELADEIRA (°C)`
+- Unidade: `°C`
+- Tipo de Dado: `3` (Numeric / Float)
+- Grupo: `temperaturas_processo` (Ordem: 21)
+
+Pontos de Integração da Geladeira:
+1. Card 4 ("Temperaturas Auxiliares"): Exibe Furador, Aquecedor, TCU Extrusora e Geladeira (Média, Mínimo e Máximo calculados estritamente sobre pontos de processo efetivo: vel > 0.05 m/min e avanço na metragem).
+2. Gráfico 6 ("Temperaturas Auxiliares"): Exibe 4 séries (Furador, Aquecedor, TCU Extrusora e Geladeira com cor ice-blue #0284C7).
+3. Tabela Histórica: Coluna `T. Geladeira (°C)` adicionada na sequência coerente do grupo de temperaturas auxiliares.
+4. Exportação Excel (.xlsx): Inclusão da coluna `TEMP. GELADEIRA (°C)` no layout horizontal formatado (totalizando 22 colunas com DATA/HORA e PASSADA).
+5. Configuração e Diagnóstico: Mapeamento em `xid_calandra_config`, exclusão dos parâmetros calandra_ dos parâmetros globais e ajuste dinâmico da contagem de variáveis para 21.
+
+Ajuste Visual dos Gráficos (Chart.js):
+- Configuração de `elements.point.radius: 0`, `elements.point.hoverRadius: 5` e `elements.point.hitRadius: 8` nas opções comuns (`commonOptions`).
+- Todos os 6 gráficos temporais (Produção, Cargas, Espessuras, Temp. Borracha, Temp. Cilindros, Temp. Auxiliares) agora renderizam linhas contínuas nítidas sem marcadores circulares em massa.
+- O hover e tooltips continuam destacando pontualmente o instante sob o cursor do usuário, com sincronização entre gráficos.
+
+Segurança e Banco SCADA:
+- Banco `scada` mantido 100% somente leitura (zero escrita, zero migrations).
+
+Arquivos Modificados:
+- `regras_programacao/SPEC_HISTORICO_CALANDRA_RELATORIOS.md`: SPEC atualizada com o inventário das 21 variáveis e especificações visuais de linha limpa.
+- `production/services_calandra.py`: Inclusão de `temp_geladeira` em `CALANDRA_VARIABLES_CONFIG`, `compute_effective_process_stats`, matching tolerante de grau em `resolve_calandra_datapoints` e datasets de gráficos.
+- `production/views.py`: Atualizada view `xid_calandra_config`, contagem de variáveis e context builder.
+- `production/templates/production/calandra_report.html`: Inclusão de Geladeira no Card 4, Gráfico 6, Tabela, recálculo JS e configuração de linhas limpas no Chart.js.
+- `production/templates/production/xid_calandra_config.html`: Atualizada contagem dinâmica de 21 variáveis.
+- `production/templates/production/machine_reports_hub.html`: Atualizado card descritivo da Calandra para 21 variáveis e 6 gráficos.
+- `production/test_calandra_report.py`: 19 testes automatizados com cobertura total para a Geladeira, gráficos, cards, Excel e garantia read-only.
+- `Instrucoes.txt`: Este registro histórico.
+
+Comandos de Teste:
+- `python manage.py test production.test_calandra_report`: 19 testes executados com 100% de sucesso.
+- `python manage.py test production.test_xid_configuration production.test_caldeira_report`: 31 testes executados com 100% de sucesso.
+
+
 

@@ -787,7 +787,7 @@ def xid_test_api(request):
 @superuser_required
 def xid_calandra_config(request):
     """
-    Configuração e mapeamento dos 20 XIDs da Calandra no Scada-LTS.
+    Configuração e mapeamento dos 21 XIDs da Calandra no Scada-LTS.
     Permite visualizar, editar e testar a comunicação em tempo real de cada variável.
     """
     from .services_calandra import CALANDRA_VARIABLES_CONFIG
@@ -838,7 +838,7 @@ def xid_calandra_config(request):
         {"id": "cargas", "title": "2. Cargas & Tensões (kg)", "badge": "4 Variáveis", "icon": "bi-arrows-expand", "vars": []},
         {"id": "espessuras", "title": "3. Espessuras (mm)", "badge": "4 Variáveis", "icon": "bi-bounding-box", "vars": []},
         {"id": "temperatura_borracha", "title": "4. Temperatura da Borracha (°C)", "badge": "3 Variáveis", "icon": "bi-fire", "vars": []},
-        {"id": "temperaturas_processo", "title": "5. Temperaturas do Equipamento (°C)", "badge": "6 Variáveis", "icon": "bi-thermometer-high", "vars": []},
+        {"id": "temperaturas_processo", "title": "5. Temperaturas do Equipamento (°C)", "badge": "7 Variáveis", "icon": "bi-thermometer-high", "vars": []},
     ]
     group_dict = {g["id"]: g for g in groups}
 
@@ -949,7 +949,7 @@ def machine_reports_hub(request):
             "name": "Calandra",
             "tag": "CALANDRA",
             "process": "Emborrachamento de Tecido",
-            "description": "Histórico das 20 variáveis de processo: produção, cargas de tensão, espessuras e temperaturas da borracha e da máquina.",
+            "description": "Histórico das 21 variáveis de processo: produção, cargas de tensão, espessuras e temperaturas da borracha e da máquina.",
             "url_name": "production:calandra_report",
             "icon": "bi-layers-half",
             "is_active": True,
@@ -979,7 +979,7 @@ def calandra_historical_report(request):
     """
     Relatório Histórico da Calandra (/producao/relatorios/calandra/).
     Filtros rápidos (Hoje, Ontem, 7d, 30d) e personalizado.
-    Gráficos organizados por 5 grupos de processo e tabela de estado sincronizado.
+    Gráficos organizados por 6 grupos de processo e tabela de estado sincronizado.
     """
     periodo = request.GET.get("periodo", "").strip()
     data_inicio = request.GET.get("data_inicio", "").strip()
@@ -1040,6 +1040,7 @@ def calandra_historical_report(request):
         "variables_found_count": history_data["variables_found_count"],
         "variables_missing": history_data["variables_missing"],
         "variables_config": variables_config,
+        "total_vars": len(variables_config),
         "chart_datasets_json": json.dumps(history_data["chart_datasets"]),
         "card_stats": history_data.get("card_stats", {}),
         "effective_points_count": history_data.get("effective_points_count", 0),
