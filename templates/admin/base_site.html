@@ -1,0 +1,19 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | {{ site_title|default:_('Django site admin') }}{% endblock %}
+
+{% block branding %}
+<div id="site-name"><a href="{% url 'admin:index' %}">{{ site_header|default:_('Django administration') }}</a></div>
+{% if user.is_anonymous %}
+  {% include "admin/color_theme_toggle.html" %}
+{% endif %}
+{% endblock %}
+
+{% block nav-global %}{% endblock %}
+
+{% block footer %}
+    {{ block.super }}
+    <div class="admin-developer-footer" style="padding: 14px 20px; text-align: center; font-size: 0.82rem; border-top: 1px solid var(--hairline-color, rgba(0,0,0,0.08));">
+        {% include "components/developer_footer.html" with is_admin=True %}
+    </div>
+{% endblock %}

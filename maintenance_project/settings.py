@@ -118,6 +118,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "maintenance",
     "production",
+    "matrizaria",
 ]
 
 MIDDLEWARE = [
@@ -137,12 +138,16 @@ SESSION_COOKIE_AGE = 14400              # 4 horas — tempo médio de turno de t
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # Expira também ao fechar o navegador
 SESSION_SAVE_EVERY_REQUEST = False      # NÃO renovar a cada request (expiração absoluta)
 
+# ── Controle de Inatividade de Sessão Humana ─────────────────────────────────
+INACTIVITY_TIMEOUT_SECONDS = int(os.environ.get("INACTIVITY_TIMEOUT_SECONDS", 300))  # 5 minutos (300s)
+INACTIVITY_WARNING_SECONDS = int(os.environ.get("INACTIVITY_WARNING_SECONDS", 30))   # Aviso prévio de 30s
+
 ROOT_URLCONF = "maintenance_project.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [

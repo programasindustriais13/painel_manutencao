@@ -1,0 +1,32 @@
+{% for s in fila_solicitados %}
+<div class="tv-service-card {% if s.prioridade == 'URGENTE' %}urgente{% endif %} {% if s.status == 'AGUARDANDO_RETRABALHO' %}retrabalho{% endif %}">
+    <div class="d-flex justify-content-between align-items-start mb-1">
+        <span class="fs-5 fw-bold text-white">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</span>
+        <div class="d-flex gap-1">
+            {% if s.status == "AGUARDANDO_RETRABALHO" %}
+            <span class="badge bg-danger text-white">RETRABALHO</span>
+            {% endif %}
+            {% if s.prioridade == "URGENTE" %}
+            <span class="badge bg-danger text-white">URGENTE</span>
+            {% endif %}
+        </div>
+    </div>
+    <div class="text-info fw-semibold mb-1" style="font-size: 0.95rem;">
+        {{ s.tipo_servico_nome_snapshot|default:s.tipo_servico.nome }}
+    </div>
+    {% if s.matriz_identificador_snapshot or s.matriz_fisica %}
+    <div class="small text-muted mb-1">
+        Matriz: <strong class="text-light">{{ s.matriz_identificador_snapshot|default:s.matriz_fisica.nome_exibicao }}</strong>
+    </div>
+    {% endif %}
+    <div class="small text-light text-opacity-75 text-truncate-2 mb-2" style="font-size: 0.85rem;">
+        {{ s.descricao_solicitacao }}
+    </div>
+    <div class="d-flex justify-content-between small text-muted pt-2 border-top border-secondary border-opacity-25">
+        <span>SM #{{ s.id }}</span>
+        <span><i class="bi bi-clock me-1"></i> {{ s.tempo_espera_str }}</span>
+    </div>
+</div>
+{% empty %}
+<div class="text-center py-5 text-muted tv-empty-text">Nenhum chamado aguardando atendimento.</div>
+{% endfor %}

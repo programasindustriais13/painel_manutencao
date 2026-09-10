@@ -1,0 +1,352 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+
+{% block title %}Kanban de Matrizaria &bull; Pneus Freedom{% endblock %}
+
+{% block extra_css %}
+<style>
+    .kanban-board {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1.25rem;
+        align-items: start;
+    }
+
+    @media (max-width: 1200px) {
+        .kanban-board {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+
+    @media (max-width: 768px) {
+        .kanban-board {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .kanban-column {
+        background: #0E1524;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - 210px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    }
+
+    .kanban-col-header {
+        padding: 0.85rem 1rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-top-left-radius: 12px;
+        border-top-right-radius: 12px;
+    }
+
+    .col-header-solicitado { border-top: 4px solid #F59E0B; }
+    .col-header-execucao { border-top: 4px solid #3B82F6; }
+    .col-header-conferencia { border-top: 4px solid #06B6D4; }
+    .col-header-concluido { border-top: 4px solid #10B981; }
+
+    .kanban-col-body {
+        padding: 0.85rem;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+        flex-grow: 1;
+    }
+
+    .kanban-card {
+        background: #172133;
+        border: 1px solid rgba(255, 255, 255, 0.07);
+        border-radius: 10px;
+        padding: 0.95rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .kanban-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(139, 92, 246, 0.4);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+    }
+
+    .kanban-card.card-urgente {
+        border-left: 4px solid #EF4444;
+    }
+
+    .kanban-card.card-retrabalho {
+        background: linear-gradient(180deg, rgba(239, 68, 68, 0.08) 0%, #172133 40%);
+        border-top: 1px solid rgba(239, 68, 68, 0.4);
+    }
+
+    .stat-pill {
+        background: #131B2A;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 0.75rem 1rem;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Top Metrics & Action Bar -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-3">
+    <!-- Stat Counter Cards -->
+    <div class="d-flex flex-wrap gap-2">
+        <div class="stat-pill">
+            <div class="rounded-circle p-2 bg-warning bg-opacity-10 text-warning">
+                <i class="bi bi-clock-history fs-5"></i>
+            </div>
+            <div>
+                <div class="text-muted small fw-semibold">Pendentes</div>
+                <div class="fs-5 fw-bold text-white">{{ total_pendentes }}</div>
+            </div>
+        </div>
+
+        <div class="stat-pill">
+            <div class="rounded-circle p-2 bg-primary bg-opacity-10 text-primary">
+                <i class="bi bi-gear-wide-connected fs-5"></i>
+            </div>
+            <div>
+                <div class="text-muted small fw-semibold">Em Execução</div>
+                <div class="fs-5 fw-bold text-white">{{ total_em_execucao }}</div>
+            </div>
+        </div>
+
+        <div class="stat-pill">
+            <div class="rounded-circle p-2 bg-info bg-opacity-10 text-info">
+                <i class="bi bi-shield-check fs-5"></i>
+            </div>
+            <div>
+                <div class="text-muted small fw-semibold">Aguardando Líder</div>
+                <div class="fs-5 fw-bold text-white">{{ total_aguardando_conferencia }}</div>
+            </div>
+        </div>
+
+        <div class="stat-pill">
+            <div class="rounded-circle p-2 bg-success bg-opacity-10 text-success">
+                <i class="bi bi-check2-circle fs-5"></i>
+            </div>
+            <div>
+                <div class="text-muted small fw-semibold">Concluídos Hoje</div>
+                <div class="fs-5 fw-bold text-white">{{ total_concluidos_hoje }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="d-flex align-items-center gap-2">
+        {% if can_relatorios %}
+        <a href="{% url 'matrizaria:relatorios' %}?criterio_temporal=CANCELADAS&status=CANCELADO" class="btn btn-outline-danger d-inline-flex align-items-center gap-1" style="font-size: 0.9rem;" title="Consultar chamados cancelados no período">
+            <i class="bi bi-x-circle"></i>
+            <span>Cancelados</span>
+        </a>
+        {% endif %}
+        {% if can_solicitar %}
+        <a href="{% url 'matrizaria:solicitar_servico' %}" class="btn btn-primary d-inline-flex align-items-center gap-2" style="background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%); border: none;">
+            <i class="bi bi-plus-circle-fill"></i>
+            <span>Nova Solicitação</span>
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- 4 Kanban Lanes -->
+<div class="kanban-board">
+    <!-- COLUNA 1: SOLICITADOS / RETRABALHO -->
+    <div class="kanban-column">
+        <div class="kanban-col-header col-header-solicitado">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold text-warning">Solicitados / Retrabalho</span>
+                <span class="badge rounded-pill bg-warning text-dark">{{ total_pendentes }}</span>
+            </div>
+            <i class="bi bi-inbox text-muted"></i>
+        </div>
+        <div class="kanban-col-body">
+            {% for s in fila_solicitados %}
+            <div class="kanban-card {% if s.prioridade == 'URGENTE' %}card-urgente{% endif %} {% if s.status == 'AGUARDANDO_RETRABALHO' %}card-retrabalho{% endif %}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-dark border border-secondary text-secondary">SM #{{ s.id }}</span>
+                    <div>
+                        {% if s.status == "AGUARDANDO_RETRABALHO" %}
+                        <span class="badge bg-danger text-white me-1"><i class="bi bi-arrow-repeat"></i> Retrabalho #{{ s.quantidade_retrabalhos }}</span>
+                        {% endif %}
+                        {% if s.prioridade == "URGENTE" %}
+                        <span class="badge bg-danger text-white badge-pulse">URGENTE</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <h6 class="fw-bold text-white mb-1">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</h6>
+                <div class="text-info small fw-semibold mb-2">
+                    <i class="bi bi-tag-fill me-1"></i> {{ s.tipo_servico_nome_snapshot|default:s.tipo_servico.nome }}
+                </div>
+
+                {% if s.matriz_identificador_snapshot or s.matriz_fisica %}
+                <div class="small text-muted mb-2">
+                    <i class="bi bi-disc me-1 text-secondary"></i>
+                    Matriz: <strong class="text-light">{{ s.matriz_identificador_snapshot|default:s.matriz_fisica.nome_exibicao }}</strong>
+                </div>
+                {% endif %}
+
+                <p class="small text-light text-opacity-75 mb-2 text-truncate-2" style="font-size: 0.82rem;">
+                    {{ s.descricao_solicitacao|truncatechars:100 }}
+                </p>
+
+                <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary border-opacity-25 mt-2">
+                    <span class="small text-muted" title="Tempo de espera">
+                        <i class="bi bi-clock me-1"></i> {{ s.tempo_espera_str }}
+                    </span>
+                    <a href="{% url 'matrizaria:detalhe_servico' s.id %}" class="btn btn-sm btn-outline-light py-0 px-2" style="font-size: 0.8rem;">
+                        Ver Detalhes <i class="bi bi-chevron-right"></i>
+                    </a>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty-state-box text-center py-5">
+                <i class="bi bi-check-circle fs-3 d-block mb-2"></i>
+                <span>Nenhum chamado pendente na fila.</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- COLUNA 2: EM EXECUÇÃO -->
+    <div class="kanban-column">
+        <div class="kanban-col-header col-header-execucao">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold text-primary">Em Execução</span>
+                <span class="badge rounded-pill bg-primary">{{ total_em_execucao }}</span>
+            </div>
+            <i class="bi bi-gear text-muted"></i>
+        </div>
+        <div class="kanban-col-body">
+            {% for s in fila_execucao %}
+            <div class="kanban-card {% if s.prioridade == 'URGENTE' %}card-urgente{% endif %}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-dark border border-secondary text-secondary">SM #{{ s.id }}</span>
+                    {% if s.prioridade == "URGENTE" %}
+                    <span class="badge bg-danger text-white badge-pulse">URGENTE</span>
+                    {% endif %}
+                </div>
+
+                <h6 class="fw-bold text-white mb-1">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</h6>
+                <div class="text-info small fw-semibold mb-2">
+                    <i class="bi bi-tag-fill me-1"></i> {{ s.tipo_servico_nome_snapshot|default:s.tipo_servico.nome }}
+                </div>
+
+                <div class="small text-muted mb-2">
+                    <i class="bi bi-person-fill me-1 text-primary"></i>
+                    Responsável: <strong class="text-light">{{ s.responsavel_atribuido_nome|default:"Técnico Matrizaria" }}</strong>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary border-opacity-25 mt-2">
+                    <span class="small text-muted" title="Duração da intervenção">
+                        <i class="bi bi-stopwatch me-1 text-warning"></i> {{ s.duracao_total_intervencao_str }}
+                    </span>
+                    <a href="{% url 'matrizaria:detalhe_servico' s.id %}" class="btn btn-sm btn-primary py-0 px-2" style="font-size: 0.8rem;">
+                        Atender <i class="bi bi-arrow-right"></i>
+                    </a>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty-state-box text-center py-5">
+                <i class="bi bi-pause-circle fs-3 d-block mb-2"></i>
+                <span>Nenhum serviço em execução no momento.</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- COLUNA 3: AGUARDANDO CONFERÊNCIA -->
+    <div class="kanban-column">
+        <div class="kanban-col-header col-header-conferencia">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold text-info">Aguardando Conferência</span>
+                <span class="badge rounded-pill bg-info text-dark">{{ total_aguardando_conferencia }}</span>
+            </div>
+            <i class="bi bi-clipboard-check text-muted"></i>
+        </div>
+        <div class="kanban-col-body">
+            {% for s in fila_conferencia %}
+            <div class="kanban-card {% if s.prioridade == 'URGENTE' %}card-urgente{% endif %}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-dark border border-secondary text-secondary">SM #{{ s.id }}</span>
+                    <span class="badge bg-info text-dark">Aguardando Líder</span>
+                </div>
+
+                <h6 class="fw-bold text-white mb-1">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</h6>
+                <div class="text-info small fw-semibold mb-2">
+                    <i class="bi bi-tag-fill me-1"></i> {{ s.tipo_servico_nome_snapshot|default:s.tipo_servico.nome }}
+                </div>
+
+                {% if s.descricao_servico_executado %}
+                <p class="small text-muted mb-2 text-truncate-2" style="font-size: 0.8rem;">
+                    <em>"{{ s.descricao_servico_executado|truncatechars:90 }}"</em>
+                </p>
+                {% endif %}
+
+                <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary border-opacity-25 mt-2">
+                    <span class="small text-muted">
+                        <i class="bi bi-person-check me-1"></i> {{ s.finalizado_por.get_full_name|default:s.finalizado_por.username }}
+                    </span>
+                    <a href="{% url 'matrizaria:detalhe_servico' s.id %}" class="btn btn-sm btn-info py-0 px-2" style="font-size: 0.8rem;">
+                        Conferir <i class="bi bi-check2"></i>
+                    </a>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty-state-box text-center py-5">
+                <i class="bi bi-shield-check fs-3 d-block mb-2"></i>
+                <span>Nenhum serviço aguardando inspeção.</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- COLUNA 4: CONCLUÍDOS RECENTES -->
+    <div class="kanban-column">
+        <div class="kanban-col-header col-header-concluido">
+            <div class="d-flex align-items-center gap-2">
+                <span class="fw-bold text-success">Concluídos Recentes</span>
+                <span class="badge rounded-pill bg-success">{{ fila_concluidos.count }}</span>
+            </div>
+            <i class="bi bi-check2-all text-muted"></i>
+        </div>
+        <div class="kanban-col-body">
+            {% for s in fila_concluidos %}
+            <div class="kanban-card opacity-75">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-dark border border-secondary text-secondary">SM #{{ s.id }}</span>
+                    <span class="badge bg-success">Concluído</span>
+                </div>
+
+                <h6 class="fw-bold text-white mb-1">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</h6>
+                <div class="text-muted small mb-2">
+                    {{ s.tipo_servico_nome_snapshot|default:s.tipo_servico.nome }}
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary border-opacity-25 mt-2">
+                    <span class="small text-muted" title="Conferido por">
+                        <i class="bi bi-person-badge me-1"></i> {{ s.conferido_por_nome|default:"Líder" }}
+                    </span>
+                    <a href="{% url 'matrizaria:detalhe_servico' s.id %}" class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size: 0.8rem;">
+                        Ver <i class="bi bi-chevron-right"></i>
+                    </a>
+                </div>
+            </div>
+            {% empty %}
+            <div class="empty-state-box text-center py-5">
+                <i class="bi bi-clock-history fs-3 d-block mb-2"></i>
+                <span>Nenhum serviço concluído nas últimas 48h.</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

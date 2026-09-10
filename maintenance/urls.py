@@ -70,6 +70,10 @@ urlpatterns = [
     path('ordens-servico/<int:os_id>/entrar-equipe/', views.os_join_team, name='os_join_team'),
     path('ordens-servico/<int:os_id>/cancelar/', views.os_cancel, name='os_cancel'),
     path('allocations/<int:allocation_id>/vincular-os/', views.link_allocation_os, name='link_allocation_os'),
+    
+    # Session Activity & Inactivity API
+    path('api/session/keep-alive/', views.api_session_keep_alive, name='api_session_keep_alive'),
+    path('api/session/status/', views.api_session_status, name='api_session_status'),
 ]
 
 

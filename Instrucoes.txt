@@ -3221,4 +3221,231 @@ Comandos de Teste:
 - `python manage.py test production.test_xid_configuration production.test_caldeira_report`: 31 testes executados com 100% de sucesso.
 
 
-
+================================================================================
+MÓDULO DE MATRIZARIA: CONTROLE E RASTREABILIDADE DE SERVIÇOS INDUSTRIAIS
+================================================================================
+Data: 09/09/2026
+Autor: Antigravity AI
+Referência da SPEC: regras_programacao/SPEC_MODULO_MATRIZARIA_RASTREABILIDADE_SERVICOS.md
+
+Objetivo:
+Implementar o módulo completo de Matrizaria da Pneus Freedom para controle, rastreabilidade, ciclos de execução/retrabalho, conferência independente anti-autoconferência, relatórios temporais multicritério, exportação Excel analítica, painel TV da oficina com integração canônica ao BladderTrackingService e linha do tempo unificada de prensas (Manutenção + Matrizaria).
+
+Arquitetura e Decisões de Engenharia:
+1. App Django Dedicado: `matrizaria`, integrado ao settings.py e roteador scada (sem migrações no banco scada).
+2. Entidades Canônicas:
+   - `TipoServicoMatrizaria`: Catálogo administrável via admin com flag de exigência de matriz física.
+   - `MatrizFisica`: Exemplares físicos rastreáveis vinculados ao modelo canônico `ProductionMatrixCatalog` com número sequencial e nome amigável ("#001").
+   - `SolicitacaoServicoMatrizaria`: Ordem de serviço com controle de concorrência por `versao` crescente e snapshots imutáveis.
+   - `CicloExecucaoMatrizaria`: Registro granular de cada intervalo de trabalho técnico (início, fim, responsável, ferramental, motivo e encerramento).
+   - `HistoricoTransicaoServicoMatrizaria`: Trilha de auditoria cronológica e imutável com PROTECT.
+3. Fluxo Operacional e Rastreabilidade:
+   - Estados: SOLICITADO -> EM_EXECUCAO -> AGUARDANDO_CONFERENCIA -> CONCLUIDO.
+   - Retrabalho: AGUARDANDO_CONFERENCIA -> AGUARDANDO_RETRABALHO -> EM_EXECUCAO -> AGUARDANDO_CONFERENCIA.
+   - Cancelamento: Exclusivo de liderança com justificativa auditada.
+   - Segregação de Funções: Anti-autoconferência estrita (quem abriu ou atuou em qualquer ciclo técnico é impedido de aprovar).
+   - Proteção de Concorrência: Validação atômica de `versao` em transação de banco.
+4. Painel TV da Matrizaria (/matrizaria/tv/):
+   - Alternância automática: 20s Fila de Serviços / 15s Alertas de Bladders.
+   - Atualização assíncrona (/matrizaria/tv/api/dados/) a cada 15s.
+   - Isolamento de falhas SCADA: Dados de serviços nunca são bloqueados por falhas de telemetria.
+5. Relatórios Temporais & Excel:
+   - 4 Critérios temporais: Execução no período (analisando todos os ciclos), Solicitações abertas, Execuções finalizadas, Concluídos no período.
+   - Exportação Excel de 2 abas: "Serviços" (visão consolidada) e "Histórico" (trilha completa de eventos).
+   - Sanitização de fórmulas contra CSV/Excel Injection.
+6. Linha do Tempo Unificada de Prensas (/producao/maquinas/<id>/):
+   - Abas/Filtros "Todos | Manutenção | Matrizaria" respeitando permissões do usuário.
+7. Provisionamento de Grupos e Permissões:
+   - Comando `python manage.py provisionar_grupos_matrizaria` (idempotente).
+   - Grupos: "Operadores Vulcanização", "Matrizaria", "Visualizador Matrizaria".
+   - Login Inteligente: Usuário 1 módulo -> Direto; >= 2 módulos -> Portal (/portal/).
+
+Arquivos Criados:
+- `regras_programacao/SPEC_MODULO_MATRIZARIA_RASTREABILIDADE_SERVICOS.md`
+- `matrizaria/models.py`
+- `matrizaria/migrations/0001_initial.py`
+- `matrizaria/services.py`
+- `matrizaria/decorators.py`
+- `matrizaria/forms.py`
+- `matrizaria/admin.py`
+- `matrizaria/views.py`
+- `matrizaria/urls.py`
+- `matrizaria/templates/matrizaria/base_matrizaria.html`
+- `matrizaria/templates/matrizaria/kanban.html`
+- `matrizaria/templates/matrizaria/form_solicitacao.html`
+- `matrizaria/templates/matrizaria/detalhe_solicitacao.html`
+- `matrizaria/templates/matrizaria/relatorios.html`
+- `matrizaria/templates/matrizaria/tv.html`
+- `matrizaria/management/commands/provisionar_grupos_matrizaria.py`
+- `matrizaria/tests.py`
+
+Arquivos Modificados:
+- `maintenance_project/settings.py` (adicionado app matrizaria)
+- `maintenance_project/urls.py` (adicionada rota /matrizaria/)
+- `production/routers.py` (relação matrizaria <-> production/maintenance)
+- `maintenance/views.py` (helpers de módulo acessível e portal multi-contexto)
+- `maintenance/context_processors.py` (flag can_access_matrizaria)
+- `maintenance/templates/maintenance/portal_select.html` (card da Matrizaria)
+- `production/views.py` (integração de histórico unificado de prensas)
+- `production/templates/production/machine_detail.html` (timeline pills Todos/Manutenção/Matrizaria)
+- `Instrucoes.txt` (este registro)
+
+Comandos de Execução e Testes:
+- `python manage.py test matrizaria`: 12 testes executados com 100% de sucesso.
+- `python manage.py test maintenance production matrizaria`: 317 testes executados com 100% de sucesso (0 falhas, 0 erros).
+
+9. Como Configurar Futuramente a Conta da TV
+A conta da TV deve ter acesso exclusivo de visualização, sem senha padrão em código ou privilégios de escrita:
+
+No Django Admin (/admin/auth/user/add/):
+Crie um usuário para o display (ex: tv_matrizaria_oficina).
+Defina uma senha forte gerada aleatoriamente e configure-a na sessão do navegador da TV.
+Deixe desmarcadas as opções Status de equipe (is_staff) e Superusuário (is_superuser).
+Vincule o usuário ao grupo Visualizador Matrizaria (ou atribua a permissão matrizaria.view_solicitacaoservicomatrizaria).
+Ao logar com essa conta, o sistema identifica que ela possui permissão apenas para a TV e a redireciona automaticamente para /matrizaria/tv/.
+As rotas de escrita, finalização, conferência e cancelamento rejeitam qualquer requisição originada por essa conta (HTTP 403 Forbidden).
+
+
+================================================================================
+AJUSTES REFINADOS DO MÓDULO DE MATRIZARIA E ASSINATURA DO DESENVOLVEDOR
+================================================================================
+Data: 09/09/2026
+Autor: Antigravity AI
+
+Resumo dos Três Ajustes Concluídos:
+
+1. Abertura de Chamado — Lista e Rótulos de Prensas:
+   - Exclusão estrita de CHECK-LIST, CHECK LIST e CHECKLIST do QuerySet de prensas selecionáveis da Matrizaria (get_prensas_queryset()), sem usar correspondência genérica por 'CHECK' para preservar prensas reais.
+   - Proteção de backend multinível: rejeição via SolicitacaoServicoForm.clean_prensa(), MatrizariaService.criar_solicitacao() e SolicitacaoServicoMatrizaria.clean(). Submeter manualmente o ID do registro de CHECK-LIST é categoricamente recusado.
+   - O cadastro global de Machine e seus usos na Manutenção permanecem intactos.
+   - Rótulos do seletor limpos via format_prensa_label() aplicado no label_from_instance do formulário de abertura e filtros de relatórios: apresenta apenas o nome puro da máquina (ex: 'PRENSA BOM 08', 'PRENSA BOM - ROBOT', 'PRENSA DE BLADER 01') sem trechos de criticidade ou parênteses aninhados residuais.
+
+2. Correção de Contraste e Legibilidade no Tema Escuro:
+   - Ajustados os títulos dos indicadores superiores do Kanban (.stat-pill .text-muted agora #CBD5E1), permitindo leitura imediata.
+   - Mensagens de colunas e tabelas vazias padronizadas com classe .empty-state-box (#CBD5E1 e ícones #A0AEC0), eliminando o efeito invisível do text-muted padrão do Bootstrap 5 sobre fundo escuro.
+   - Textos auxiliares dos formulários (.form-text) estilizados com #CBD5E1 (contraste superior a 10:1).
+   - Preservada a formatação dos selects nativos no navegador com option { background-color: #1E293B; color: #F8FAFC; } para garantir legibilidade de listas suspensas.
+
+3. Rodapé Compartilhado com Identificação do Desenvolvedor:
+   - Componente compartilhado centralizado: templates/components/developer_footer.html com o texto exato:
+     "Desenvolvido por Paulo Sérgio" (destaque elegante e profissional no nome).
+   - Integrado de forma limpa e sem duplicação em todas as páginas HTML do sistema:
+     * Login (maintenance/login.html)
+     * Portal multicontexto (maintenance/portal_select.html)
+     * Módulo de Manutenção (maintenance/base.html)
+     * Módulo de Produção & PCP (production/base_production.html)
+     * Módulo de Matrizaria (matrizaria/base_matrizaria.html)
+     * Relatórios em tela
+     * Painéis TV (matrizaria/tv.html e maintenance/tv_dashboard.html, com versão compacta e zero interferência na alternância e sem rolagem)
+     * Django Admin (templates/admin/base_site.html sobrescrito no projeto via DIRS: [BASE_DIR / 'templates']).
+   - Comportamento de layout flexível (sticky footer): em páginas curtas permanece na base da tela; em páginas longas flui normalmente ao final do conteúdo sem cobrir botões.
+
+Arquivos Criados:
+- templates/components/developer_footer.html
+- templates/admin/base_site.html
+
+Arquivos Modificados:
+- matrizaria/models.py (helpers is_checklist_machine, EXCLUDED_PRENSA_NAMES e validação clean())
+- matrizaria/forms.py (filtro get_prensas_queryset(), format_prensa_label(), clean_prensa())
+- matrizaria/services.py (validação de prensa no criar_solicitacao())
+- matrizaria/templates/matrizaria/base_matrizaria.html (regras de contraste WCAG AA e inclusão de footer)
+- matrizaria/templates/matrizaria/kanban.html (empty-state-box e contraste de stat-pills)
+- matrizaria/templates/matrizaria/detalhe_solicitacao.html (contraste de ciclo vazio)
+- matrizaria/templates/matrizaria/relatorios.html (contraste de cabeçalhos e empty-state da tabela)
+- matrizaria/templates/matrizaria/tv.html (contraste e footer de TV)
+- maintenance/templates/maintenance/base.html (rodapé autenticado e não-autenticado)
+- maintenance/templates/maintenance/tv_dashboard.html (rodapé compacto de TV e supressão do rodapé base)
+- production/templates/production/base_production.html (rodapé autenticado e não-autenticado)
+- maintenance/templates/maintenance/portal_select.html (rodapé do portal)
+- maintenance_project/settings.py (configuração de TEMPLATES['DIRS'] = [BASE_DIR / 'templates'])
+- matrizaria/tests.py (novo caso de teste MatrizariaFixesTestCase)
+- Instrucoes.txt (este registro)
+
+Comandos de Execução e Testes:
+- python manage.py test matrizaria: 14 testes executados com 100% de sucesso.
+- python manage.py test maintenance production matrizaria: 319 testes executados com 100% de sucesso (0 falhas, 0 erros).
+
+
+================================================================================
+RODADA DE AJUSTES OPERACIONAIS, CONTROLE DE SESSÃO E TV (MATRIZARIA & PROJETO)
+================================================================================
+
+1. TV da Matrizaria — Sincronização Dinâmica em Tempo Real:
+   - Causa Raiz: O polling do frontend atualizava exclusivamente contadores (.innerText), deixando o DOM dos cards das colunas intocado. Além disso, 'solicitados' omitia chamados em retrabalho na primeira coluna e o relógio exibia desvio UTC/fuso horário.
+   - Correção:
+     * Templates parciais dedicados: 'matrizaria/templates/matrizaria/includes/tv_col_solicitados.html', 'tv_col_execucao.html', 'tv_col_conferencia.html', 'tv_col_bladders.html'.
+     * Endpoint '/matrizaria/api/tv/data/' renderiza no backend os fragmentos HTML de todas as colunas via render_to_string.
+     * TV atualiza os contêineres e contadores atômica e suavemente a cada 15 segundos sem necessidade de F5 e sem reiniciar transições visuais.
+     * Fuso horário ajustado para timezone.localtime(timezone.now()) garantindo precisão com o relógio local da planta.
+
+2. Chamados Cancelados — Consulta Canônica e Exportação:
+   - Critério temporal adicionado: "CANCELADAS" ("5. Chamados cancelados no período"), filtrando por data de cancelamento (data_cancelamento).
+   - Localiza chamados cancelados antes do início técnico ou durante execução (cujo ciclo é encerrado com INTERROMPIDO_CANCELAMENTO, sem inventar conclusão fictícia).
+   - Atalho direto "Cancelados" adicionado no cabeçalho do Kanban operacional (visível para perfis com permissão de relatório).
+   - Atalho "Chamados Cancelados no Mês Atual" na tela de relatórios e alerta explicativo com link quando uma combinação incompatível resultar vazia.
+   - Exibição completa de número, prensa, tipo, solicitante, status, cancelado por, data/hora e motivo do cancelamento na tela e no Excel.
+
+3. Política de Sessão Compartilhada e Perfil TV:
+   - Reutilizado SessionExpiryByProfileMiddleware em maintenance/middleware.py com autoridade estrita do servidor:
+     * Timeout de inatividade humana: 5 minutos (configurável em maintenance_project/settings.py via INACTIVITY_TIMEOUT_SECONDS = 300).
+     * Modal de aviso com contagem regressiva de 30 segundos (INACTIVITY_WARNING_SECONDS = 30) com opções "Continuar conectado" e "Sair".
+     * Consultas em segundo plano (polling de TV, verificação de status) NÃO renovam inatividade.
+     * Ações humanas reais (clique, toque, digitação, rolagem) renovam a sessão via POST autenticado em /api/session/keep-alive/ (com debounce de 15s).
+     * Sincronização de atividade e logout entre múltiplas abas via localStorage e conferência na retomada de suspensão.
+   - Conta Exclusiva de TV:
+     * Identificada pela função is_dedicated_tv_account: ativa, não-staff, não-superuser, sem grupos operacionais, vinculada a "Visualizador Matrizaria" (ou "Visualizador" ou username "tv"/"tv_matrizaria").
+     * Permanece com sessão perpétua sem logout por inatividade humana, exclusivamente para visualização contínua do painel.
+     * Como cadastrar no Django Admin:
+       1. Criar usuário com username (ex: 'tv_oficina_matriz') e senha segura.
+       2. Marcar 'Ativo' = True; 'Status de equipe (staff)' = False; 'Superusuário' = False.
+       3. Adicionar APENAS ao grupo 'Visualizador Matrizaria'. NÃO vincular a grupos operacionais.
+
+4. Edição de Solicitação Antes do Primeiro Início:
+   - Permite corrigir: Prensa (sem CHECK-LIST e com rótulos limpos), Tipo de Serviço, Matriz Física (quando exigida), Prioridade e Descrição da Necessidade.
+   - Condição estrita: status == "SOLICITADO" e ciclos_execucao.count() == 0.
+   - Permissão restrita: solicitante original ou liderança autorizada.
+   - Auditoria e concorrência:
+     * Preserva dados da abertura, número do chamado e datas originais.
+     * Validação otimista de concorrência com 'versao'. Se o atendimento for iniciado por um matrizeiro enquanto o formulário está aberto, o salvamento é recusado.
+     * Histórico registrado com tipo_evento="ALTERACAO_DADO" contendo diff detalhado antes/depois no campo dados_modificados e motivo da correção.
+
+5. Transferência de Responsabilidade — Restrita a Matrizeiros Habilitados:
+   - Centralizado em MatrizariaService.get_matrizeiros_habilitados(solicitacao).
+   - Lista exclusivamente usuários:
+     * Ativos (is_active=True);
+     * Pertencentes ao grupo operacional 'Matrizaria';
+     * Diferentes do responsável atual atribuído ao chamado;
+     * Que não sejam contas de TV.
+   - Validação estrita no backend: POSTs adulterados com IDs de usuários não habilitados são rejeitados com ValidationError.
+   - Interface exibe mensagem clara se não houver outro matrizeiro disponível.
+
+Arquivos Modificados:
+- maintenance_project/settings.py (INACTIVITY_TIMEOUT_SECONDS, INACTIVITY_WARNING_SECONDS)
+- maintenance/middleware.py (SessionExpiryByProfileMiddleware, is_dedicated_tv_account)
+- maintenance/urls.py (/api/session/keep-alive/, /api/session/status/)
+- maintenance/views.py (api_session_keep_alive, api_session_status)
+- templates/components/session_inactivity.html (modal de inatividade, sync multi-abas, keep-alive)
+- maintenance/templates/maintenance/base.html (inclusão do modal de inatividade)
+- maintenance/templates/maintenance/portal_select.html (inclusão do modal de inatividade)
+- production/templates/production/base_production.html (inclusão do modal de inatividade)
+- matrizaria/templates/matrizaria/base_matrizaria.html (inclusão do modal de inatividade)
+- matrizaria/services.py (TV partials context & timezone, filtro CANCELADAS, editar_solicitacao, get_matrizeiros_habilitados)
+- matrizaria/forms.py (RelatorioFiltroForm opção CANCELADAS, EditarSolicitacaoForm, TransferirResponsabilidadeForm)
+- matrizaria/views.py (api_tv_data_view com HTML das colunas, editar_solicitacao_view, atalhos de cancelados)
+- matrizaria/urls.py (rota servicos/<int:pk>/editar/)
+- matrizaria/templates/matrizaria/tv.html (atualização dinâmica de cards, fuso horário)
+- matrizaria/templates/matrizaria/includes/tv_col_solicitados.html (novo template parcial)
+- matrizaria/templates/matrizaria/includes/tv_col_execucao.html (novo template parcial)
+- matrizaria/templates/matrizaria/includes/tv_col_conferencia.html (novo template parcial)
+- matrizaria/templates/matrizaria/includes/tv_col_bladders.html (novo template parcial)
+- matrizaria/templates/matrizaria/kanban.html (botão de atalho Cancelados)
+- matrizaria/templates/matrizaria/relatorios.html (seletor rápido Cancelados, alerta explicativo, colunas de cancelamento)
+- matrizaria/templates/matrizaria/detalhe_solicitacao.html (botão/modal Editar Solicitação, listagem segura de transferência, auditoria de diffs)
+- matrizaria/tests.py (MatrizariaCincoAjustesTestCase com 5 novos métodos abrangentes)
+- regras_programacao/SPEC_MODULO_MATRIZARIA_RASTREABILIDADE_SERVICOS.md (Seções 12 e 13)
+- Instrucoes.txt (este registro)
+
+
+
+
+

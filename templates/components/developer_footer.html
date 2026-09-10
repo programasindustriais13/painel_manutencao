@@ -1,0 +1,7 @@
+{% comment %}
+Componente Compartilhado de Assinatura do Desenvolvedor
+Centraliza a identificação profissional exigida pelo projeto em um único ponto.
+{% endcomment %}
+<span class="developer-signature" style="display: inline-block; font-size: {% if is_tv %}0.72rem{% else %}0.82rem{% endif %}; {% if is_tv %}color: rgba(148, 163, 184, 0.7);{% elif is_admin %}color: var(--body-quiet-color, #64748b);{% elif is_dark %}color: #94A3B8;{% else %}color: #64748B;{% endif %}; letter-spacing: 0.2px;">
+    Desenvolvido por <strong class="developer-name" style="font-weight: 600; {% if is_tv %}color: #E2E8F0;{% elif is_admin %}color: var(--body-fg, #334155);{% elif is_dark %}color: #F1F5F9;{% else %}color: #334155;{% endif %};">Paulo Sérgio</strong>
+</span>

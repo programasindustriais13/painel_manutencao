@@ -1,0 +1,255 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+
+{% block title %}Relatórios de Matrizaria &bull; Pneus Freedom{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h4 class="fw-bold text-white mb-1">
+            <i class="bi bi-file-earmark-bar-graph text-purple me-2" style="color: var(--matriz-accent-light);"></i>
+            Relatórios e Auditoria de Serviços
+        </h4>
+        <p class="text-muted small mb-0">
+            Consulte serviços executados por critérios temporais canônicos, ciclos de retrabalho e histórico.
+        </p>
+    </div>
+    <div>
+        <!-- Botão de Exportação para Excel com todos os filtros atuais -->
+        <a href="{% url 'matrizaria:exportar_excel' %}?{{ request.GET.urlencode }}" class="btn btn-success d-inline-flex align-items-center gap-2" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); border: none;">
+            <i class="bi bi-file-earmark-excel-fill"></i>
+            <span>Exportar para Excel (.xlsx)</span>
+        </a>
+    </div>
+</div>
+
+<!-- Filtros de Consulta -->
+<div class="glass-card p-4 mb-4">
+    <form method="get" class="row g-3">
+        <!-- Critério Temporal -->
+        <div class="col-12 col-md-4">
+            <label for="{{ form.criterio_temporal.id_for_label }}" class="form-label fw-semibold text-light">
+                <i class="bi bi-calendar-range text-warning me-1"></i> Consultar por
+            </label>
+            {{ form.criterio_temporal }}
+        </div>
+
+        <!-- Data Inicial -->
+        <div class="col-12 col-sm-6 col-md-4">
+            <label for="{{ form.data_inicio.id_for_label }}" class="form-label fw-semibold text-light">
+                Data Inicial (Inclusiva)
+            </label>
+            {{ form.data_inicio }}
+        </div>
+
+        <!-- Data Final -->
+        <div class="col-12 col-sm-6 col-md-4">
+            <label for="{{ form.data_fim.id_for_label }}" class="form-label fw-semibold text-light">
+                Data Final (Inclusiva)
+            </label>
+            {{ form.data_fim }}
+        </div>
+
+        <!-- Prensa -->
+        <div class="col-12 col-sm-6 col-md-3">
+            <label for="{{ form.prensa.id_for_label }}" class="form-label fw-semibold text-light">
+                Prensa
+            </label>
+            {{ form.prensa }}
+        </div>
+
+        <!-- Tipo de Serviço -->
+        <div class="col-12 col-sm-6 col-md-3">
+            <label for="{{ form.tipo_servico.id_for_label }}" class="form-label fw-semibold text-light">
+                Tipo de Serviço
+            </label>
+            {{ form.tipo_servico }}
+        </div>
+
+        <!-- Status Atual -->
+        <div class="col-12 col-sm-6 col-md-2">
+            <label for="{{ form.status.id_for_label }}" class="form-label fw-semibold text-light">
+                Status Atual
+            </label>
+            {{ form.status }}
+        </div>
+
+        <!-- Solicitante -->
+        <div class="col-12 col-sm-6 col-md-2">
+            <label for="{{ form.solicitante.id_for_label }}" class="form-label fw-semibold text-light">
+                Solicitante
+            </label>
+            {{ form.solicitante }}
+        </div>
+
+        <!-- Executante -->
+        <div class="col-12 col-sm-6 col-md-2">
+            <label for="{{ form.executante.id_for_label }}" class="form-label fw-semibold text-light">
+                Executante
+            </label>
+            {{ form.executante }}
+        </div>
+
+        <div class="col-12 d-flex flex-wrap justify-content-between align-items-center gap-2 pt-2 border-top border-secondary border-opacity-25">
+            <div>
+                <a href="{% url 'matrizaria:relatorios' %}?criterio_temporal=CANCELADAS&status=CANCELADO" class="btn btn-outline-danger btn-sm">
+                    <i class="bi bi-x-circle me-1"></i> Chamados Cancelados no Período
+                </a>
+            </div>
+            <div class="d-flex gap-2">
+                <a href="{% url 'matrizaria:relatorios' %}" class="btn btn-outline-secondary">Limpar</a>
+                <button type="submit" class="btn btn-primary px-4 fw-semibold" style="background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%); border: none;">
+                    <i class="bi bi-filter me-1"></i> Aplicar Filtros
+                </button>
+            </div>
+        </div>
+    </form>
+</div>
+
+<!-- Tabela de Resultados -->
+<div class="glass-card p-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <span class="text-muted small">
+            Encontrados <strong>{{ total_registros }}</strong> registro(s) no período selecionado.
+        </span>
+        <span class="badge bg-dark border border-secondary text-secondary small">
+            Período: {{ data_inicio|date:"d/m/Y" }} até {{ data_fim|date:"d/m/Y" }}
+        </span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0" style="font-size: 0.88rem;">
+            <thead class="table-dark text-uppercase" style="font-size: 0.75rem; letter-spacing: 0.5px; border-bottom: 2px solid rgba(255, 255, 255, 0.15); color: #CBD5E1;">
+                <tr>
+                    <th>Protocolo</th>
+                    <th>Prensa</th>
+                    <th>Tipo de Serviço</th>
+                    <th>Matriz Física</th>
+                    <th>Status Atual</th>
+                    <th>Status Fim Período</th>
+                    <th>Executante(s) / Cancelamento</th>
+                    <th>Abertura</th>
+                    <th>Duração Intervenção</th>
+                    <th class="text-center">Ciclos</th>
+                    <th class="text-end">Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in page_obj %}
+                <tr>
+                    <td>
+                        <strong class="text-white">SM #{{ item.id }}</strong>
+                    </td>
+                    <td>
+                        <strong class="text-light">{{ item.prensa_nome }}</strong>
+                    </td>
+                    <td>
+                        <span class="text-info">{{ item.tipo_servico_nome }}</span>
+                    </td>
+                    <td>
+                        <span class="text-light small">{{ item.matriz_identificador }}</span>
+                    </td>
+                    <td>
+                        <span class="badge bg-{{ item.solicitacao.badge_status_classe }}">{{ item.status_atual_label }}</span>
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary text-light">{{ item.status_fim_periodo_label }}</span>
+                    </td>
+                    <td>
+                        {% if item.status_atual == "CANCELADO" %}
+                            <div class="text-danger small fw-semibold">
+                                <i class="bi bi-x-circle me-1"></i> Por: {{ item.cancelado_por_nome|default:"Não informado" }}
+                            </div>
+                            <div class="text-muted small">
+                                Em: {{ item.data_cancelamento|date:"d/m/Y H:i"|default:"-" }}
+                            </div>
+                            {% if item.motivo_cancelamento %}
+                            <div class="text-light text-opacity-75 small fst-italic text-truncate" style="max-width: 220px;" title="{{ item.motivo_cancelamento }}">
+                                "{{ item.motivo_cancelamento }}"
+                            </div>
+                            {% endif %}
+                        {% else %}
+                            <span class="text-secondary small">{{ item.executantes_str|truncatechars:30 }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-secondary small">
+                        {{ item.data_solicitacao|date:"d/m/Y H:i" }}
+                    </td>
+                    <td>
+                        {% if item.status_atual == "CANCELADO" and item.quantidade_ciclos == 0 %}
+                            <span class="text-muted small">Sem execução</span>
+                        {% else %}
+                            <div class="text-warning fw-semibold" title="Duração total acumulada">{{ item.duracao_total_intervencao_str }}</div>
+                            <div class="text-muted" style="font-size: 0.75rem;" title="Duração dentro do período filtrado">No período: {{ item.duracao_periodo_intervencao_str }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <span class="badge bg-dark border border-secondary text-light">{{ item.quantidade_ciclos }}</span>
+                        {% if item.quantidade_retrabalhos > 0 %}
+                        <span class="badge bg-danger text-white ms-1" title="Ciclos de Retrabalho">{{ item.quantidade_retrabalhos }}R</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">
+                        <a href="{% url 'matrizaria:detalhe_servico' item.id %}" class="btn btn-sm btn-outline-light py-0 px-2" style="font-size: 0.8rem;">
+                            Detalhes <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="11" class="text-center py-5 empty-state-box">
+                        <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                        <span>Nenhum registro encontrado para os filtros e critério temporal selecionados.</span>
+                        {% if form.status.value == "CANCELADO" and form.criterio_temporal.value == "COM_EXECUCAO" %}
+                        <div class="alert alert-warning mt-3 mx-auto text-start" style="max-width: 600px;">
+                            <div class="d-flex gap-2">
+                                <i class="bi bi-info-circle-fill fs-5 text-warning flex-shrink-0"></i>
+                                <div>
+                                    <strong>Critério de Execução vs. Cancelamento:</strong>
+                                    <p class="mb-2 small">
+                                        Nenhum chamado cancelado com execução foi encontrado no período. Chamados cancelados antes do início técnico não possuem ciclos de execução.
+                                    </p>
+                                    <a href="{% url 'matrizaria:relatorios' %}?criterio_temporal=CANCELADAS&status=CANCELADO&data_inicio={{ data_inicio|date:'Y-m-d' }}&data_fim={{ data_fim|date:'Y-m-d' }}" class="btn btn-sm btn-warning fw-semibold">
+                                        <i class="bi bi-arrow-repeat me-1"></i> Consultar por Data de Cancelamento
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Paginação -->
+    {% if page_obj.has_other_pages %}
+    <div class="d-flex justify-content-between align-items-center mt-3 pt-3 border-top border-secondary border-opacity-25">
+        <span class="text-muted small">
+            Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+        </span>
+        <ul class="pagination pagination-sm mb-0">
+            {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link bg-dark border-secondary text-light" href="?page={{ page_obj.previous_page_number }}&{{ request.GET.urlencode }}">Anterior</a>
+            </li>
+            {% endif %}
+            <li class="page-item active">
+                <span class="page-link bg-primary border-primary">{{ page_obj.number }}</span>
+            </li>
+            {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link bg-dark border-secondary text-light" href="?page={{ page_obj.next_page_number }}&{{ request.GET.urlencode }}">Próxima</a>
+            </li>
+            {% endif %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <!-- Nota Técnica Informativa -->
+    <div class="alert alert-dark border-0 mt-4 mb-0 small text-muted">
+        <i class="bi bi-info-circle me-1 text-info"></i>
+        <strong>Nota sobre durações:</strong> A coluna <em>Duração da Intervenção Técnica</em> quantifica o intervalo entre o início e o término dos ciclos de atendimento do ferramental. Não deve ser interpretada como tempo líquido contínuo de trabalho em bancada. A exportação Excel disponibiliza o histórico cronológico de todos os eventos na aba <em>Histórico</em>.
+    </div>
+</div>
+{% endblock %}

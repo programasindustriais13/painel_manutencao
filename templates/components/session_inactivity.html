@@ -1,0 +1,224 @@
+{% if user.is_authenticated and not is_tv_session and user.username != 'tv' and user.username != 'tv_matrizaria' %}
+<!-- Componente Compartilhado de Inatividade de Sessão Humana -->
+<div class="modal fade" id="inactivityWarningModal" tabindex="-1" aria-labelledby="inactivityModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false" style="z-index: 9999;">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content" style="background-color: #0F172A; color: #F8FAFC; border: 1px solid rgba(245, 158, 11, 0.4); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);">
+            <div class="modal-header border-secondary border-opacity-25">
+                <h5 class="modal-title d-flex align-items-center gap-2 text-warning" id="inactivityModalLabel">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    Aviso de Inatividade
+                </h5>
+            </div>
+            <div class="modal-body py-4">
+                <p class="mb-2" style="font-size: 1.05rem;">
+                    Sua sessão será encerrada em <strong id="inactivity-countdown" class="text-warning fs-4">30</strong> segundos por inatividade.
+                </p>
+                <p class="text-muted small mb-0">
+                    Para proteger os registros coletivos no terminal e manter seus dados salvos, clique em <strong>Continuar Conectado</strong>.
+                </p>
+            </div>
+            <div class="modal-footer border-secondary border-opacity-25 justify-content-between">
+                <a href="{% url 'logout' %}" class="btn btn-outline-secondary px-3">
+                    <i class="bi bi-box-arrow-right me-1"></i> Sair
+                </a>
+                <button type="button" class="btn btn-warning px-4 fw-bold" id="btn-stay-logged-in">
+                    <i class="bi bi-check-circle me-1"></i> Continuar Conectado
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    // Configurações do servidor (padrão: 300s timeout, 30s aviso prévio)
+    var TIMEOUT_SECS = 300;
+    var WARNING_SECS = 30;
+    var lastInteractionTime = Date.now();
+    var hasPendingInteraction = false;
+    var isWarningShown = false;
+    var keepAliveThrottled = 0;
+    var keepAliveUrl = "{% url 'api_session_keep_alive' %}";
+    var statusUrl = "{% url 'api_session_status' %}";
+    var logoutUrl = "{% url 'logout' %}";
+
+    function getCookie(name) {
+        var cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            var cookies = document.cookie.split(';');
+            for (var i = 0; i < cookies.length; i++) {
+                var cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    var csrftoken = getCookie('csrftoken');
+
+    // Registra interação humana real (clique, toque, digitação, scroll)
+    function registerHumanInteraction() {
+        lastInteractionTime = Date.now();
+        hasPendingInteraction = true;
+        // Notifica outras abas no mesmo navegador
+        try {
+            localStorage.setItem('freedom_human_act_ts', lastInteractionTime.toString());
+        } catch(e) {}
+    }
+
+    ['mousedown', 'keydown', 'touchstart', 'scroll'].forEach(function(evt) {
+        window.addEventListener(evt, registerHumanInteraction, { passive: true });
+    });
+
+    // Sincronização entre múltiplas abas via storage event
+    window.addEventListener('storage', function(e) {
+        if (e.key === 'freedom_human_act_ts' && e.newValue) {
+            lastInteractionTime = parseInt(e.newValue, 10) || Date.now();
+            hideWarningModal();
+        }
+    });
+
+    // Envia keep-alive com throttling (máximo de 1 request a cada 30 segundos)
+    function sendKeepAlive(force) {
+        var now = Date.now();
+        if (!force && (now - keepAliveThrottled < 30000 || !hasPendingInteraction)) {
+            return;
+        }
+        keepAliveThrottled = now;
+        hasPendingInteraction = false;
+
+        fetch(keepAliveUrl, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrftoken,
+                'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        })
+        .then(function(res) {
+            if (res.status === 401) {
+                // Sessão já expirou no backend
+                window.location.href = logoutUrl;
+                return;
+            }
+            return res.json();
+        })
+        .then(function(data) {
+            if (data && data.status === 'ok') {
+                lastInteractionTime = Date.now();
+                if (data.timeout_seconds) TIMEOUT_SECS = data.timeout_seconds;
+                if (data.warning_seconds) WARNING_SECS = data.warning_seconds;
+                hideWarningModal();
+                try {
+                    localStorage.setItem('freedom_human_act_ts', lastInteractionTime.toString());
+                } catch(e) {}
+            }
+        })
+        .catch(function(err) {
+            console.warn('[Session Inactivity] Erro no keep-alive:', err);
+        });
+    }
+
+    // Modal helpers
+    function showWarningModal(secondsLeft) {
+        if (!isWarningShown) {
+            isWarningShown = true;
+            var modalEl = document.getElementById('inactivityWarningModal');
+            if (modalEl) {
+                if (window.bootstrap && bootstrap.Modal) {
+                    var bsModal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+                    bsModal.show();
+                } else {
+                    modalEl.style.display = 'block';
+                    modalEl.classList.add('show');
+                }
+            }
+        }
+        var countdownEl = document.getElementById('inactivity-countdown');
+        if (countdownEl) {
+            countdownEl.innerText = Math.max(0, Math.ceil(secondsLeft));
+        }
+    }
+
+    function hideWarningModal() {
+        if (isWarningShown) {
+            isWarningShown = false;
+            var modalEl = document.getElementById('inactivityWarningModal');
+            if (modalEl) {
+                if (window.bootstrap && bootstrap.Modal) {
+                    var bsModal = bootstrap.Modal.getInstance(modalEl);
+                    if (bsModal) bsModal.hide();
+                } else {
+                    modalEl.style.display = 'none';
+                    modalEl.classList.remove('show');
+                }
+            }
+        }
+    }
+
+    // Botão "Continuar Conectado"
+    document.addEventListener('DOMContentLoaded', function() {
+        var btnStay = document.getElementById('btn-stay-logged-in');
+        if (btnStay) {
+            btnStay.addEventListener('click', function() {
+                registerHumanInteraction();
+                sendKeepAlive(true);
+            });
+        }
+    });
+
+    // Checagem contínua de inatividade no cliente (a cada 2 segundos)
+    setInterval(function() {
+        var elapsedSecs = (Date.now() - lastInteractionTime) / 1000;
+        var remainingSecs = TIMEOUT_SECS - elapsedSecs;
+
+        // Se houve interação pendente e está próximo da metade do timeout, envia keep-alive
+        if (hasPendingInteraction && elapsedSecs < (TIMEOUT_SECS - WARNING_SECS)) {
+            sendKeepAlive(false);
+        }
+
+        // Aviso prévio nos últimos 30 segundos
+        if (remainingSecs <= WARNING_SECS && remainingSecs > 0) {
+            showWarningModal(remainingSecs);
+        } else if (remainingSecs > WARNING_SECS) {
+            hideWarningModal();
+        }
+
+        // Tempo expirado no frontend
+        if (remainingSecs <= 0) {
+            window.location.href = logoutUrl;
+        }
+    }, 2000);
+
+    // Verificação de autoridade no retorno de suspensão (wake up do tablet/laptop)
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+            fetch(statusUrl, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(function(res) {
+                if (res.status === 401) {
+                    window.location.href = logoutUrl;
+                    return;
+                }
+                return res.json();
+            })
+            .then(function(data) {
+                if (data && data.remaining_seconds !== undefined) {
+                    if (data.remaining_seconds <= 0) {
+                        window.location.href = logoutUrl;
+                    } else {
+                        // Sincroniza com tempo real do servidor
+                        lastInteractionTime = Date.now() - (data.elapsed_seconds * 1000);
+                    }
+                }
+            })
+            .catch(function(err) {});
+        }
+    });
+})();
+</script>
+{% endif %}

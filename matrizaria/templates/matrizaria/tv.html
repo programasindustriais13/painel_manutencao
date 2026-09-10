@@ -1,0 +1,459 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TV Matrizaria Industrial &bull; Pneus Freedom</title>
+
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&family=JetBrains+Mono:wght@600;800&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
+    <style>
+        :root {
+            --bg-tv: #070B12;
+            --card-tv: #0E1626;
+            --card-tv-border: rgba(255, 255, 255, 0.1);
+            --matriz-purple: #8B5CF6;
+        }
+
+        body {
+            background-color: var(--bg-tv);
+            color: #FFFFFF;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            user-select: none;
+        }
+
+        /* Top TV Header */
+        .tv-header {
+            background-color: #05080E;
+            border-bottom: 2px solid rgba(139, 92, 246, 0.4);
+            padding: 0.75rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 70px;
+        }
+
+        .tv-clock {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 2rem;
+            font-weight: 800;
+            color: #F8FAFC;
+            letter-spacing: 1px;
+        }
+
+        /* Slide Viewport */
+        .tv-content-viewport {
+            flex-grow: 1;
+            padding: 1.25rem 2rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .tv-slide {
+            position: absolute;
+            top: 1.25rem;
+            left: 2rem;
+            right: 2rem;
+            bottom: 1.25rem;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.6s ease-in-out, visibility 0.6s ease-in-out;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tv-slide.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        /* Slide Indicators / Tabs */
+        .slide-indicator-bar {
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            position: relative;
+        }
+
+        .slide-indicator-progress {
+            height: 100%;
+            background: var(--matriz-purple);
+            width: 0%;
+            transition: width 0.1s linear;
+        }
+
+        /* Grid Cards */
+        .tv-kanban-lane {
+            background: var(--card-tv);
+            border: 1px solid var(--card-tv-border);
+            border-radius: 12px;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .tv-lane-header {
+            padding: 0.85rem 1.25rem;
+            font-size: 1.15rem;
+            font-weight: 800;
+            border-bottom: 1px solid var(--card-tv-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .tv-lane-body {
+            padding: 1rem;
+            overflow-y: auto;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.85rem;
+        }
+
+        .tv-service-card {
+            background: #141F33;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 10px;
+            padding: 1rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .tv-service-card.urgente {
+            border-left: 5px solid #EF4444;
+            animation: pulse-border 2s infinite;
+        }
+
+        .tv-service-card.retrabalho {
+            background: linear-gradient(180deg, rgba(239, 68, 68, 0.12) 0%, #141F33 50%);
+            border-top: 1px solid rgba(239, 68, 68, 0.4);
+        }
+
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+            50% { box-shadow: 0 0 16px rgba(239, 68, 68, 0.5); }
+            100% { box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .tv-lane-body .text-muted,
+        .tv-empty-text {
+            color: #CBD5E1 !important;
+            font-size: 1.05rem;
+            font-weight: 500;
+        }
+
+        .tv-service-card .text-muted {
+            color: #94A3B8 !important;
+        }
+
+        /* Bladder Table */
+        .tv-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+        }
+
+        .tv-table th {
+            color: #94A3B8;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            padding: 0.5rem 1rem;
+        }
+
+        .tv-table td {
+            background: #101B2E;
+            padding: 1rem;
+            font-size: 1.05rem;
+            vertical-align: middle;
+        }
+
+        .tv-table tr td:first-child { border-top-left-radius: 8px; border-bottom-left-radius: 8px; }
+        .tv-table tr td:last-child { border-top-right-radius: 8px; border-bottom-right-radius: 8px; }
+
+        .progress-tv {
+            height: 12px;
+            border-radius: 6px;
+            background-color: #1E293B;
+            overflow: hidden;
+        }
+
+        /* TV Footer */
+        .tv-footer {
+            height: 40px;
+            background-color: #05080E;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0 2rem;
+            font-size: 0.85rem;
+            color: #94A3B8;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="tv-header">
+        <div class="d-flex align-items-center gap-3">
+            <img src="{% static 'maintenance/img/logo_pneus_freedom_gold.png' %}" alt="Pneus Freedom" style="height: 38px;">
+            <div>
+                <span class="fs-5 fw-bold text-white">MATRIZARIA INDUSTRIAL</span>
+                <span class="badge ms-2" id="slide-name-badge" style="background: var(--matriz-purple); font-size: 0.85rem;">SERVIÇOS DE MATRIZARIA</span>
+            </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-4">
+            <!-- Telemetria SCADA Status -->
+            <div class="d-flex align-items-center gap-2">
+                <span class="small text-muted">SCADA:</span>
+                <span class="badge bg-{% if scada_status == 'ONLINE' %}success{% else %}warning text-dark{% endif %}" id="scada-badge">
+                    {{ scada_status }}
+                </span>
+            </div>
+
+            <!-- Digital Clock -->
+            <div class="tv-clock" id="clock-display">{{ hora_atual }}</div>
+        </div>
+    </header>
+
+    <!-- Slide Duration Progress Bar -->
+    <div class="slide-indicator-bar">
+        <div class="slide-indicator-progress" id="slide-progress"></div>
+    </div>
+
+    <!-- Main Slides Container -->
+    <main class="tv-content-viewport">
+        <!-- SLIDE 1: FILA DE SERVIÇOS (20 SEGUNDOS) -->
+        <div class="tv-slide active" id="slide-servicos">
+            <div class="row g-3 h-100">
+                <!-- Coluna 1: Solicitados & Retrabalhos -->
+                <div class="col-4 h-100">
+                    <div class="tv-kanban-lane" style="border-top: 4px solid #F59E0B;">
+                        <div class="tv-lane-header text-warning">
+                            <span><i class="bi bi-inbox me-2"></i> Solicitados / Retrabalho</span>
+                            <span class="badge bg-warning text-dark" id="count-solicitados">{{ servicos.total_solicitados|add:servicos.total_retrabalhos }}</span>
+                        </div>
+                        <div class="tv-lane-body" id="list-solicitados">
+                            {% include "matrizaria/includes/tv_col_solicitados.html" with fila_solicitados=servicos.fila_solicitados %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coluna 2: Em Execução -->
+                <div class="col-4 h-100">
+                    <div class="tv-kanban-lane" style="border-top: 4px solid #3B82F6;">
+                        <div class="tv-lane-header text-primary">
+                            <span><i class="bi bi-gear-wide-connected me-2"></i> Em Execução Técnica</span>
+                            <span class="badge bg-primary" id="count-execucao">{{ servicos.total_em_execucao }}</span>
+                        </div>
+                        <div class="tv-lane-body" id="list-execucao">
+                            {% include "matrizaria/includes/tv_col_execucao.html" with em_execucao=servicos.em_execucao %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coluna 3: Aguardando Conferência de Líder -->
+                <div class="col-4 h-100">
+                    <div class="tv-kanban-lane" style="border-top: 4px solid #06B6D4;">
+                        <div class="tv-lane-header text-info">
+                            <span><i class="bi bi-shield-check me-2"></i> Aguardando Líder</span>
+                            <span class="badge bg-info text-dark" id="count-conferencia">{{ servicos.total_aguardando_conferencia }}</span>
+                        </div>
+                        <div class="tv-lane-body" id="list-conferencia">
+                            {% include "matrizaria/includes/tv_col_conferencia.html" with aguardando_conferencia=servicos.aguardando_conferencia %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SLIDE 2: ALERTAS CANÔNICOS DE BLADDER (15 SEGUNDOS) -->
+        <div class="tv-slide" id="slide-bladders">
+            <div class="tv-kanban-lane p-4 h-100" style="border-top: 4px solid #EC4899;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <div>
+                        <h4 class="fw-bold text-white mb-0">
+                            <i class="bi bi-disc text-danger me-2"></i>
+                            Alertas Preventivos de Limite de Bladder (Vulcanização)
+                        </h4>
+                        <div class="text-muted small">Monitoramento em tempo real via BladderTrackingService &bull; Atenção (&ge;80%) e Crítico (&ge;95%)</div>
+                    </div>
+                    <span class="badge bg-danger fs-6 px-3 py-2" id="count-bladders">{{ total_bladder_alerts }} ALERTA(S)</span>
+                </div>
+
+                <div class="overflow-y-auto flex-grow-1" id="list-bladders">
+                    {% include "matrizaria/includes/tv_col_bladders.html" with bladder_alerts=bladder_alerts %}
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="tv-footer">
+        <div class="d-flex align-items-center gap-3">
+            <span>PNEUS FREEDOM &bull; SISTEMA DE GESTÃO INDUSTRIAL</span>
+            <span class="text-secondary" id="tv-update-time">Última Leitura: {{ timestamp }}</span>
+        </div>
+        <div>
+            {% include "components/developer_footer.html" with is_tv=True %}
+        </div>
+        <div id="slide-info-text">
+            Exibindo: Painel de Serviços (Alterna em 20s)
+        </div>
+    </footer>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Relógio em tempo real
+        function updateClock() {
+            var now = new Date();
+            var h = String(now.getHours()).padStart(2, '0');
+            var m = String(now.getMinutes()).padStart(2, '0');
+            var s = String(now.getSeconds()).padStart(2, '0');
+            document.getElementById('clock-display').innerText = h + ':' + m + ':' + s;
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Alternância de Slides (20s Serviços / 15s Bladders)
+        var slides = [
+            { id: 'slide-servicos', name: 'SERVIÇOS DE MATRIZARIA', duration: 20000, desc: 'Painel de Serviços (Alterna em 20s)' },
+            { id: 'slide-bladders', name: 'ALERTAS DE BLADDER', duration: 15000, desc: 'Alertas Preventivos de Bladder (Alterna em 15s)' }
+        ];
+
+        var currentSlideIndex = 0;
+        var slideStartTime = Date.now();
+        var currentDuration = slides[currentSlideIndex].duration;
+
+        function showSlide(index) {
+            slides.forEach(function(s, i) {
+                var el = document.getElementById(s.id);
+                if (i === index) {
+                    el.classList.add('active');
+                } else {
+                    el.classList.remove('active');
+                }
+            });
+            document.getElementById('slide-name-badge').innerText = slides[index].name;
+            document.getElementById('slide-info-text').innerText = 'Exibindo: ' + slides[index].desc;
+            slideStartTime = Date.now();
+            currentDuration = slides[index].duration;
+        }
+
+        // Barra de progresso do slide
+        setInterval(function() {
+            var elapsed = Date.now() - slideStartTime;
+            var pct = Math.min(100, (elapsed / currentDuration) * 100);
+            document.getElementById('slide-progress').style.width = pct + '%';
+
+            if (elapsed >= currentDuration) {
+                currentSlideIndex = (currentSlideIndex + 1) % slides.length;
+                showSlide(currentSlideIndex);
+            }
+        }, 100);
+
+        // Atualização assíncrona de dados a cada 15 segundos sem recarregar a tela
+        var lastRequestId = 0;
+        var isFetchingTv = false;
+
+        function fetchTvData() {
+            if (isFetchingTv) return;
+            isFetchingTv = true;
+            var currentReq = ++lastRequestId;
+
+            fetch("{% url 'matrizaria:api_tv_data' %}", {
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Cache-Control': 'no-cache'
+                }
+            })
+            .then(function(res) {
+                if (res.redirected && res.url.includes('/login/')) {
+                    window.location.href = res.url;
+                    return;
+                }
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(function(data) {
+                if (!data) return;
+                // Descarta respostas que cheguem fora de ordem
+                if (currentReq < lastRequestId) return;
+
+                // Status SCADA e Horário da Leitura
+                var scadaBadge = document.getElementById('scada-badge');
+                if (scadaBadge) {
+                    scadaBadge.innerText = data.scada_status;
+                    scadaBadge.className = 'badge ' + (data.scada_status === 'ONLINE' ? 'bg-success' : 'bg-warning text-dark');
+                }
+                var updateTime = document.getElementById('tv-update-time');
+                if (updateTime) {
+                    updateTime.innerHTML = 'Última Leitura: ' + data.timestamp;
+                }
+
+                // Atualiza contadores
+                var s = data.servicos;
+                if (s) {
+                    var countSol = document.getElementById('count-solicitados');
+                    if (countSol) countSol.innerText = s.total_solicitados + s.total_retrabalhos;
+                    var countExec = document.getElementById('count-execucao');
+                    if (countExec) countExec.innerText = s.total_em_execucao;
+                    var countConf = document.getElementById('count-conferencia');
+                    if (countConf) countConf.innerText = s.total_aguardando_conferencia;
+                }
+                var countBla = document.getElementById('count-bladders');
+                if (countBla) {
+                    countBla.innerText = data.total_bladder_alerts + ' ALERTA(S)';
+                }
+
+                // Atualiza conteúdo HTML das colunas e tabela
+                var elSol = document.getElementById('list-solicitados');
+                if (elSol && data.html_solicitados !== undefined) {
+                    elSol.innerHTML = data.html_solicitados;
+                }
+                var elExec = document.getElementById('list-execucao');
+                if (elExec && data.html_execucao !== undefined) {
+                    elExec.innerHTML = data.html_execucao;
+                }
+                var elConf = document.getElementById('list-conferencia');
+                if (elConf && data.html_conferencia !== undefined) {
+                    elConf.innerHTML = data.html_conferencia;
+                }
+                var elBla = document.getElementById('list-bladders');
+                if (elBla && data.html_bladders !== undefined) {
+                    elBla.innerHTML = data.html_bladders;
+                }
+            })
+            .catch(function(err) {
+                console.warn('[TV Matrizaria] Falha na sincronização:', err);
+                var updateTime = document.getElementById('tv-update-time');
+                if (updateTime) {
+                    updateTime.innerHTML = '<span class="text-warning"><i class="bi bi-exclamation-triangle"></i> Desatualizado (Reconectando...)</span>';
+                }
+            })
+            .finally(function() {
+                isFetchingTv = false;
+            });
+        }
+        setInterval(fetchTvData, 15000);
+    </script>
+</body>
+</html>

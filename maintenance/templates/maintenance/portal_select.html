@@ -303,6 +303,41 @@
             box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
         }
 
+        /* Matrizaria Card Styling */
+        .portal-card.card-matriz::before {
+            background: linear-gradient(90deg, #8B5CF6, #6D28D9);
+        }
+
+        .portal-card.card-matriz:hover {
+            transform: translateY(-8px);
+            border-color: rgba(139, 92, 246, 0.6);
+            box-shadow: 0 20px 40px -10px rgba(139, 92, 246, 0.25);
+            background: rgba(24, 32, 48, 0.95);
+        }
+
+        .portal-card.card-matriz .icon-box {
+            background: rgba(139, 92, 246, 0.12);
+            color: #A78BFA;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+        }
+
+        .portal-card.card-matriz:hover .icon-box {
+            background: rgba(139, 92, 246, 0.22);
+            box-shadow: 0 0 25px rgba(139, 92, 246, 0.4);
+            transform: scale(1.05);
+        }
+
+        .portal-card.card-matriz .btn-access {
+            background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%);
+            color: #FFFFFF;
+            font-weight: 700;
+        }
+
+        .portal-card.card-matriz .btn-access:hover {
+            background: linear-gradient(135deg, #A78BFA 0%, #8B5CF6 100%);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
+        }
+
         /* Icon Box */
         .icon-box {
             width: 72px;
@@ -437,6 +472,7 @@
 
         <section class="cards-wrapper">
             <!-- Card 1: Manutenção Industrial -->
+            {% if can_access_maintenance %}
             <a href="{% url maintenance_url %}" class="portal-card card-maint" id="card-manutencao">
                 <div>
                     <div class="icon-box">
@@ -458,8 +494,10 @@
                     <i class="bi bi-arrow-right-short fs-4"></i>
                 </div>
             </a>
+            {% endif %}
 
             <!-- Card 2: Produção & PCP -->
+            {% if can_access_production %}
             <a href="{% url 'production:dashboard' %}" class="portal-card card-prod" id="card-producao">
                 <div>
                     <div class="icon-box">
@@ -504,15 +542,44 @@
                     <i class="bi bi-arrow-right-short fs-4"></i>
                 </div>
             </a>
+            {% endif %}
+
+            <!-- Card 4: Matrizaria Industrial -->
+            {% if can_access_matrizaria %}
+            <a href="{% url 'matrizaria:kanban' %}" class="portal-card card-matriz" id="card-matrizaria">
+                <div>
+                    <div class="icon-box">
+                        <i class="bi bi-grid-3x3-gap-fill"></i>
+                    </div>
+                    <h2 class="card-title">Matrizaria Industrial</h2>
+                    <p class="card-desc">
+                        Gestão de trocas de matrizes, serviços técnicos, retrabalhos, conferências e rastreabilidade.
+                    </p>
+                    <div class="feature-tags">
+                        <span class="tag-pill"><i class="bi bi-kanban text-warning"></i> Fluxo Kanban</span>
+                        <span class="tag-pill"><i class="bi bi-arrow-repeat text-info"></i> Ciclos &amp; Retrabalho</span>
+                        <span class="tag-pill"><i class="bi bi-check2-circle text-success"></i> Conferência de Líder</span>
+                        <span class="tag-pill"><i class="bi bi-tv" style="color: #C084FC;"></i> TV Matrizaria</span>
+                    </div>
+                </div>
+                <div class="btn-access">
+                    <span>Acessar Matrizaria</span>
+                    <i class="bi bi-arrow-right-short fs-4"></i>
+                </div>
+            </a>
+            {% endif %}
         </section>
     </main>
 
     <!-- Footer -->
     <footer class="portal-footer">
-        <div>Pneus Freedom &bull; Sistema Integrado de Gestão de Manutenção e Produção</div>
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 container-fluid px-4">
+            <div>Pneus Freedom &bull; Sistema Integrado de Gestão de Manutenção e Produção</div>
+            <div>{% include "components/developer_footer.html" with is_dark=True %}</div>
+        </div>
     </footer>
 
-    <!-- Bootstrap 5 Bundle JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Inatividade de Sessão Humana Compartilhada -->
+    {% include "components/session_inactivity.html" %}
 </body>
 </html>

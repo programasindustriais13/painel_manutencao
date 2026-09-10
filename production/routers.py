@@ -81,6 +81,10 @@ class ScadaRouter:
            (app2 == "maintenance" and model2 == "machine" and app1 == "production" and model1 == "productionmachineconfig"):
             return True
 
+        # Permitir explicitamente o relacionamento local entre matrizaria e production (MatrizFisica -> ProductionMatrixCatalog)
+        if (app1 == "matrizaria" and app2 == "production") or (app2 == "matrizaria" and app1 == "production"):
+            return True
+
         return None
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):

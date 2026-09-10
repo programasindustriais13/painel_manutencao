@@ -1,5 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST, require_GET
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib import messages
 from django.utils import timezone
@@ -88,9 +90,40 @@ def _user_can_access_production(user):
     return False
 
 
+def _user_can_access_matrizaria(user):
+    """Retorna True se for superuser, staff, pertencer aos grupos dedicados da Matrizaria ou possuir permissão no módulo."""
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    if user.groups.filter(
+        name__in=[
+            "Operadores Vulcanização",
+            "Matrizaria",
+            "Visualizador Matrizaria",
+        ]
+    ).exists():
+        return True
+    if user.has_perm("matrizaria.view_solicitacaoservicomatrizaria") or user.has_perm("matrizaria.add_solicitacaoservicomatrizaria"):
+        return True
+    return False
+
+
+def _user_get_accessible_modules(user):
+    """Retorna lista dos módulos acessíveis pelo usuário ('maintenance', 'production', 'matrizaria')."""
+    modules = []
+    if _user_can_access_maintenance(user):
+        modules.append("maintenance")
+    if _user_can_access_production(user):
+        modules.append("production")
+    if _user_can_access_matrizaria(user):
+        modules.append("matrizaria")
+    return modules
+
+
 def _user_has_dual_access(user):
-    """Retorna True se o usuário tem permissão para AMBOS os módulos (Manutenção e Produção)."""
-    return _user_can_access_maintenance(user) and _user_can_access_production(user)
+    """Retorna True se o usuário tem permissão para 2 ou mais módulos."""
+    return len(_user_get_accessible_modules(user)) >= 2
 
 
 def _user_has_maintenance_access(user):
@@ -188,30 +221,34 @@ def tecnico_or_operador_required(view_func):
 @login_required
 def home_redirect(request):
     user = request.user
-    # 1. Usuário de TV ('tv' ou grupo 'Visualizador')
+    # 1. Usuários de TV dedicados
     if user.username == 'tv' or user.groups.filter(name='Visualizador').exists():
         return redirect('tv_dashboard')
+    if user.username == 'tv_matrizaria' or user.groups.filter(name='Visualizador Matrizaria').exists():
+        return redirect('matrizaria:tv')
 
-    # 2. Usuário com Acesso Duplo (Manutenção + Produção) -> Portal de Escolha
-    if _user_has_dual_access(user):
+    accessible = _user_get_accessible_modules(user)
+
+    # 2. Usuário com Acesso a Múltiplos Módulos (2 ou mais) -> Portal de Escolha
+    if len(accessible) >= 2:
         return redirect('portal_select')
 
-    # 3. Usuário com Acesso Apenas à Produção
-    if _user_can_access_production(user) and not _user_can_access_maintenance(user):
-        return redirect('production:dashboard')
+    # 3. Usuário com Acesso a Apenas 1 Módulo
+    if len(accessible) == 1:
+        mod = accessible[0]
+        if mod == 'production':
+            return redirect('production:dashboard')
+        elif mod == 'matrizaria':
+            return redirect('matrizaria:kanban')
+        elif mod == 'maintenance':
+            if (
+                user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
+                or _get_technician_proprio(user)
+            ):
+                return redirect('technician_management')
+            return redirect('dashboard')
 
-    # 4. Usuário com Acesso Apenas à Manutenção
-    if _user_can_access_maintenance(user):
-        # Técnico Líder ou Técnico comum -> tela de gerenciamento de técnicos (/management/)
-        if (
-            user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
-            or _get_technician_proprio(user)
-        ):
-            return redirect('technician_management')
-        # Operadores puros de manutenção -> dashboard
-        return redirect('dashboard')
-
-    # 5. Fallback para usuários sem permissões válidas
+    # 4. Fallback para usuários sem permissões válidas
     messages.error(request, "Acesso restrito. Seu usuário não possui permissão para acessar os módulos.")
     return redirect('login')
 
@@ -220,14 +257,17 @@ def home_redirect(request):
 def portal_select(request):
     """
     Tela de Seleção de Módulos (Hub / Portal de Entrada).
-    Se o usuário não possuir acesso duplo, redireciona-o automaticamente
-    para o único módulo ao qual tem direito.
+    Se o usuário possuir acesso a apenas um módulo, redireciona-o automaticamente.
     """
     user = request.user
-    if not _user_has_dual_access(user):
-        if _user_can_access_production(user):
+    accessible = _user_get_accessible_modules(user)
+
+    if len(accessible) < 2:
+        if 'production' in accessible:
             return redirect('production:dashboard')
-        if _user_can_access_maintenance(user):
+        if 'matrizaria' in accessible:
+            return redirect('matrizaria:kanban')
+        if 'maintenance' in accessible:
             if (
                 user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
                 or _get_technician_proprio(user)
@@ -236,6 +276,8 @@ def portal_select(request):
             return redirect('dashboard')
         if user.username == 'tv' or user.groups.filter(name='Visualizador').exists():
             return redirect('tv_dashboard')
+        if user.username == 'tv_matrizaria' or user.groups.filter(name='Visualizador Matrizaria').exists():
+            return redirect('matrizaria:tv')
         messages.error(request, "Acesso restrito. Seu usuário não possui módulos atribuídos.")
         return redirect('login')
 
@@ -247,6 +289,9 @@ def portal_select(request):
 
     context = {
         'maintenance_url': maintenance_url,
+        'can_access_maintenance': 'maintenance' in accessible,
+        'can_access_production': 'production' in accessible,
+        'can_access_matrizaria': 'matrizaria' in accessible,
     }
     return render(request, 'maintenance/portal_select.html', context)
 
@@ -2151,5 +2196,56 @@ def link_allocation_os(request, allocation_id):
     return redirect('technician_management')
 
 
+@login_required
+@require_POST
+def api_session_keep_alive(request):
+    """
+    Endpoint autenticado para sinalização de atividade humana (cliques, digitação, toques).
+    Valida CSRF, atualiza o timestamp da última atividade humana no servidor e retorna status OK.
+    """
+    import time
+    now_ts = time.time()
+    request.session['_last_human_activity'] = now_ts
+    timeout = getattr(settings, "INACTIVITY_TIMEOUT_SECONDS", 300)
+    warning = getattr(settings, "INACTIVITY_WARNING_SECONDS", 30)
+    return JsonResponse({
+        "status": "ok",
+        "timestamp": now_ts,
+        "timeout_seconds": timeout,
+        "warning_seconds": warning,
+    })
 
 
+@login_required
+@require_GET
+def api_session_status(request):
+    """
+    Endpoint leve para verificação do tempo restante de inatividade pelo frontend.
+    NÃO renova a inatividade humana.
+    """
+    import time
+    from .middleware import is_dedicated_tv_account
+
+    user = request.user
+    if is_dedicated_tv_account(user):
+        return JsonResponse({
+            "is_authenticated": True,
+            "is_tv": True,
+            "remaining_seconds": 99999999,
+        })
+
+    now_ts = time.time()
+    timeout = getattr(settings, "INACTIVITY_TIMEOUT_SECONDS", 300)
+    warning = getattr(settings, "INACTIVITY_WARNING_SECONDS", 30)
+    last_act = request.session.get("_last_human_activity", now_ts)
+    elapsed = max(0.0, now_ts - float(last_act))
+    remaining = max(0.0, timeout - elapsed)
+
+    return JsonResponse({
+        "is_authenticated": True,
+        "is_tv": False,
+        "elapsed_seconds": round(elapsed, 1),
+        "remaining_seconds": round(remaining, 1),
+        "timeout_seconds": timeout,
+        "warning_seconds": warning,
+    })

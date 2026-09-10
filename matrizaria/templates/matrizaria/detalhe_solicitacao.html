@@ -1,0 +1,566 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+
+{% block title %}SM #{{ solicitacao.id }} &bull; {{ solicitacao.prensa_nome_snapshot }} &bull; Matrizaria{% endblock %}
+
+{% block extra_css %}
+<style>
+    .timeline-container {
+        position: relative;
+        padding-left: 2rem;
+    }
+    .timeline-container::before {
+        content: '';
+        position: absolute;
+        top: 8px;
+        bottom: 8px;
+        left: 11px;
+        width: 2px;
+        background: rgba(255, 255, 255, 0.12);
+    }
+    .timeline-item {
+        position: relative;
+        margin-bottom: 1.5rem;
+    }
+    .timeline-item::before {
+        content: '';
+        position: absolute;
+        left: -2rem;
+        top: 4px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #8B5CF6;
+        border: 2px solid #0B0F17;
+        box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.4);
+    }
+    .timeline-item.item-danger::before { background: #EF4444; box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.4); }
+    .timeline-item.item-success::before { background: #10B981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.4); }
+    .timeline-item.item-warning::before { background: #F59E0B; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.4); }
+    .timeline-item.item-info::before { background: #06B6D4; box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.4); }
+
+    .cycle-card {
+        background: #172133;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+    .cycle-card.cycle-active {
+        border-left: 4px solid #3B82F6;
+        background: linear-gradient(90deg, rgba(59, 130, 246, 0.08) 0%, #172133 100%);
+    }
+    .cycle-card.cycle-rework {
+        border-left: 4px solid #EF4444;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Top Header Bar -->
+<div class="glass-card p-3 p-md-4 mb-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div class="d-flex align-items-center gap-3">
+            <a href="{% url 'matrizaria:kanban' %}" class="btn btn-outline-secondary btn-sm" title="Voltar ao Kanban">
+                <i class="bi bi-arrow-left"></i>
+            </a>
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <h4 class="fw-bold text-white mb-0">SM #{{ solicitacao.id }}</h4>
+                    <span class="badge bg-{{ solicitacao.badge_status_classe }}">{{ solicitacao.get_status_display }}</span>
+                    {% if solicitacao.prioridade == "URGENTE" %}
+                    <span class="badge bg-danger text-white badge-pulse">URGENTE</span>
+                    {% endif %}
+                    {% if solicitacao.quantidade_retrabalhos > 0 %}
+                    <span class="badge bg-danger text-white"><i class="bi bi-arrow-repeat"></i> {{ solicitacao.quantidade_retrabalhos }} Retrabalho(s)</span>
+                    {% endif %}
+                </div>
+                <div class="text-muted small mt-1">
+                    Equipamento: <strong class="text-light">{{ solicitacao.prensa_nome_snapshot }}</strong> &bull; 
+                    Aberto em {{ solicitacao.data_solicitacao|date:"d/m/Y H:i" }} por {{ solicitacao.solicitado_por_nome }}
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Quick Actions -->
+        <div class="d-flex align-items-center gap-2">
+            {% if can_editar %}
+            <button type="button" class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modalEditar">
+                <i class="bi bi-pencil-square me-1"></i> Editar Solicitação
+            </button>
+            {% endif %}
+            {% if can_cancelar and solicitacao.status != "CONCLUIDO" and solicitacao.status != "CANCELADO" %}
+            <button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalCancelar">
+                <i class="bi bi-x-circle me-1"></i> Cancelar Solicitação
+            </button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- LEFT COLUMN: Detalhes, Ciclos e Ações -->
+    <div class="col-12 col-lg-7 col-xl-8">
+        <!-- 1. Detalhes Gerais -->
+        <div class="glass-card p-4 mb-4">
+            <h5 class="fw-bold text-white mb-3 d-flex align-items-center gap-2 border-bottom border-secondary border-opacity-25 pb-2">
+                <i class="bi bi-info-circle text-purple" style="color: var(--matriz-accent-light);"></i>
+                Dados da Solicitação
+            </h5>
+
+            <div class="row g-3">
+                <div class="col-12 col-md-6">
+                    <span class="text-muted small d-block">Tipo de Serviço</span>
+                    <strong class="text-white fs-6">{{ solicitacao.tipo_servico_nome_snapshot }}</strong>
+                    {% if solicitacao.exige_matriz_fisica_snapshot %}
+                    <span class="badge bg-warning text-dark ms-2" style="font-size: 0.75rem;">Exige Matriz Física</span>
+                    {% endif %}
+                </div>
+
+                <div class="col-12 col-md-6">
+                    <span class="text-muted small d-block">Matriz Física Instalada / Atendida</span>
+                    <strong class="text-light fs-6">
+                        {% if solicitacao.matriz_identificador_snapshot %}
+                            {{ solicitacao.matriz_identificador_snapshot }}
+                        {% elif solicitacao.matriz_fisica %}
+                            {{ solicitacao.matriz_fisica.nome_exibicao }}
+                        {% else %}
+                            <span class="text-secondary fst-italic">Não informada no momento</span>
+                        {% endif %}
+                    </strong>
+                </div>
+
+                <div class="col-12">
+                    <span class="text-muted small d-block">Necessidade Solicitada</span>
+                    <div class="p-3 rounded bg-dark border border-secondary border-opacity-25 text-light mt-1">
+                        {{ solicitacao.descricao_solicitacao|linebreaksbr }}
+                    </div>
+                </div>
+
+                {% if solicitacao.observacoes_adicionais %}
+                <div class="col-12">
+                    <span class="text-muted small d-block">Observações Adicionais</span>
+                    <div class="p-2 rounded bg-dark border border-secondary border-opacity-25 text-muted small mt-1">
+                        {{ solicitacao.observacoes_adicionais|linebreaksbr }}
+                    </div>
+                </div>
+                {% endif %}
+
+                <div class="col-12 col-md-4">
+                    <span class="text-muted small d-block">Responsável Atual</span>
+                    <span class="text-light fw-semibold">
+                        {{ solicitacao.responsavel_atribuido_nome|default:"Aguardando Início" }}
+                    </span>
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <span class="text-muted small d-block">Tempo Total em Espera</span>
+                    <span class="text-light fw-semibold">{{ solicitacao.tempo_espera_str }}</span>
+                </div>
+
+                <div class="col-12 col-md-4">
+                    <span class="text-muted small d-block">Duração da Intervenção Técnica</span>
+                    <span class="text-warning fw-bold">{{ solicitacao.duracao_total_intervencao_str }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 2. CICLOS DE EXECUÇÃO TÉCNICA -->
+        <div class="glass-card p-4 mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary border-opacity-25 pb-2">
+                <h5 class="fw-bold text-white mb-0 d-flex align-items-center gap-2">
+                    <i class="bi bi-arrow-repeat text-info"></i>
+                    Ciclos de Execução Técnica
+                </h5>
+                <span class="badge bg-secondary">{{ ciclos.count }} Ciclo(s) Registrado(s)</span>
+            </div>
+
+            {% for c in ciclos %}
+            <div class="cycle-card {% if c.forma_encerramento == 'EM_ANDAMENTO' %}cycle-active{% elif c.numero_ciclo > 1 %}cycle-rework{% endif %}">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <div>
+                        <span class="badge bg-dark border border-secondary text-light">Ciclo #{{ c.numero_ciclo }}</span>
+                        {% if c.numero_ciclo > 1 %}
+                        <span class="badge bg-danger text-white ms-1">Ciclo de Retrabalho</span>
+                        {% endif %}
+                        <span class="badge bg-{% if c.forma_encerramento == 'EM_ANDAMENTO' %}primary{% elif c.forma_encerramento == 'FINALIZADO_TECNICO' %}success{% else %}secondary{% endif %} ms-1">
+                            {{ c.get_forma_encerramento_display }}
+                        </span>
+                    </div>
+                    <span class="small fw-semibold text-warning">
+                        <i class="bi bi-stopwatch"></i> {{ c.duracao_str }}
+                    </span>
+                </div>
+
+                <div class="row g-2 small text-muted mb-2">
+                    <div class="col-12 col-md-6">
+                        Início: <strong class="text-light">{{ c.data_inicio|date:"d/m/Y H:i" }}</strong> por <span class="text-light">{{ c.usuario_inicio_nome }}</span>
+                    </div>
+                    <div class="col-12 col-md-6">
+                        {% if c.data_fim %}
+                        Término: <strong class="text-light">{{ c.data_fim|date:"d/m/Y H:i" }}</strong> por <span class="text-light">{{ c.usuario_fim_nome }}</span>
+                        {% else %}
+                        Término: <span class="text-primary fst-italic">Em andamento...</span>
+                        {% endif %}
+                    </div>
+                </div>
+
+                {% if c.descricao_servico_executado %}
+                <div class="p-2 rounded bg-dark border border-secondary border-opacity-25 text-light small mt-2">
+                    <strong class="text-secondary d-block" style="font-size: 0.75rem;">SERVIÇO EXECUTADO:</strong>
+                    {{ c.descricao_servico_executado|linebreaksbr }}
+                </div>
+                {% endif %}
+            </div>
+            {% empty %}
+            <div class="empty-state-box text-center py-4">
+                <i class="bi bi-hourglass-split fs-3 d-block mb-2"></i>
+                <span>Nenhum ciclo técnico iniciado ainda. O chamado aguarda atendimento na fila.</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- 3. AÇÕES DISPONÍVEIS DO WORKFLOW -->
+        <div class="glass-card p-4">
+            <h5 class="fw-bold text-white mb-3 d-flex align-items-center gap-2 border-bottom border-secondary border-opacity-25 pb-2">
+                <i class="bi bi-lightning-charge text-warning"></i>
+                Ações Operacionais
+            </h5>
+
+            <!-- AÇÃO: INICIAR ATENDIMENTO -->
+            {% if solicitacao.status == "SOLICITADO" or solicitacao.status == "AGUARDANDO_RETRABALHO" %}
+                {% if can_executar %}
+                <form action="{% url 'matrizaria:iniciar_atendimento' solicitacao.id %}" method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+                    <div class="alert alert-info border-0">
+                        <i class="bi bi-info-circle-fill me-2"></i>
+                        Ao iniciar o atendimento, você será atribuído como técnico responsável e um novo ciclo de execução será aberto.
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold" style="background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%); border: none;">
+                        <i class="bi bi-play-fill fs-4 me-1"></i> Assumir Chamado e Iniciar Execução
+                    </button>
+                </form>
+                {% else %}
+                <div class="alert alert-secondary border-0 small">
+                    <i class="bi bi-lock-fill me-2"></i> Você não possui perfil técnico para iniciar atendimentos na Matrizaria.
+                </div>
+                {% endif %}
+            {% endif %}
+
+            <!-- AÇÃO: EM EXECUÇÃO -> FINALIZAR OU TRANSFERIR -->
+            {% if solicitacao.status == "EM_EXECUCAO" %}
+                {% if can_executar %}
+                <!-- Formulário de Finalização Técnica -->
+                <form action="{% url 'matrizaria:finalizar_execucao' solicitacao.id %}" method="post" id="form-finalizar">
+                    {% csrf_token %}
+                    <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+
+                    <div class="mb-3">
+                        <label for="{{ form_finalizar.descricao_servico_realizado.id_for_label }}" class="form-label fw-semibold text-light">
+                            Descrição do Serviço Executado <span class="text-danger">*</span>
+                        </label>
+                        {{ form_finalizar.descricao_servico_realizado }}
+                        <div class="form-text text-muted">Descreva os reparos, ajustes, polimentos ou trocas efetuadas.</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="{{ form_finalizar.matriz_fisica.id_for_label }}" class="form-label fw-semibold text-light">
+                            Matriz Física Atendida / Instalada {% if solicitacao.exige_matriz_fisica_snapshot %}<span class="text-danger">* (Obrigatório para este tipo)</span>{% endif %}
+                        </label>
+                        {{ form_finalizar.matriz_fisica }}
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success flex-grow-1 fw-bold py-2" style="background: linear-gradient(135deg, #10B981 0%, #059669 100%); border: none;">
+                            <i class="bi bi-check-circle-fill me-1"></i> Finalizar Execução e Encaminhar para Líder
+                        </button>
+                        <button type="button" class="btn btn-outline-warning" data-bs-toggle="modal" data-bs-target="#modalTransferir" title="Transferir para outro colega">
+                            <i class="bi bi-arrow-left-right"></i> Transferir
+                        </button>
+                    </div>
+                </form>
+                {% else %}
+                <div class="alert alert-secondary border-0 small">
+                    <i class="bi bi-lock-fill me-2"></i> Chamado em execução por outro técnico.
+                </div>
+                {% endif %}
+            {% endif %}
+
+            <!-- AÇÃO: AGUARDANDO CONFERÊNCIA -->
+            {% if solicitacao.status == "AGUARDANDO_CONFERENCIA" %}
+                {% if impedimento_autoconferencia %}
+                <div class="alert alert-danger border-0">
+                    <div class="fw-bold mb-1"><i class="bi bi-shield-x me-2"></i> Impedimento de Autoconferência</div>
+                    <p class="small mb-0">
+                        Você participou da execução técnica deste chamado e está impedido de realizar a conferência/aprovação final. 
+                        A validação deve ser efetuada por outro líder ou operador autorizado (Regra de Segregação de Funções).
+                    </p>
+                </div>
+                {% elif can_conferir %}
+                <form action="{% url 'matrizaria:conferir_servico' solicitacao.id %}" method="post">
+                    {% csrf_token %}
+                    <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold text-light">Decisão da Conferência de Qualidade / Inspeção</label>
+                        <div class="d-flex gap-3">
+                            <div class="form-check form-check-inline p-3 rounded bg-dark border border-success border-opacity-50 flex-grow-1">
+                                <input class="form-check-input" type="radio" name="acao" id="acao_aprovar" value="APROVAR" checked onchange="toggleMotivo(false)">
+                                <label class="form-check-label text-success fw-bold ms-2" for="acao_aprovar">
+                                    <i class="bi bi-check-circle-fill me-1"></i> APROVAR e Concluir Serviço
+                                </label>
+                            </div>
+                            <div class="form-check form-check-inline p-3 rounded bg-dark border border-danger border-opacity-50 flex-grow-1">
+                                <input class="form-check-input" type="radio" name="acao" id="acao_devolver" value="DEVOLVER_RETRABALHO" onchange="toggleMotivo(true)">
+                                <label class="form-check-label text-danger fw-bold ms-2" for="acao_devolver">
+                                    <i class="bi bi-arrow-repeat me-1"></i> REJEITAR e Devolver para Retrabalho
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3" id="campo_motivo_devolucao" style="display: none;">
+                        <label for="{{ form_conferir.motivo_devolucao.id_for_label }}" class="form-label fw-semibold text-danger">
+                            Motivo da Rejeição / Instruções para Retrabalho <span class="text-danger">*</span>
+                        </label>
+                        {{ form_conferir.motivo_devolucao }}
+                    </div>
+
+                    <div class="mb-3" id="campo_observacoes_conferencia">
+                        <label for="{{ form_conferir.observacoes.id_for_label }}" class="form-label fw-semibold text-light">
+                            Observações da Conferência (Opcional)
+                        </label>
+                        {{ form_conferir.observacoes }}
+                    </div>
+
+                    <button type="submit" class="btn btn-primary btn-lg w-100 fw-bold" style="background: linear-gradient(135deg, #06B6D4 0%, #0891B2 100%); border: none;">
+                        <i class="bi bi-send-check-fill me-1"></i> Confirmar Decisão de Conferência
+                    </button>
+                </form>
+                {% else %}
+                <div class="alert alert-secondary border-0 small">
+                    <i class="bi bi-lock-fill me-2"></i> Você não possui perfil para conferir serviços da Matrizaria.
+                </div>
+                {% endif %}
+            {% endif %}
+
+            <!-- STATUS FINALIZADO -->
+            {% if solicitacao.status == "CONCLUIDO" %}
+            <div class="alert alert-success border-0 mb-0">
+                <div class="fw-bold"><i class="bi bi-check2-all fs-5 me-2"></i> Chamado Concluído e Aprovado</div>
+                <div class="small mt-1">
+                    Conferido e aceito por <strong>{{ solicitacao.conferido_por_nome }}</strong> em {{ solicitacao.data_conferencia|date:"d/m/Y H:i" }}.
+                </div>
+            </div>
+            {% endif %}
+
+            {% if solicitacao.status == "CANCELADO" %}
+            <div class="alert alert-dark border-0 mb-0">
+                <div class="fw-bold text-danger"><i class="bi bi-slash-circle fs-5 me-2"></i> Solicitação Cancelada</div>
+                <div class="small mt-1">
+                    Cancelado por <strong>{{ solicitacao.cancelado_por_nome }}</strong> em {{ solicitacao.data_cancelamento|date:"d/m/Y H:i" }}.
+                </div>
+                <div class="small mt-1 fst-italic">
+                    Motivo: {{ solicitacao.motivo_cancelamento }}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN: Linha do Tempo de Auditoria -->
+    <div class="col-12 col-lg-5 col-xl-4">
+        <div class="glass-card p-4">
+            <h5 class="fw-bold text-white mb-3 d-flex align-items-center gap-2 border-bottom border-secondary border-opacity-25 pb-2">
+                <i class="bi bi-clock-history text-purple" style="color: var(--matriz-accent-light);"></i>
+                Linha do Tempo &amp; Auditoria
+            </h5>
+
+            <div class="timeline-container mt-3">
+                {% for h in historico %}
+                <div class="timeline-item {% if h.tipo_evento == 'REJEICAO_RETRABALHO' or h.tipo_evento == 'CANCELAMENTO' %}item-danger{% elif h.tipo_evento == 'CONFERENCIA_APROVADA' %}item-success{% elif h.tipo_evento == 'INICIO_EXECUCAO' %}item-info{% else %}item-warning{% endif %}">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <strong class="text-light small">{{ h.get_tipo_evento_display }}</strong>
+                        <span class="small text-muted" style="font-size: 0.72rem;">{{ h.data_evento|date:"d/m H:i" }}</span>
+                    </div>
+                    <div class="small text-muted mb-1">
+                        Por: <strong class="text-white">{{ h.usuario_nome_snapshot }}</strong>
+                    </div>
+                    {% if h.observacao %}
+                    <p class="small text-light text-opacity-75 mb-0" style="font-size: 0.8rem;">
+                        {{ h.observacao }}
+                    </p>
+                    {% endif %}
+                    {% if h.dados_modificados %}
+                    <div class="mt-1 p-2 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 small text-info" style="font-size: 0.75rem;">
+                        <i class="bi bi-pencil-fill me-1"></i> {{ h.dados_modificados }}
+                    </div>
+                    {% endif %}
+                </div>
+                {% empty %}
+                <div class="text-muted small">Nenhum evento auditado registrado.</div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL EDITAR SOLICITAÇÃO (ANTES DO INÍCIO TÉCNICO) -->
+{% if can_editar %}
+<div class="modal fade" id="modalEditar" tabindex="-1" aria-labelledby="modalEditarLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content bg-dark text-white border border-warning border-opacity-50">
+            <div class="modal-header border-secondary border-opacity-25">
+                <h5 class="modal-title text-warning" id="modalEditarLabel">
+                    <i class="bi bi-pencil-square me-2"></i> Editar Solicitação (Antes do Início Técnico)
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{% url 'matrizaria:editar_solicitacao' solicitacao.id %}" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+                <div class="modal-body">
+                    <p class="text-muted small mb-3">
+                        Corrija as informações da solicitação original. Todas as alterações serão auditadas e salvas na linha do tempo.
+                    </p>
+
+                    <div class="row g-3">
+                        <div class="col-12 col-md-6">
+                            <label for="{{ form_editar.prensa.id_for_label }}" class="form-label fw-semibold text-light">
+                                Prensa / Máquina <span class="text-danger">*</span>
+                            </label>
+                            {{ form_editar.prensa }}
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label for="{{ form_editar.tipo_servico.id_for_label }}" class="form-label fw-semibold text-light">
+                                Tipo de Serviço <span class="text-danger">*</span>
+                            </label>
+                            {{ form_editar.tipo_servico }}
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label for="{{ form_editar.matriz_fisica.id_for_label }}" class="form-label fw-semibold text-light">
+                                Matriz Física
+                            </label>
+                            {{ form_editar.matriz_fisica }}
+                        </div>
+
+                        <div class="col-12 col-md-6">
+                            <label for="{{ form_editar.prioridade.id_for_label }}" class="form-label fw-semibold text-light">
+                                Prioridade do Atendimento <span class="text-danger">*</span>
+                            </label>
+                            {{ form_editar.prioridade }}
+                        </div>
+
+                        <div class="col-12">
+                            <label for="{{ form_editar.descricao_solicitacao.id_for_label }}" class="form-label fw-semibold text-light">
+                                Descrição da Necessidade <span class="text-danger">*</span>
+                            </label>
+                            {{ form_editar.descricao_solicitacao }}
+                        </div>
+
+                        <div class="col-12">
+                            <label for="{{ form_editar.motivo_edicao.id_for_label }}" class="form-label fw-semibold text-warning">
+                                Motivo da Correção (Auditoria) <span class="text-danger">*</span>
+                            </label>
+                            {{ form_editar.motivo_edicao }}
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning fw-bold">Salvar Correção</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- MODAL TRANSFERIR RESPONSABILIDADE -->
+<div class="modal fade" id="modalTransferir" tabindex="-1" aria-labelledby="modalTransferirLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-white border border-secondary border-opacity-50">
+            <div class="modal-header border-secondary border-opacity-25">
+                <h5 class="modal-title" id="modalTransferirLabel">Transferir Atendimento Técnico</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{% url 'matrizaria:transferir_responsabilidade' solicitacao.id %}" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+                <div class="modal-body">
+                    {% if not form_transferir.novo_responsavel.field.queryset.exists %}
+                    <div class="alert alert-warning small mb-3">
+                        <i class="bi bi-exclamation-triangle-fill me-1"></i> Nenhum outro colaborador da Matrizaria está habilitado para receber este chamado.
+                    </div>
+                    {% endif %}
+                    <div class="mb-3">
+                        <label for="{{ form_transferir.novo_responsavel.id_for_label }}" class="form-label fw-semibold">
+                            Novo Responsável na Matrizaria <span class="text-danger">*</span>
+                        </label>
+                        {{ form_transferir.novo_responsavel }}
+                    </div>
+                    <div class="mb-3">
+                        <label for="{{ form_transferir.motivo_transferencia.id_for_label }}" class="form-label fw-semibold">
+                            Motivo da Transferência <span class="text-danger">*</span>
+                        </label>
+                        {{ form_transferir.motivo_transferencia }}
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-warning fw-bold" {% if not form_transferir.novo_responsavel.field.queryset.exists %}disabled{% endif %}>Confirmar Transferência</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL CANCELAR SOLICITAÇÃO -->
+<div class="modal fade" id="modalCancelar" tabindex="-1" aria-labelledby="modalCancelarLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content bg-dark text-white border border-danger border-opacity-50">
+            <div class="modal-header border-secondary border-opacity-25">
+                <h5 class="modal-title text-danger" id="modalCancelarLabel"><i class="bi bi-exclamation-triangle me-2"></i> Cancelar Solicitação</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form action="{% url 'matrizaria:cancelar_servico' solicitacao.id %}" method="post">
+                {% csrf_token %}
+                <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+                <div class="modal-body">
+                    <p class="text-light small">
+                        Atenção: O cancelamento interrompe qualquer ciclo em andamento e encerra o chamado permanentemente.
+                    </p>
+                    <div class="mb-3">
+                        <label for="{{ form_cancelar.motivo_cancelamento.id_for_label }}" class="form-label fw-semibold text-danger">
+                            Motivo do Cancelamento <span class="text-danger">*</span>
+                        </label>
+                        {{ form_cancelar.motivo_cancelamento }}
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary border-opacity-25">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Voltar</button>
+                    <button type="submit" class="btn btn-danger fw-bold">Confirmar Cancelamento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function toggleMotivo(isDevolver) {
+        var campoMotivo = document.getElementById('campo_motivo_devolucao');
+        var textarea = campoMotivo.querySelector('textarea');
+        if (isDevolver) {
+            campoMotivo.style.display = 'block';
+            if (textarea) textarea.required = true;
+        } else {
+            campoMotivo.style.display = 'none';
+            if (textarea) textarea.required = false;
+        }
+    }
+</script>
+{% endblock %}

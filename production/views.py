@@ -76,6 +76,26 @@ def machine_detail(request, pk):
         periodo=periodo if periodo else None,
         page=page
     )
+
+    # Histórico Integrado da Prensa: [ Todos | Manutenção | Matrizaria ]
+    from maintenance.views import _user_can_access_maintenance, _user_can_access_matrizaria
+    from matrizaria.services import MatrizariaService
+
+    origem_filtro = request.GET.get("origem_filtro", "TODOS").upper()
+    can_view_maint = _user_can_access_maintenance(request.user)
+    can_view_matriz = _user_can_access_matrizaria(request.user)
+
+    historico_unificado = MatrizariaService.get_unified_press_timeline(
+        machine_id=detail_state["machine"].id,
+        can_view_maintenance=can_view_maint,
+        can_view_matrizaria=can_view_matriz,
+        origem_filtro=origem_filtro,
+    )
+    detail_state["historico_unificado"] = historico_unificado
+    detail_state["origem_filtro"] = origem_filtro
+    detail_state["can_view_maint"] = can_view_maint
+    detail_state["can_view_matriz"] = can_view_matriz
+
     return render(request, "production/machine_detail.html", detail_state)
 
 

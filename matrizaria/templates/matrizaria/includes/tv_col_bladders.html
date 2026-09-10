@@ -1,0 +1,45 @@
+{% if bladder_alerts %}
+<table class="tv-table">
+    <thead>
+        <tr>
+            <th>Prensa</th>
+            <th>Cavidade</th>
+            <th>Matriz / Medida</th>
+            <th>Código BLA</th>
+            <th>Lote</th>
+            <th>Passadas / Limite</th>
+            <th style="width: 25%;">% Vida Útil</th>
+            <th class="text-center">Situação</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for b in bladder_alerts %}
+        <tr>
+            <td><strong class="text-white fs-5">{{ b.prensa_nome }}</strong></td>
+            <td><span class="text-info fw-semibold">{{ b.cavidade_nome }}</span></td>
+            <td><span class="text-light">{{ b.matriz_nome }}</span></td>
+            <td><span class="badge bg-dark border border-secondary text-secondary">{{ b.codigo_bla }}</span></td>
+            <td><span class="text-muted small">{{ b.lote_completo }}</span></td>
+            <td><strong>{{ b.passadas }}</strong> <span class="text-muted">/ {{ b.limite_str }}</span></td>
+            <td>
+                <div class="d-flex align-items-center gap-2">
+                    <div class="progress-tv flex-grow-1">
+                        <div class="progress-bar bg-{% if b.vida_status == 'CRITICO' %}danger{% else %}warning{% endif %}" style="width: {{ b.pct_bar }}%;"></div>
+                    </div>
+                    <span class="fw-bold text-{% if b.vida_status == 'CRITICO' %}danger{% else %}warning{% endif %}">{{ b.pct_vida }}%</span>
+                </div>
+            </td>
+            <td class="text-center">
+                <span class="badge bg-{{ b.vida_badge }} text-uppercase fw-bold">{{ b.vida_label }}</span>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="d-flex flex-column align-items-center justify-content-center h-75 text-center text-muted">
+    <i class="bi bi-shield-check fs-1 text-success mb-3"></i>
+    <h4 class="text-white">Nenhum alerta de limite de bladder nos dados disponíveis</h4>
+    <p class="small text-muted">Não há bladders operando com mais de 80% do ciclo de vida no parque atual.</p>
+</div>
+{% endif %}

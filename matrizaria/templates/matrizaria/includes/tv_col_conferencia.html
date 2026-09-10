@@ -1,0 +1,22 @@
+{% for s in aguardando_conferencia %}
+<div class="tv-service-card">
+    <div class="d-flex justify-content-between align-items-start mb-1">
+        <span class="fs-5 fw-bold text-white">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</span>
+        <span class="badge bg-info text-dark">Aguardando Inspeção</span>
+    </div>
+    <div class="text-info fw-semibold mb-1" style="font-size: 0.95rem;">
+        {{ s.tipo_servico_nome_snapshot|default:s.tipo_servico.nome }}
+    </div>
+    {% if s.descricao_servico_executado %}
+    <div class="small text-light text-opacity-75 mb-2 fst-italic">
+        "{{ s.descricao_servico_executado|truncatechars:100 }}"
+    </div>
+    {% endif %}
+    <div class="d-flex justify-content-between small text-muted pt-2 border-top border-secondary border-opacity-25">
+        <span>Finalizado por {{ s.finalizado_por.get_full_name|default:s.finalizado_por.username }}</span>
+        <span>SM #{{ s.id }}</span>
+    </div>
+</div>
+{% empty %}
+<div class="text-center py-5 text-muted tv-empty-text">Nenhum chamado aguardando conferência.</div>
+{% endfor %}

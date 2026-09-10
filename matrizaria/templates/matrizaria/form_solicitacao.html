@@ -1,0 +1,127 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+
+{% block title %}Abrir Chamado de Matrizaria &bull; Pneus Freedom{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-lg-8 col-xl-7">
+        <div class="glass-card p-4 p-md-5">
+            <!-- Header -->
+            <div class="d-flex align-items-center justify-content-between pb-3 mb-4 border-bottom border-secondary border-opacity-25">
+                <div>
+                    <h4 class="fw-bold text-white mb-1">
+                        <i class="bi bi-tools text-purple me-2" style="color: var(--matriz-accent-light);"></i>
+                        Abrir Chamado de Matrizaria
+                    </h4>
+                    <p class="text-muted small mb-0">
+                        Preencha as informações para solicitar atendimento técnico de matrizes ou ferramental.
+                    </p>
+                </div>
+                <a href="{% url 'matrizaria:kanban' %}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-x-lg"></i> Voltar
+                </a>
+            </div>
+
+            <!-- Form -->
+            <form method="post" novalidate id="form-solicitacao">
+                {% csrf_token %}
+                {{ form.idempotency_key }}
+
+                {% if form.non_field_errors %}
+                <div class="alert alert-danger border-0">
+                    {% for error in form.non_field_errors %}
+                    <div><i class="bi bi-exclamation-triangle-fill me-2"></i> {{ error }}</div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <div class="row g-3 mb-4">
+                    <!-- Prensa -->
+                    <div class="col-12 col-md-6">
+                        <label for="{{ form.prensa.id_for_label }}" class="form-label fw-semibold text-light">
+                            Prensa / Máquina <span class="text-danger">*</span>
+                        </label>
+                        {{ form.prensa }}
+                        {% if form.prensa.errors %}
+                        <div class="text-danger small mt-1">{{ form.prensa.errors.0 }}</div>
+                        {% endif %}
+                        <div class="form-text text-muted">Prensas de vulcanização ativas no parque fabril.</div>
+                    </div>
+
+                    <!-- Tipo de Serviço -->
+                    <div class="col-12 col-md-6">
+                        <label for="{{ form.tipo_servico.id_for_label }}" class="form-label fw-semibold text-light">
+                            Tipo de Serviço <span class="text-danger">*</span>
+                        </label>
+                        {{ form.tipo_servico }}
+                        {% if form.tipo_servico.errors %}
+                        <div class="text-danger small mt-1">{{ form.tipo_servico.errors.0 }}</div>
+                        {% endif %}
+                        <div class="form-text text-muted">Ex: Troca de Matriz, Limpeza, Ajuste Mecânico...</div>
+                    </div>
+
+                    <!-- Matriz Física (Opcional na abertura) -->
+                    <div class="col-12 col-md-8">
+                        <label for="{{ form.matriz_fisica.id_for_label }}" class="form-label fw-semibold text-light">
+                            Matriz Física (Exemplar Específico)
+                        </label>
+                        {{ form.matriz_fisica }}
+                        {% if form.matriz_fisica.errors %}
+                        <div class="text-danger small mt-1">{{ form.matriz_fisica.errors.0 }}</div>
+                        {% endif %}
+                        <div class="form-text text-muted">Opcional na abertura. Se o serviço exigir, deverá ser informada até a finalização.</div>
+                    </div>
+
+                    <!-- Prioridade -->
+                    <div class="col-12 col-md-4">
+                        <label for="{{ form.prioridade.id_for_label }}" class="form-label fw-semibold text-light">
+                            Prioridade
+                        </label>
+                        {{ form.prioridade }}
+                        {% if form.prioridade.errors %}
+                        <div class="text-danger small mt-1">{{ form.prioridade.errors.0 }}</div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Descrição da Necessidade -->
+                    <div class="col-12">
+                        <label for="{{ form.descricao_solicitacao.id_for_label }}" class="form-label fw-semibold text-light">
+                            Descrição da Necessidade / Problema Observado <span class="text-danger">*</span>
+                        </label>
+                        {{ form.descricao_solicitacao }}
+                        {% if form.descricao_solicitacao.errors %}
+                        <div class="text-danger small mt-1">{{ form.descricao_solicitacao.errors.0 }}</div>
+                        {% endif %}
+                        <div class="form-text text-muted">Descreva com clareza o motivo do chamado (ex: rebarba na lateral, vazamento de vapor, troca programada).</div>
+                    </div>
+                </div>
+
+                <!-- Footer Buttons -->
+                <div class="d-flex justify-content-end gap-3 pt-3 border-top border-secondary border-opacity-25">
+                    <a href="{% url 'matrizaria:kanban' %}" class="btn btn-outline-secondary px-4">
+                        Cancelar
+                    </a>
+                    <button type="submit" class="btn btn-primary px-4 fw-semibold" id="btn-submit" style="background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%); border: none;">
+                        <i class="bi bi-check2-circle me-1"></i> Confirmar Abertura
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // Prevenção de duplo envio no submit
+    document.getElementById('form-solicitacao').addEventListener('submit', function(e) {
+        var btn = document.getElementById('btn-submit');
+        if (btn.dataset.submitted) {
+            e.preventDefault();
+            return false;
+        }
+        btn.dataset.submitted = 'true';
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Processando...';
+    });
+</script>
+{% endblock %}

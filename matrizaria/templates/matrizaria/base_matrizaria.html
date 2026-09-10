@@ -1,0 +1,344 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Matrizaria Industrial &bull; Pneus Freedom{% endblock %}</title>
+
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
+    <style>
+        :root {
+            --matriz-accent: #8B5CF6;
+            --matriz-accent-dark: #6D28D9;
+            --matriz-accent-light: #A78BFA;
+            --matriz-accent-bg: rgba(139, 92, 246, 0.12);
+            --matriz-accent-border: rgba(139, 92, 246, 0.3);
+            --freedom-gold: #D19C3E;
+            --dark-bg: #0B0F17;
+            --dark-card: #131B2A;
+            --dark-card-border: rgba(255, 255, 255, 0.08);
+            --dark-surface: #1E293B;
+            --text-main: #F8FAFC;
+            --text-secondary: #CBD5E1;
+            --text-muted: #94A3B8;
+
+            /* Bootstrap 5 Theme Variable Overrides para Matrizaria */
+            --bs-body-color: #F8FAFC;
+            --bs-body-bg: #0B0F17;
+            --bs-secondary-color: #94A3B8;
+            --bs-secondary-rgb: 148, 163, 184;
+            --bs-tertiary-color: #94A3B8;
+            --bs-heading-color: #F8FAFC;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--dark-bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Tipografia e Contraste Harmonioso no Tema Escuro ────── */
+        .text-muted {
+            color: #94A3B8 !important;
+        }
+
+        .text-secondary {
+            color: #CBD5E1 !important;
+        }
+
+        /* Textos auxiliares e descrições de formulário */
+        .form-text, .form-text.text-muted {
+            color: #CBD5E1 !important;
+            font-size: 0.84rem;
+            margin-top: 0.35rem;
+            font-weight: 400;
+        }
+
+        /* Labels de formulários */
+        .form-label {
+            color: #E2E8F0;
+            font-weight: 600;
+            font-size: 0.92rem;
+            margin-bottom: 0.35rem;
+        }
+
+        /* Inputs, Selects e Textareas */
+        .form-control, .form-select {
+            background-color: #0F172A;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #F8FAFC;
+            border-radius: 8px;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background-color: #0F172A;
+            border-color: var(--matriz-accent);
+            color: #FFFFFF;
+            box-shadow: 0 0 0 0.25rem rgba(139, 92, 246, 0.25);
+        }
+
+        .form-control::placeholder {
+            color: #94A3B8;
+            opacity: 0.8;
+        }
+
+        /* Preservação das opções dos selects nativos no navegador */
+        .form-select option {
+            background-color: #1E293B;
+            color: #F8FAFC;
+        }
+
+        /* Indicadores superiores do Kanban (Stat Pills) */
+        .stat-pill {
+            background: #131B2A;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .stat-pill .stat-label,
+        .stat-pill .text-muted {
+            color: #CBD5E1 !important;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0.2px;
+        }
+
+        /* Mensagens de estado vazio */
+        .kanban-col-body .text-muted,
+        .empty-state-box {
+            color: #CBD5E1 !important;
+            font-size: 0.88rem;
+            font-weight: 500;
+        }
+
+        .empty-state-box i {
+            color: #A0AEC0 !important;
+        }
+
+        /* Badges escuros */
+        .badge.bg-dark {
+            background-color: #1E293B !important;
+            color: #E2E8F0 !important;
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        }
+
+        /* Top Navbar */
+        .matriz-navbar {
+            background-color: #080C14;
+            border-bottom: 1px solid rgba(139, 92, 246, 0.25);
+            padding: 0.75rem 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .matriz-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: #FFFFFF;
+        }
+
+        .matriz-brand-badge {
+            background: linear-gradient(135deg, #8B5CF6, #6D28D9);
+            color: #FFFFFF;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .nav-link-custom {
+            color: #CBD5E1;
+            font-weight: 500;
+            font-size: 0.92rem;
+            padding: 0.45rem 0.85rem;
+            border-radius: 8px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .nav-link-custom:hover {
+            color: #FFFFFF;
+            background-color: rgba(255, 255, 255, 0.06);
+        }
+
+        .nav-link-custom.active {
+            color: #FFFFFF;
+            background-color: var(--matriz-accent-bg);
+            border: 1px solid var(--matriz-accent-border);
+            font-weight: 600;
+        }
+
+        /* Portal Switcher Button */
+        .btn-portal-switcher {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #E2E8F0;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.35rem 0.75rem;
+            border-radius: 8px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-portal-switcher:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #FFFFFF;
+            border-color: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Glassmorphic Cards */
+        .glass-card {
+            background-color: var(--dark-card);
+            border: 1px solid var(--dark-card-border);
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+            transition: transform 0.2s ease, border-color 0.2s ease;
+        }
+
+        /* Footer */
+        .matriz-footer {
+            background-color: #080C14;
+            border-top: 1px solid rgba(255, 255, 255, 0.06);
+            padding: 1rem;
+            margin-top: auto;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            text-align: center;
+        }
+
+        /* Alerts & Badges */
+        .badge-pulse {
+            animation: pulse-badge 1.8s infinite;
+        }
+
+        @keyframes pulse-badge {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.06); opacity: 0.85; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header class="matriz-navbar">
+        <div class="container-fluid d-flex justify-content-between align-items-center">
+            <!-- Brand -->
+            <div class="d-flex align-items-center gap-3">
+                <a href="{% url 'matrizaria:kanban' %}" class="matriz-brand">
+                    <img src="{% static 'maintenance/img/logo_pneus_freedom_gold.png' %}" alt="Pneus Freedom" style="height: 32px;">
+                    <div class="d-none d-md-block">
+                        <span class="fw-bold fs-6">PNEUS FREEDOM</span>
+                        <span class="matriz-brand-badge ms-1">Matrizaria</span>
+                    </div>
+                </a>
+
+                <!-- Nav Links -->
+                <nav class="d-none d-lg-flex align-items-center gap-1 ms-3">
+                    <a href="{% url 'matrizaria:kanban' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'kanban' %}active{% endif %}">
+                        <i class="bi bi-kanban"></i> Kanban
+                    </a>
+                    {% if can_solicitar %}
+                    <a href="{% url 'matrizaria:solicitar_servico' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'solicitar_servico' %}active{% endif %}">
+                        <i class="bi bi-plus-circle"></i> Abrir Chamado
+                    </a>
+                    {% endif %}
+                    {% if can_relatorios %}
+                    <a href="{% url 'matrizaria:relatorios' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'relatorios' %}active{% endif %}">
+                        <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
+                    </a>
+                    {% endif %}
+                    {% if can_tv %}
+                    <a href="{% url 'matrizaria:tv' %}" target="_blank" class="nav-link-custom text-info">
+                        <i class="bi bi-tv"></i> Painel TV <i class="bi bi-box-arrow-up-right" style="font-size: 0.75rem;"></i>
+                    </a>
+                    {% endif %}
+                </nav>
+            </div>
+
+            <!-- Right Controls: Portal Switcher, User & Logout -->
+            <div class="d-flex align-items-center gap-2">
+                {% if has_dual_access %}
+                <a href="{% url 'portal_select' %}" class="btn-portal-switcher" title="Alternar entre módulos">
+                    <i class="bi bi-grid-fill text-warning"></i>
+                    <span class="d-none d-sm-inline">Módulos</span>
+                </a>
+                {% endif %}
+
+                <div class="d-flex align-items-center gap-2 px-2 py-1 rounded bg-dark border border-secondary border-opacity-25">
+                    <i class="bi bi-person-circle text-purple" style="color: var(--matriz-accent-light);"></i>
+                    <span class="fs-7 text-white fw-semibold d-none d-sm-inline">{{ user.username }}</span>
+                </div>
+
+                <form action="{% url 'logout' %}" method="post" class="m-0">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Sair do sistema">
+                        <i class="bi bi-box-arrow-right"></i>
+                    </button>
+                </form>
+            </div>
+        </div>
+    </header>
+
+    <!-- Alert Messages -->
+    <div class="container-fluid mt-3">
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show border-0 shadow-sm" role="alert">
+                    <i class="bi bi-info-circle-fill me-2"></i> {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+
+    <!-- Main Content -->
+    <main class="container-fluid flex-grow-1 py-3 px-3 px-md-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="matriz-footer">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 container-fluid">
+            <div>Pneus Freedom &bull; Módulo de Matrizaria &bull; Controle e Rastreabilidade Industrial</div>
+            <div>{% include "components/developer_footer.html" with is_dark=True %}</div>
+        </div>
+    </footer>
+
+    <!-- Inatividade de Sessão Humana Compartilhada -->
+    {% include "components/session_inactivity.html" %}
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
