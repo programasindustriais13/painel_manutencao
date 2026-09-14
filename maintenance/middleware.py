@@ -69,6 +69,11 @@ class SessionExpiryByProfileMiddleware:
                     request.session["_session_expiry_checked"] = True
                     request.session["_is_tv_session"] = True
             else:
+                # Não interceptar requisições para rotas de autenticação (login, logout)
+                auth_exempt_paths = ["/login/", "/logout/"]
+                if any(request.path.startswith(p) for p in auth_exempt_paths):
+                    return self.get_response(request)
+
                 # Sessão humana: validação de inatividade no servidor
                 now_ts = time.time()
                 timeout = getattr(settings, "INACTIVITY_TIMEOUT_SECONDS", 300)
@@ -95,7 +100,10 @@ class SessionExpiryByProfileMiddleware:
                                 status=401,
                             )
 
-                        messages.info(request, "Sua sessão foi encerrada por inatividade.")
+                        try:
+                            messages.info(request, "Sua sessão foi encerrada por inatividade.")
+                        except Exception:
+                            pass
                         return redirect(f"{settings.LOGIN_URL}?next={request.path}")
 
                 # Filtra requisições de background automatizadas que NÃO devem renovar a inatividade

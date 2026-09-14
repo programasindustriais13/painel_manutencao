@@ -3443,9 +3443,140 @@ Arquivos Modificados:
 - matrizaria/templates/matrizaria/detalhe_solicitacao.html (botão/modal Editar Solicitação, listagem segura de transferência, auditoria de diffs)
 - matrizaria/tests.py (MatrizariaCincoAjustesTestCase com 5 novos métodos abrangentes)
 - regras_programacao/SPEC_MODULO_MATRIZARIA_RASTREABILIDADE_SERVICOS.md (Seções 12 e 13)
+4. Módulo Matrizaria — Importação e Pré-Cadastro em Lote de Matrizes Físicas:
+   - Implementado o comando de gestão Django 'importar_matrizes_fisicas' (matrizaria/management/commands/importar_matrizes_fisicas.py) para automatizar a carga do inventário físico a partir de MATRIZES_PRE_CADASTRO_LOTE.xlsx (aba 'Inventario').
+   - Execução padrão em modo SIMULAÇÃO (dry-run): nenhuma gravação é efetuada sem o uso explícito da flag --aplicar e indicação obrigatória de --responsavel.
+   - Confronto com o Catálogo Real (ProductionMatrixCatalog):
+     * 17 linhas com correspondência ÚNICA segura (25 unidades previstas).
+     * 18 linhas com correspondência AMBÍGUA (36 unidades) devido a variantes com câmara vs Sem Câmara (S/C). O sistema bloqueia a importação dessas linhas para não adivinhar variantes.
+     * 17 linhas AUSENTES do catálogo SCADA (17 unidades). Mantidas pendentes sem inventar códigos SCADA.
+     * 0 linhas com erro matemático (recalculado no backend: tot == com_dote + sem_dote + ni_dote).
+   - Ajustes de Modelo em MatrizFisica (matrizaria/models.py):
+     * possui_dote ('SIM', 'NAO', 'NAO_INFORMADO', default='NAO_INFORMADO').
+     * numero_fisico_confirmado (CharField opcional para quando houver número físico confirmado na peça).
+     * situacao_identificacao ('PENDENTE', 'CONFIRMADA', default='PENDENTE').
+     * observacao_identificacao (TextField opcional).
+     * origem_cadastro, lote_importacao, linha_origem, chave_unidade_origem (garantindo rastreabilidade e idempotência).
+   - Modelo de Auditoria LoteImportacaoMatrizFisica:
+     * Registra identificação do lote, hash SHA-256 do arquivo (evitando reenvio mesmo com arquivo renomeado), autor, timestamp, total de unidades criadas/preservadas e relatório.
+   - Idempotência Estrita:
+     * O reenvio do mesmo lote detecta instâncias já existentes e preserva os registros sem duplicar. Conflitos com numerações pré-existentes bloqueiam o lote para reconciliação manual.
+   - Seletores e Formulários:
+     * Atualizado format_matriz_fisica_label em matrizaria/forms.py para exibir nos formulários operacionais o sufixo '[ID Física Pendente - Com Dote]' ou '[ID Física Pendente - Sem Dote]', alertando o operador sem enfraquecer a regra exige_matriz_fisica.
+   - Comandos para Operação:
+     * Simulação padrão:
+       .\.venv\Scripts\python.exe manage.py importar_matrizes_fisicas "C:\Users\Unicompo\Documents\03_PYTHON1\07 - Manutencao_estudo\MATRIZES_PRE_CADASTRO_LOTE.xlsx"
+     * Simulação com aprovação do lote seguro:
+       .\.venv\Scripts\python.exe manage.py importar_matrizes_fisicas "C:\Users\Unicompo\Documents\03_PYTHON1\07 - Manutencao_estudo\MATRIZES_PRE_CADASTRO_LOTE.xlsx" --aprovar-linhas-seguras
+     * Aplicação definitiva (executar apenas após resolução das pendências):
+       .\.venv\Scripts\python.exe manage.py importar_matrizes_fisicas "C:\Users\Unicompo\Documents\03_PYTHON1\07 - Manutencao_estudo\MATRIZES_PRE_CADASTRO_LOTE.xlsx" --aplicar --responsavel "NOME_DO_OPERADOR" --aprovar-linhas-seguras
+
+Arquivos Criados/Modificados:
+- matrizaria/models.py (novos campos em MatrizFisica e modelo LoteImportacaoMatrizFisica)
+- matrizaria/migrations/0002_loteimportacaomatrizfisica_and_more.py (migração aditiva aplicada no banco local)
+- matrizaria/admin.py (atualização do MatrizFisicaAdmin e registro de LoteImportacaoMatrizFisicaAdmin)
+- matrizaria/forms.py (label_from_instance enriquecido com rotulo_completo)
+- matrizaria/management/commands/importar_matrizes_fisicas.py (comando com simulação, validação e idempotência)
+- matrizaria/test_importacao_matrizes.py (suíte com 12 testes automatizados cobrindo todos os casos)
+- regras_programacao/SPEC_IMPORTACAO_LOTE_MATRIZES_FISICAS.md (especificação formal)
 - Instrucoes.txt (este registro)
 
+5. Módulo Matrizaria — Revisão Pontual da Importação em Lote e Prévia de Reconciliação:
+   - Separação Formal de 3 Dimensões Independentes:
+     * Catálogo (status_cat): UNICA, AMBIGUA, AUSENTE, ID_INCOMPATIVEL, INCONSISTENTE_MATEMATICA.
+     * Fonte de Dados (status_fonte): CONFERIDO vs PENDENTE_CONFERENCIA.
+     * Autorização (aprovado): --aprovar-linhas-seguras aprova estritamente linhas UNICA + CONFERIDO.
+   - Caso Concreto P2-23 (HOPPER 4.80/400-8):
+     * A medida proposta 4.80/4.00-8 encontra o código SCADA 15, mas a coluna de revisão da leitura registra 'CONFERIR MEDIDA'.
+     * O importador mantém P2-23 rigorosamente BLOQUEADO contra aprovação automática.
+   - Recálculo do Conjunto Elegível para Carga Segura:
+     * De 17 linhas com correspondência única, apenas 13 linhas (18 unidades) possuem a fonte 100% conferida e direta.
+     * 4 linhas (7 unidades) foram bloqueadas por pendência de leitura/normalização: P2-23, P2-12, P2-13, P2-14.
+   - Tratamento das 18 Linhas Ambíguas (36 unidades):
+     * Bloqueadas para aplicação. Não assumida a variante sem câmara ou com câmara como padrão.
+     * Proposta estruturada dos Cenários A (ferramental compartilhado) e B (ferramental distinto).
+   - Análise Estrutural dos 17 Modelos Ausentes (17 unidades):
+     * Confirmada compatibilidade do ProductionMatrixCatalog com itens sem código SCADA (codigo_scada=None, codigo='INT-MOD-MED').
+     * Rotinas de PCP, apontamento e templates (target_list, cavity_detail) suportam nativamente o fallback [codigo].
+     * Proposta de cadastro em lote gerada na planilha sem gravação no banco.
+   - Identificação Física e Regra 'exige_matriz_fisica':
+     * Exemplares sem numeração física gravada mantidos com situacao_identificacao='PENDENTE' e numero_fisico_confirmado=None.
+     * WINGS 80/100-14 (P2-06): proposta 01=com dote e 02=sem dote registrada com situação pendente.
+     * Histórico retroativo de serviços anteriores permanece protegido por snapshots imutáveis em SolicitacaoServicoMatrizaria e CicloExecucaoServicoMatrizaria.
+   - Idempotência e Reexecução:
+     * Idempotência desacoplada de hash SHA-256 (funciona com arquivos renomeados ou regravados pelo Excel).
+     * Detecção e bloqueio automático para alterações de quantidade em linhas já importadas.
+     * Rollback integral garantido por transação atômica.
+   - Planilha de Reconciliação Gerada (sem alterar o arquivo original):
+     * Local: C:\Users\Unicompo\Documents\03_PYTHON1\07 - Manutencao_estudo\relatorio_reconciliacao_inventario.xlsx
+     * Aba 1: Reconciliacao_Inventario (52 linhas, status_cat, status_fonte, candidatos, id sugerido, id confirmado, bloqueio).
+     * Aba 2: Proposta_Novos_Modelos (17 linhas, código INT proposto, sem código SCADA, tempos padrão).
+   - Validação e Cobertura de Testes:
+     * 7 novos testes implementados em matrizaria/test_importacao_matrizes.py (total de 19 testes específicos).
+     * Suíte completa da Matrizaria (38 testes) executada em banco isolado de testes e aprovada 100%.
+     * Contagem de MatrizFisica no banco local mantida em 0 (zero) registros. Nenhum inventário real foi aplicado.
 
+6. Correção de Erro MessageFailure em /logout/ (Inatividade de Sessão):
+   - Causa Raiz Identificada:
+     * O middleware SessionExpiryByProfileMiddleware estava posicionado ANTES de django.contrib.messages.middleware.MessageMiddleware em settings.MIDDLEWARE.
+     * Quando ocorria inatividade ou requisição ao /logout/, o middleware tentava emitir messages.info(), momento em que request._messages ainda não existia, gerando MessageFailure.
+   - Correções Realizadas:
+     * Em maintenance_project/settings.py: reordenado MIDDLEWARE para posicionar SessionExpiryByProfileMiddleware APÓS MessageMiddleware.
+     * Em maintenance/middleware.py: rotas de autenticação (/login/ e /logout/) foram isentadas da interceptação de inatividade, e messages.info() foi envolvido em try-except para máxima resiliência.
+   - Validação:
+     * Simulação de expiração de sessão com redirecionamento limpo para /login/ sem erros (Status 302).
+     * Suíte de testes da Manutenção (61 testes) e da Matrizaria (38 testes) aprovadas 100%.
 
+7. Módulo Matrizaria — Conclusão da Carga Inicial do Inventário Físico (78 Matrizes / 52 Linhas):
+   - Confirmação da Regra de Negócio Definitiva:
+     * "A mesma matriz física é utilizada para produzir pneus com câmara ou sem câmara (S/C)."
+     * A identificação do ferramental considera modelo/rastro, medida e exemplar físico.
+     * Quando existirem as duas variantes do mesmo modelo e medida no catálogo, o registro sem sufixo S/C (variante_sc=False) é a referência administrativa do ferramental.
+     * Se houver apenas uma variante cadastrada, ela é reutilizada como referência sem duplicar o ferramental.
+     * O ferramental é consultável por qualquer uma das duas variantes via `MatrizFisica.objects.for_produto(produto_catalog)` ou método `matriz.is_compativel_com_produto(produto)`.
+     * Exemplo: 10 matrizes HOPPER 90/90-18 atendem tanto a produção com câmara (SCADA 3) quanto S/C (SCADA 37), sem gerar 20 matrizes físicas.
+   - Aplicação da Carga Inicial Local:
+     * Planilha de origem: MATRIZES_PRE_CADASTRO_LOTE.xlsx (Aba Inventario).
+     * Modelos reutilizados do catálogo SCADA: 35 modelos (atendendo 61 unidades físicas).
+     * Modelos novos criados em ProductionMatrixCatalog: 17 modelos (atendendo 17 unidades físicas).
+       -> Códigos internos: INT-MOD-MED (ex: INT-RIVER-909018).
+       -> codigo_scada: None (sem telemetria/código SCADA fictício).
+       -> Tempos operacionais: 0s (não homologados para cálculo de PCP até parametrização fabril).
+       -> Total no catálogo: de 55 para 72 modelos.
+     * Matrizes Físicas criadas no banco local: 78 unidades físicas.
+       -> Identificador estável padronizado: MF-<cod_ref>-<seq:03d>.
+       -> Total no banco: de 0 para 78 exemplares físicos.
+     * Lote de auditoria registrado:
+       -> ID do Lote: LOTE-INV-20260914-12014549-27d32b.
+       -> Responsável técnico: paulo (conta do operador Paulo Sérgio, ID 39).
+       -> Status: SUCESSO (52 linhas lidas, 78 unidades criadas, 0 preservadas na 1ª execução).
+   - Ressalvas Técnicas da Fonte Fielmente Preservadas:
+     * P1-06: Fidelidade a OPTION 90/90-18 (SCADA 14), 1 un sem dote (não associado a ROBOT).
+     * P1-07: HOPPER 2.75-18, 5 unidades adotadas com ressalva de rasura da folha física preservada.
+     * P1-08: WINGS 2.75-18, distribuição transcrita com ressalva de leitura preservada.
+     * P1-25: WINTER 120/100-18, dote mantido como 'NAO_INFORMADO' (última coluna em branco na foto).
+     * P2-06: WINGS 80/100-14, caso misto (2 unidades: U01 com dote, U02 sem dote para diferenciação interna).
+     * P2-23: HOPPER 4.80/4.00-8, medida adotada a partir da transcrição de 4.80/400-8 com ressalva preservada.
+     * Medidas com barra 2/75 e 2/50: normalizadas para 2.75 e 2.50 com observação de origem registrada.
+     * READY riscado: mantido fora do cadastro inicial.
+     * Todas as 78 unidades mantidas com situacao_identificacao='PENDENTE' e numero_fisico_confirmado=None.
+   - Idempotência Comprovada:
+     * Reexecução do comando com `--aplicar --responsavel paulo --carga-inicial` preservou 100% das 78 matrizes e dos 17 modelos (0 criados, 78 preservados).
+     * Correções cadastrais posteriores realizadas no Admin pelo operador não são sobrescritas em reexecuções.
+   - Backup do Banco Local:
+     * Arquivo pré-carga: db.sqlite3.backup_pre_carga_20260914 (1.114.112 bytes).
+   - Procedimento para Reproduzir a Carga no Servidor (Deploy):
+     1. Fazer backup do banco do servidor:
+        `Copy-Item -Path "db.sqlite3" -Destination "db.sqlite3.backup_$(Get-Date -Format 'yyyyMMdd_HHmmss')"`
+     2. Aplicar as migrações aditivas do Django:
+        `.\.venv\Scripts\python.exe manage.py migrate`
+     3. Executar o importador com o arquivo de inventário oficial:
+        `.\.venv\Scripts\python.exe manage.py importar_matrizes_fisicas "CAMINHO\MATRIZES_PRE_CADASTRO_LOTE.xlsx" --aplicar --responsavel paulo --carga-inicial`
+     4. O comando reconcilia automaticamente os modelos canônicos por modelo e medida, cria os 17 modelos internos sem tocar no SCADA e grava as 78 matrizes sem depender de IDs do banco de desenvolvimento.
 
-
+8. Ajuste Pontual na Apresentação Operacional das Matrizes Físicas:
+   - Rótulos operacionais limpos em seletores (abertura, edição, finalização, filtros), cards, detalhes e TV:
+     * Exibição padronizada exclusivamente com modelo, medida e número do exemplar (ex: 'PNEU WINGS 2.75-18 #001', 'PNEU WINGS 2.75-18 #002').
+     * Removidos dos seletores de chão de fábrica os complementos operacionais '(Câmara/SC)', '[ID Física Pendente]', '[ID Física Pendente - Sem Dote]', '[ID Física Pendente - Com Dote]' e colchetes associados.
+     * Propriedade 'rotulo_completo' em 'matrizaria/models.py' ajustada para retornar diretamente 'self.nome_exibicao'.
+     * Mantidos no '/admin/' todos os campos técnicos individuais ('situacao_identificacao', 'possui_dote', 'numero_fisico_confirmado', etc.) e preservados os IDs de formulários, histórico e integridade do banco.

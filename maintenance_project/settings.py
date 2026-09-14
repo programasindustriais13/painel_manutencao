@@ -128,8 +128,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "maintenance.middleware.SessionExpiryByProfileMiddleware",  # Expiração de sessão por perfil (após AuthenticationMiddleware)
     "django.contrib.messages.middleware.MessageMiddleware",
+    "maintenance.middleware.SessionExpiryByProfileMiddleware",  # Expiração de sessão por perfil (após AuthenticationMiddleware e MessageMiddleware)
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 

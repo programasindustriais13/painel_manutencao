@@ -1,3 +1,4 @@
+import re
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
@@ -45,11 +46,120 @@ class TipoServicoMatrizaria(models.Model):
         return self.nome
 
 
+def normalize_tire_name(text: str) -> str:
+    """Normaliza texto do modelo/medida removendo prefixo PNEU/PNEUS e sufixo S/C."""
+    if not text:
+        return ""
+    t = str(text).strip().upper()
+    t = re.sub(r"\s+S/C$", "", t)
+    t = re.sub(r"^PNEUS?\s+", "", t)
+    return re.sub(r"\s+", " ", t)
+
+
+def is_sc_variant(catalog_obj: ProductionMatrixCatalog) -> bool:
+    """Verifica se um item do catálogo representa uma variante Sem Câmara (S/C)."""
+    if not catalog_obj:
+        return False
+    if getattr(catalog_obj, "variante_sc", False):
+        return True
+    nome = (
+        getattr(catalog_obj, "nome_exibicao", "")
+        or getattr(catalog_obj, "nome_scada", "")
+        or getattr(catalog_obj, "produto", "")
+        or ""
+    ).strip().upper()
+    return bool(re.search(r"\bS/C\b", nome) or nome.endswith("S/C"))
+
+
+def get_canonical_tooling_model(catalog_obj: ProductionMatrixCatalog) -> ProductionMatrixCatalog:
+    """
+    Retorna o modelo canônico de referência administrativa do ferramental.
+    Regra Definitiva: A mesma matriz física atende produtos com câmara ou sem câmara (S/C).
+    Quando existirem as duas variantes do mesmo modelo e medida, utiliza o registro
+    sem sufixo S/C (variante_sc=False) como referência do ferramental físico.
+    Se houver somente a variante S/C cadastrada, reutiliza-a como referência.
+    """
+    if not catalog_obj:
+        return None
+    if not is_sc_variant(catalog_obj):
+        return catalog_obj
+
+    # É uma variante S/C: localizar o modelo sem S/C com mesmo modelo e medida
+    target_norm = normalize_tire_name(catalog_obj.nome_exibicao or catalog_obj.nome_scada or catalog_obj.produto)
+
+    # 1. Busca direta no banco por correspondência exata de nome sem S/C
+    base_name = (catalog_obj.nome_exibicao or "").replace(" S/C", "").strip()
+    match = ProductionMatrixCatalog.objects.filter(
+        variante_sc=False,
+        nome_exibicao__iexact=base_name
+    ).first()
+    if match and not is_sc_variant(match):
+        return match
+
+    base_scada = (catalog_obj.nome_scada or "").replace(" S/C", "").strip()
+    match = ProductionMatrixCatalog.objects.filter(
+        variante_sc=False,
+        nome_scada__iexact=base_scada
+    ).first()
+    if match and not is_sc_variant(match):
+        return match
+
+    # 2. Busca tolerante a PNEU vs PNEUS e registros legados com variante_sc não preenchido
+    for c in ProductionMatrixCatalog.objects.all():
+        if is_sc_variant(c):
+            continue
+        c_norm = normalize_tire_name(c.nome_exibicao or c.nome_scada or c.produto)
+        if c_norm and c_norm == target_norm:
+            return c
+
+    return catalog_obj
+
+
+def get_equivalent_catalog_models(catalog_obj: ProductionMatrixCatalog) -> list:
+    """
+    Retorna todos os modelos de produto (com câmara e S/C) atendidos pelo mesmo ferramental físico.
+    """
+    if not catalog_obj:
+        return []
+    canonical = get_canonical_tooling_model(catalog_obj)
+    target_norm = normalize_tire_name(canonical.nome_exibicao or canonical.nome_scada or canonical.produto)
+
+    equivalents = []
+    for c in ProductionMatrixCatalog.objects.all():
+        c_norm = normalize_tire_name(c.nome_exibicao or c.nome_scada or c.produto)
+        if c_norm and c_norm == target_norm:
+            equivalents.append(c)
+
+    if canonical not in equivalents:
+        equivalents.insert(0, canonical)
+    return equivalents
+
+
+class MatrizFisicaQuerySet(models.QuerySet):
+    def for_produto(self, produto_catalog: ProductionMatrixCatalog):
+        """Filtra matrizes físicas aptas a produzir o produto informado (com câmara ou S/C)."""
+        if not produto_catalog:
+            return self.none()
+        canonical = get_canonical_tooling_model(produto_catalog)
+        return self.filter(modelo=canonical)
+
+
 class MatrizFisica(models.Model):
     """
     Representação dos exemplares físicos individuais de matrizes existentes no chão de fábrica.
     Cada unidade física pertence a um modelo canônico cadastrado no SCADA (ProductionMatrixCatalog).
     """
+    POSSUI_DOTE_CHOICES = [
+        ("SIM", "Sim"),
+        ("NAO", "Não"),
+        ("NAO_INFORMADO", "Não informado"),
+    ]
+
+    SITUACAO_IDENTIFICACAO_CHOICES = [
+        ("PENDENTE", "Identificação Física Pendente / A Conferir"),
+        ("CONFIRMADA", "Identificação Física Confirmada"),
+    ]
+
     modelo = models.ForeignKey(
         ProductionMatrixCatalog,
         on_delete=models.PROTECT,
@@ -67,9 +177,66 @@ class MatrizFisica(models.Model):
         verbose_name="Número Sequencial da Unidade",
         help_text="Ex: 1 para 001, 2 para 002"
     )
+    possui_dote = models.CharField(
+        max_length=15,
+        choices=POSSUI_DOTE_CHOICES,
+        default="NAO_INFORMADO",
+        db_index=True,
+        verbose_name="Possui Dote para Numeração",
+        help_text="Indica se o exemplar físico possui rebaixo/área para gravação de número físico."
+    )
+    numero_fisico_confirmado = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Número Físico Confirmado (Gravado na Peça)",
+        help_text="Número efetivamente observado e conferido gravado na matriz física (opcional)."
+    )
+    situacao_identificacao = models.CharField(
+        max_length=20,
+        choices=SITUACAO_IDENTIFICACAO_CHOICES,
+        default="PENDENTE",
+        db_index=True,
+        verbose_name="Situação da Identificação Física",
+        help_text="Define se o número e o exemplar físico já foram verificados em campo."
+    )
+    observacao_identificacao = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name="Observação da Identificação Física"
+    )
+    origem_cadastro = models.CharField(
+        max_length=50,
+        default="MANUAL",
+        db_index=True,
+        verbose_name="Origem do Cadastro"
+    )
+    lote_importacao = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Identificação do Lote de Importação"
+    )
+    linha_origem = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        verbose_name="ID da Linha de Origem na Planilha"
+    )
+    chave_unidade_origem = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        db_index=True,
+        verbose_name="Chave da Unidade na Prévia (ex: P1-01-U01)"
+    )
     ativo = models.BooleanField(default=True, db_index=True, verbose_name="Ativo no Chão de Fábrica")
     observacoes = models.TextField(null=True, blank=True, verbose_name="Observações do Exemplar")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Cadastrado em")
+
+    objects = MatrizFisicaQuerySet.as_manager()
 
     class Meta:
         verbose_name = "Matriz Física (Exemplar)"
@@ -82,6 +249,25 @@ class MatrizFisica(models.Model):
             )
         ]
 
+    def clean(self):
+        super().clean()
+        # Normalização de referência: se foi selecionada uma variante S/C mas existe a base, normalizar
+        if self.modelo and self.modelo.variante_sc:
+            canonical = get_canonical_tooling_model(self.modelo)
+            if canonical and canonical.id != self.modelo.id:
+                self.modelo = canonical
+
+    @property
+    def produtos_compativeis(self):
+        """Retorna todos os produtos do catálogo (com câmara e S/C) produzidos por esta matriz."""
+        return get_equivalent_catalog_models(self.modelo)
+
+    def is_compativel_com_produto(self, produto_catalog: ProductionMatrixCatalog) -> bool:
+        """Verifica se esta matriz atende ao produto informado (mesmo modelo/medida, com ou sem câmara)."""
+        if not produto_catalog:
+            return False
+        return get_canonical_tooling_model(produto_catalog) == self.modelo
+
     @property
     def numero_sequencial_str(self):
         """Retorna o número sequencial formatado em 3 dígitos (ex: '001', '002')."""
@@ -93,8 +279,47 @@ class MatrizFisica(models.Model):
         modelo_str = self.modelo.nome_exibicao or self.modelo.produto or self.modelo.nome_scada or f"Código {self.modelo.codigo_scada}"
         return f"{modelo_str} #{self.numero_sequencial_str}"
 
+    @property
+    def identificacao_confirmada(self):
+        return self.situacao_identificacao == "CONFIRMADA"
+
+    @property
+    def rotulo_completo(self):
+        """Rótulo operacional limpo exibindo modelo, medida e número do exemplar."""
+        return self.nome_exibicao
+
     def __str__(self):
         return self.nome_exibicao
+
+
+class LoteImportacaoMatrizFisica(models.Model):
+    """
+    Registro de auditoria e controle de execuções de importação de matrizes em lote.
+    Garante rastreabilidade de arquivos, autor, quantidades e proteção contra reexecução acidental.
+    """
+    identificacao_lote = models.CharField(max_length=100, unique=True, verbose_name="Identificação do Lote")
+    arquivo_nome = models.CharField(max_length=255, verbose_name="Nome do Arquivo")
+    arquivo_hash = models.CharField(max_length=64, db_index=True, verbose_name="Hash SHA-256 do Arquivo")
+    responsavel = models.CharField(max_length=150, verbose_name="Responsável pela Execução")
+    data_importacao = models.DateTimeField(default=timezone.now, db_index=True, verbose_name="Data/Hora da Execução")
+    simulacao = models.BooleanField(default=True, verbose_name="Foi Simulação (Dry-Run)?")
+    quantidade_linhas_lidas = models.PositiveIntegerField(default=0, verbose_name="Linhas Lidas")
+    quantidade_unidades_criadas = models.PositiveIntegerField(default=0, verbose_name="Unidades Criadas")
+    quantidade_unidades_preservadas = models.PositiveIntegerField(default=0, verbose_name="Unidades Preservadas")
+    status = models.CharField(max_length=30, default="SUCESSO", verbose_name="Status da Carga")
+    linhas_origem_json = models.TextField(null=True, blank=True, verbose_name="Linhas de Origem (JSON)")
+    ids_criados_json = models.TextField(null=True, blank=True, verbose_name="IDs Criados (JSON)")
+    relatorio_execucao = models.TextField(null=True, blank=True, verbose_name="Relatório Textual da Execução")
+
+    class Meta:
+        verbose_name = "Lote de Importação de Matrizes Físicas"
+        verbose_name_plural = "Lotes de Importação de Matrizes Físicas"
+        ordering = ["-data_importacao"]
+
+    def __str__(self):
+        modo = "SIMULAÇÃO" if self.simulacao else "APLICADO"
+        return f"Lote {self.identificacao_lote} ({modo}) por {self.responsavel} em {self.data_importacao.strftime('%d/%m/%Y %H:%M')}"
+
 
 
 class SolicitacaoServicoMatrizaria(models.Model):

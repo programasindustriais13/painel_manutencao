@@ -2,6 +2,7 @@ from django.contrib import admin
 from .models import (
     TipoServicoMatrizaria,
     MatrizFisica,
+    LoteImportacaoMatrizFisica,
     SolicitacaoServicoMatrizaria,
     CicloExecucaoMatrizaria,
     HistoricoTransicaoServicoMatrizaria,
@@ -21,14 +22,70 @@ class MatrizFisicaAdmin(admin.ModelAdmin):
     list_display = (
         "nome_exibicao",
         "modelo",
+        "produtos_atendidos",
         "numero_sequencial",
-        "identificador_estavel",
+        "possui_dote",
+        "situacao_identificacao",
+        "numero_fisico_confirmado",
+        "origem_cadastro",
         "ativo",
         "created_at",
     )
-    list_filter = ("ativo", "modelo")
-    search_fields = ("identificador_estavel", "modelo__nome_exibicao")
+    list_filter = ("ativo", "situacao_identificacao", "possui_dote", "origem_cadastro", "modelo")
+    search_fields = (
+        "identificador_estavel",
+        "numero_fisico_confirmado",
+        "modelo__nome_exibicao",
+        "chave_unidade_origem",
+        "lote_importacao",
+    )
     ordering = ("modelo__nome_exibicao", "numero_sequencial")
+
+    def produtos_atendidos(self, obj):
+        prods = obj.produtos_compativeis
+        if len(prods) > 1:
+            return ", ".join([p.nome_exibicao for p in prods])
+        return obj.modelo.nome_exibicao
+    produtos_atendidos.short_description = "Produtos Atendidos (Câmara/SC)"
+
+
+@admin.register(LoteImportacaoMatrizFisica)
+class LoteImportacaoMatrizFisicaAdmin(admin.ModelAdmin):
+    list_display = (
+        "identificacao_lote",
+        "arquivo_nome",
+        "responsavel",
+        "simulacao",
+        "data_importacao",
+        "quantidade_linhas_lidas",
+        "quantidade_unidades_criadas",
+        "quantidade_unidades_preservadas",
+        "status",
+    )
+    list_filter = ("simulacao", "status", "responsavel")
+    search_fields = ("identificacao_lote", "arquivo_nome", "responsavel", "arquivo_hash")
+    readonly_fields = (
+        "identificacao_lote",
+        "arquivo_nome",
+        "arquivo_hash",
+        "responsavel",
+        "data_importacao",
+        "simulacao",
+        "quantidade_linhas_lidas",
+        "quantidade_unidades_criadas",
+        "quantidade_unidades_preservadas",
+        "status",
+        "linhas_origem_json",
+        "ids_criados_json",
+        "relatorio_execucao",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 
 class CicloExecucaoInline(admin.TabularInline):

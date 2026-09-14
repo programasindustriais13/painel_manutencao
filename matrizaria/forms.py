@@ -56,11 +56,14 @@ def get_prensas_queryset():
     return prensas
 
 
+def format_matriz_fisica_label(obj: MatrizFisica) -> str:
+    if not obj:
+        return ""
+    return getattr(obj, "rotulo_completo", str(obj))
+
+
 class SolicitacaoServicoForm(forms.ModelForm):
-    idempotency_key = forms.CharField(
-        widget=forms.HiddenInput(),
-        required=False,
-    )
+    idempotency_key = forms.CharField(widget=forms.HiddenInput(), required=False)
 
     class Meta:
         model = SolicitacaoServicoMatrizaria
@@ -72,15 +75,15 @@ class SolicitacaoServicoForm(forms.ModelForm):
             "descricao_solicitacao",
         ]
         widgets = {
-            "prensa": forms.Select(attrs={"class": "form-select form-select-lg", "required": "required"}),
-            "tipo_servico": forms.Select(attrs={"class": "form-select form-select-lg", "required": "required"}),
+            "prensa": forms.Select(attrs={"class": "form-select"}),
+            "tipo_servico": forms.Select(attrs={"class": "form-select"}),
             "matriz_fisica": forms.Select(attrs={"class": "form-select"}),
             "prioridade": forms.Select(attrs={"class": "form-select"}),
             "descricao_solicitacao": forms.Textarea(
                 attrs={
                     "class": "form-control",
-                    "rows": 4,
-                    "placeholder": "Descreva claramente a necessidade ou anomalia observada na prensa...",
+                    "rows": 3,
+                    "placeholder": "Descreva detalhadamente o serviço solicitado para a Matrizaria...",
                     "required": "required",
                 }
             ),
@@ -92,6 +95,7 @@ class SolicitacaoServicoForm(forms.ModelForm):
         self.fields["prensa"].label_from_instance = lambda obj: format_prensa_label(obj)
         self.fields["tipo_servico"].queryset = TipoServicoMatrizaria.objects.filter(ativo=True).order_by("ordem_exibicao", "nome")
         self.fields["matriz_fisica"].queryset = MatrizFisica.objects.filter(ativo=True).select_related("modelo").order_by("modelo__nome_exibicao", "numero_sequencial")
+        self.fields["matriz_fisica"].label_from_instance = lambda obj: format_matriz_fisica_label(obj)
         self.fields["matriz_fisica"].required = False
         self.fields["matriz_fisica"].empty_label = "--- Matriz física não definida no momento ---"
         self.fields["prensa"].empty_label = "--- Selecione a Prensa ---"
@@ -128,6 +132,10 @@ class FinalizarExecucaoForm(forms.Form):
         label="Matriz Física Instalada / Atendida",
     )
     versao = forms.IntegerField(widget=forms.HiddenInput())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["matriz_fisica"].label_from_instance = lambda obj: format_matriz_fisica_label(obj)
 
 
 class ConferirServicoForm(forms.Form):
@@ -278,6 +286,7 @@ class EditarSolicitacaoForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields["prensa"].queryset = get_prensas_queryset()
         self.fields["prensa"].label_from_instance = lambda obj: format_prensa_label(obj)
+        self.fields["matriz_fisica"].label_from_instance = lambda obj: format_matriz_fisica_label(obj)
 
     def clean_prensa(self):
         prensa = self.cleaned_data.get("prensa")
