@@ -504,3 +504,21 @@ class MaintenanceAlertsTestCase(TestCase):
     def test_31_nenhuma_escrita_no_scada(self):
         self.assertEqual(self.alarm_pressao._state.db, "default")
         self.assertEqual(self.recipient_1._state.db, "default")
+
+    # 32. Busca automática de XIDs ausentes no scada_values (ex: ciclo do coletor)
+    @patch("production.services.scada_reader.get_last_values_batch")
+    def test_32_busca_xids_de_alarmes_faltantes_no_scada_values(self, mock_get_batch):
+        mock_get_batch.return_value = {
+            "DP_PRESSAO_01": {"value": 11.17, "is_null": False, "ts_ms": 1000}
+        }
+        # Passa um scada_values que NÃO contém DP_PRESSAO_01 (como o retornado por process_scada_cycle)
+        scada_values_parcial = {"DP_PRENSA_01_STATUS": {"value": 1, "is_null": False}}
+        res = MaintenanceAlertService.evaluate_due_alerts(scada_values=scada_values_parcial)
+
+        # Deve ter consultado o XID faltante no SCADA
+        mock_get_batch.assert_called_once_with(["DP_PRESSAO_01"])
+        self.alarm_pressao.refresh_from_db()
+        self.assertEqual(self.alarm_pressao.ultima_leitura_valor, 11.17)
+        self.assertIsNotNone(self.alarm_pressao.ultima_leitura_timestamp)
+        # Como 11.17 < 12.0 (ou fora da faixa 5.0 a 7.0 no mock do test case), entra em PENDENTE
+        self.assertEqual(self.alarm_pressao.estado_atual, "PENDENTE")

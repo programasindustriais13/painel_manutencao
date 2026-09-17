@@ -3628,3 +3628,8 @@ Arquivos Criados/Modificados:
      * Correcao do JavaScript: incluido 'bootstrap.bundle.min.js' e implementado fallback universal nativo (Vanilla JS) para abertura e fechamento de modais mesmo em ambientes fabris sem acesso externo a CDN.
      * Acionamento direto: adicionadas funcoes 'openModalDirect' e 'closeModalDirect' com chamadas diretas em 'detalhe_solicitacao.html' garantindo resposta imediata ao clique.
      * Restricao exclusiva ao SuperUser: o botao 'Excluir Solicitacao' passa a ser exibido no HTML estritamente quando 'user.is_superuser=True'. Operadores, lideres e tecnicos nao visualizam o botao de exclusao. A rota 'excluir_solicitacao' valida e bloqueia qualquer tentativa de exclusao por usuarios nao-superusuarios.
+
+   - Correção no Coletor SCADA para Leitura de Alarmes Globais (17/09/2026):
+     * Causa raiz: o método 'ProductionStateService.process_scada_cycle()' busca apenas telemetria de máquinas, cavidades e parâmetros de prensas. Ao repassar 'scada_vals' para 'MaintenanceAlertService.evaluate_due_alerts()', os XIDs de alarmes globais (como 'DP_760076') não vinham no dicionário e a avaliação era ignorada com telemetria nula.
+     * Correção aplicada: 'MaintenanceAlertService.evaluate_due_alerts()' agora identifica os XIDs de alarmes globais que não estão presentes no dicionário fornecido e realiza a busca desses pontos faltantes diretamente no SCADA via 'scada_reader.get_last_values_batch()'.
+     * Validação: adicionado teste 32 em 'production/test_maintenance_alerts.py' comprovando a leitura automática e atualização do estado ('PENDENTE'/'ALARME_ATIVO').

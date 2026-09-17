@@ -84,11 +84,18 @@ class MaintenanceAlertService:
         if not alarms:
             return {"status": "no_alarms", "evaluated": 0}
 
-        # Busca valores do Scada em lote se não foram fornecidos
+        # Garante que todos os XIDs dos alarmes estejam presentes em scada_values
+        from production.services import scada_reader
+        needed_xids = [a.xid.strip() for a in alarms if a.xid and a.xid.strip()]
+
         if scada_values is None:
-            from production.services import scada_reader
-            xids = [a.xid.strip() for a in alarms if a.xid and a.xid.strip()]
-            scada_values = scada_reader.get_last_values_batch(xids)
+            scada_values = scada_reader.get_last_values_batch(needed_xids)
+        else:
+            scada_values = dict(scada_values)
+            missing_xids = [x for x in needed_xids if x not in scada_values]
+            if missing_xids:
+                fetched = scada_reader.get_last_values_batch(missing_xids)
+                scada_values.update(fetched)
 
         alert_events_by_dest: Dict[str, List[Dict[str, Any]]] = {}
         norm_events_by_dest: Dict[str, List[Dict[str, Any]]] = {}
