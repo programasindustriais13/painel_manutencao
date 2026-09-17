@@ -6,6 +6,7 @@ from .models import (
     ProductionCavityConfig,
     ProductionGlobalParameter,
     ProductionGlobalAlarm,
+    WhatsAppAlertRecipient,
     ProductionCavityState,
     ProductionCavityDowntimeEvent,
     ProductionCavityMatrixHistory,
@@ -160,11 +161,133 @@ class ProductionGlobalParameterAdmin(admin.ModelAdmin):
     search_fields = ("nome", "chave", "xid")
 
 
+@admin.register(WhatsAppAlertRecipient)
+class WhatsAppAlertRecipientAdmin(admin.ModelAdmin):
+    list_display = ("nome", "telefone", "telefone_normalizado_display", "ativo", "criado_em")
+    list_filter = ("ativo", "criado_em")
+    search_fields = ("nome", "telefone")
+    list_editable = ("ativo",)
+
+    def telefone_normalizado_display(self, obj):
+        return obj.telefone_normalizado
+    telefone_normalizado_display.short_description = "WhatsApp Formatado"
+
+
+class ProductionGlobalAlarmAdminForm(forms.ModelForm):
+    class Meta:
+        model = ProductionGlobalAlarm
+        fields = "__all__"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        vmin = cleaned_data.get("valor_minimo")
+        vmax = cleaned_data.get("valor_maximo")
+        if vmin is None and vmax is None:
+            raise forms.ValidationError("Pelo menos um limite (mínimo ou máximo) deve ser configurado.")
+        if vmin is not None and vmax is not None and vmin >= vmax:
+            raise forms.ValidationError("O valor mínimo deve ser estritamente menor que o valor máximo.")
+        return cleaned_data
+
+
 @admin.register(ProductionGlobalAlarm)
 class ProductionGlobalAlarmAdmin(admin.ModelAdmin):
-    list_display = ("nome", "chave", "xid", "ordem")
-    list_editable = ("ordem", "xid")
+    form = ProductionGlobalAlarmAdminForm
+    list_display = (
+        "nome",
+        "xid",
+        "faixa_permitida_display",
+        "delay_segundos",
+        "intervalo_repeticao_minutos",
+        "habilitado",
+        "total_destinos",
+        "estado_atual",
+        "ultima_leitura_display",
+    )
+    list_filter = ("habilitado", "estado_atual", "intervalo_repeticao_minutos")
     search_fields = ("nome", "chave", "xid")
+    filter_horizontal = ("destinatarios", "grupos")
+    actions = ["testar_xid_action"]
+
+    fieldsets = (
+        ("Identificação Básica", {
+            "fields": ("nome", "chave", "descricao", "ordem", "habilitado")
+        }),
+        ("Telemetria SCADA (XID)", {
+            "fields": ("xid", "unidade")
+        }),
+        ("Limites e Faixa Permitida", {
+            "fields": ("valor_minimo", "valor_maximo"),
+            "description": "Configure pelo menos um dos limites. Se ambos forem definidos, o mínimo deve ser menor que o máximo."
+        }),
+        ("Temporização e Anti-Oscilação", {
+            "fields": ("delay_segundos", "intervalo_repeticao_minutos"),
+            "description": "Delay antes do alerta: tempo que o valor precisa permanecer continuamente fora da faixa antes do primeiro envio. Repetição: intervalo mínimo entre notificações enquanto continuar fora."
+        }),
+        ("Destinatários WhatsApp", {
+            "fields": ("destinatarios", "grupos", "notificar_normalizacao")
+        }),
+        ("Telemetria e Estado do Monitor", {
+            "fields": (
+                "estado_atual",
+                "ultima_leitura_valor",
+                "ultima_leitura_timestamp",
+                "inicio_fora_faixa",
+                "ultimo_alerta_enviado_em",
+                "alerta_inicial_enviado",
+                "ultima_normalizacao_em",
+            ),
+            "classes": ("collapse",)
+        }),
+    )
+
+    readonly_fields = (
+        "estado_atual",
+        "ultima_leitura_valor",
+        "ultima_leitura_timestamp",
+        "inicio_fora_faixa",
+        "ultimo_alerta_enviado_em",
+        "alerta_inicial_enviado",
+        "ultima_normalizacao_em",
+    )
+
+    def faixa_permitida_display(self, obj):
+        return obj.faixa_formatada
+    faixa_permitida_display.short_description = "Faixa Permitida"
+
+    def total_destinos(self, obj):
+        n_ind = obj.destinatarios.count()
+        n_grp = obj.grupos.count()
+        return f"{n_ind} indiv. / {n_grp} grupo(s)"
+    total_destinos.short_description = "Destinatários"
+
+    def ultima_leitura_display(self, obj):
+        if obj.ultima_leitura_valor is not None:
+            u = f" {obj.unidade}" if obj.unidade else ""
+            return f"{obj.ultima_leitura_valor:.1f}{u}"
+        return "Sem leitura"
+    ultima_leitura_display.short_description = "Última Leitura"
+
+    @admin.action(description="Testar leitura de XID no Scada-LTS")
+    def testar_xid_action(self, request, queryset):
+        from .xid_configuration import XIDTestService
+        from django.contrib import messages
+        for alarm in queryset:
+            if not alarm.xid:
+                self.message_user(request, f"Alarme '{alarm.nome}' não possui XID configurado.", level=messages.WARNING)
+                continue
+            res = XIDTestService.test_xid(alarm.xid)
+            if res.get("status") == "success":
+                self.message_user(
+                    request,
+                    f"XID '{alarm.xid}' do alarme '{alarm.nome}': Leitura OK! Valor: {res.get('value')} (tipo {res.get('data_type')})",
+                    level=messages.SUCCESS,
+                )
+            else:
+                self.message_user(
+                    request,
+                    f"XID '{alarm.xid}' do alarme '{alarm.nome}': Falha ou sem comunicação. {res.get('message')}",
+                    level=messages.WARNING,
+                )
 
 
 @admin.register(ProductionCavityMatrixHistory)

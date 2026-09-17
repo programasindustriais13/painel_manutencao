@@ -150,6 +150,7 @@ def solicitar_servico_view(request):
                     solicitado_por=request.user,
                     prioridade=form.cleaned_data["prioridade"],
                     matriz_fisica=form.cleaned_data["matriz_fisica"],
+                    destino=form.cleaned_data.get("destino", "MAQUINA"),
                 )
                 if session_key:
                     request.session[session_key] = solicitacao.id
@@ -215,11 +216,24 @@ def detalhe_servico_view(request, pk):
         ):
             impedimento_autoconferencia = True
 
-    # Regra de permissão para edição de solicitação pendente
+    # Regra de permissão para edição e exclusão de solicitação pendente
     user_can_sol = _user_can_solicitar(user)
     is_solicitante_proprio = (solicitacao.solicitado_por_id == user.id and user_can_sol)
+    is_gestao = (
+        user.is_superuser
+        or user.is_staff
+        or user_can_conf
+        or user.groups.filter(name__in=["Liderança de Produção", "Lideres", "Tecnicos_Lideres"]).exists()
+        or user.has_perm("matrizaria.change_solicitacaoservicomatrizaria")
+    )
     can_editar = (
-        (is_solicitante_proprio or user_can_conf or user.is_superuser or user.is_staff)
+        (is_solicitante_proprio or is_gestao)
+        and solicitacao.status == "SOLICITADO"
+        and solicitacao.ciclos_execucao.count() == 0
+        and not user.username.startswith("tv")
+    )
+    can_excluir = (
+        user.is_superuser
         and solicitacao.status == "SOLICITADO"
         and solicitacao.ciclos_execucao.count() == 0
         and not user.username.startswith("tv")
@@ -232,7 +246,7 @@ def detalhe_servico_view(request, pk):
     form_cancelar = CancelarServicoForm(initial={"versao": solicitacao.versao})
     form_editar = EditarSolicitacaoForm(
         initial={
-            "prensa": solicitacao.prensa_id,
+            "prensa": "__MATRIZARIA__" if solicitacao.destino == "MATRIZARIA" else solicitacao.prensa_id,
             "tipo_servico": solicitacao.tipo_servico_id,
             "matriz_fisica": solicitacao.matriz_fisica_id,
             "prioridade": solicitacao.prioridade,
@@ -251,6 +265,7 @@ def detalhe_servico_view(request, pk):
         "impedimento_autoconferencia": impedimento_autoconferencia,
         "can_cancelar": user_can_canc,
         "can_editar": can_editar,
+        "can_excluir": can_excluir,
         "form_finalizar": form_finalizar,
         "form_conferir": form_conferir,
         "form_transferir": form_transferir,
@@ -272,8 +287,15 @@ def editar_solicitacao_view(request, pk):
     user_can_sol = _user_can_solicitar(user)
     user_can_conf = _user_can_conferir(user)
     is_solicitante_proprio = (solicitacao.solicitado_por_id == user.id and user_can_sol)
+    is_gestao = (
+        user.is_superuser
+        or user.is_staff
+        or user_can_conf
+        or user.groups.filter(name__in=["Liderança de Produção", "Lideres", "Tecnicos_Lideres"]).exists()
+        or user.has_perm("matrizaria.change_solicitacaoservicomatrizaria")
+    )
     can_editar = (
-        (is_solicitante_proprio or user_can_conf or user.is_superuser or user.is_staff)
+        (is_solicitante_proprio or is_gestao)
         and solicitacao.status == "SOLICITADO"
         and solicitacao.ciclos_execucao.count() == 0
         and not user.username.startswith("tv")
@@ -296,6 +318,7 @@ def editar_solicitacao_view(request, pk):
                 prioridade=form.cleaned_data["prioridade"],
                 descricao_solicitacao=form.cleaned_data["descricao_solicitacao"],
                 motivo_edicao=form.cleaned_data["motivo_edicao"],
+                destino=form.cleaned_data.get("destino", "MAQUINA"),
             )
             messages.success(request, f"Solicitação SM #{solicitacao.id} corrigida com sucesso!")
         except ValidationError as e:
@@ -307,6 +330,48 @@ def editar_solicitacao_view(request, pk):
             messages.error(request, err.as_text())
 
     return redirect("matrizaria:detalhe_servico", pk=pk)
+
+
+@login_required
+@require_POST
+def excluir_solicitacao_view(request, pk):
+    """
+    Exclusão operacional definitiva de solicitação pendente antes de qualquer início técnico.
+    """
+    solicitacao = get_object_or_404(SolicitacaoServicoMatrizaria, pk=pk)
+    user = request.user
+
+    user_can_sol = _user_can_solicitar(user)
+    user_can_conf = _user_can_conferir(user)
+    is_solicitante_proprio = (solicitacao.solicitado_por_id == user.id and user_can_sol)
+    is_gestao = (
+        user.is_superuser
+        or user.is_staff
+        or user_can_conf
+        or user.groups.filter(name__in=["Liderança de Produção", "Lideres", "Tecnicos_Lideres"]).exists()
+        or user.has_perm("matrizaria.delete_solicitacaoservicomatrizaria")
+    )
+    can_excluir = (
+        user.is_superuser
+        and solicitacao.status == "SOLICITADO"
+        and solicitacao.ciclos_execucao.count() == 0
+        and not user.username.startswith("tv")
+    )
+
+    if not can_excluir:
+        messages.error(request, "Acesso negado. Apenas o superusuário pode excluir solicitações do sistema.")
+        return redirect("matrizaria:detalhe_servico", pk=pk)
+
+    try:
+        MatrizariaService.excluir_solicitacao_operacional(solicitacao_id=pk, usuario=user)
+        messages.success(request, f"Solicitação SM #{pk} excluída com sucesso.")
+        return redirect("matrizaria:kanban")
+    except (ValidationError, PermissionDenied) as e:
+        messages.error(request, str(e.message if hasattr(e, "message") else e))
+        return redirect("matrizaria:detalhe_servico", pk=pk)
+    except Exception as e:
+        messages.error(request, f"Erro ao excluir solicitação: {str(e)}")
+        return redirect("matrizaria:detalhe_servico", pk=pk)
 
 
 @login_required
@@ -506,7 +571,14 @@ def relatorios_view(request):
         data_inicio = sete_dias_atras
         data_fim = hoje
 
-    prensa_id_int = int(prensa_id) if prensa_id and prensa_id.isdigit() else None
+    prensa_val = request.GET.get("prensa") or None
+    destino = None
+    prensa_id_int = None
+    if prensa_val == "__MATRIZARIA__":
+        destino = "MATRIZARIA"
+    elif prensa_val and prensa_val.isdigit():
+        prensa_id_int = int(prensa_val)
+
     tipo_servico_id_int = int(tipo_servico_id) if tipo_servico_id and tipo_servico_id.isdigit() else None
     solicitante_id_int = int(solicitante_id) if solicitante_id and solicitante_id.isdigit() else None
     executante_id_int = int(executante_id) if executante_id and executante_id.isdigit() else None
@@ -520,6 +592,7 @@ def relatorios_view(request):
         status=status,
         solicitante_id=solicitante_id_int,
         executante_id=executante_id_int,
+        destino=destino,
     )
 
     # Paginação em tela (20 por página)
@@ -566,7 +639,14 @@ def exportar_excel_view(request):
         data_inicio = sete_dias_atras
         data_fim = hoje
 
-    prensa_id_int = int(prensa_id) if prensa_id and prensa_id.isdigit() else None
+    prensa_val = request.GET.get("prensa") or None
+    destino = None
+    prensa_id_int = None
+    if prensa_val == "__MATRIZARIA__":
+        destino = "MATRIZARIA"
+    elif prensa_val and prensa_val.isdigit():
+        prensa_id_int = int(prensa_val)
+
     tipo_servico_id_int = int(tipo_servico_id) if tipo_servico_id and tipo_servico_id.isdigit() else None
     solicitante_id_int = int(solicitante_id) if solicitante_id and solicitante_id.isdigit() else None
     executante_id_int = int(executante_id) if executante_id and executante_id.isdigit() else None
@@ -581,6 +661,7 @@ def exportar_excel_view(request):
         status=status,
         solicitante_id=solicitante_id_int,
         executante_id=executante_id_int,
+        destino=destino,
     )
 
     wb = openpyxl.Workbook()

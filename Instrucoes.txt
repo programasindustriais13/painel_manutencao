@@ -3580,3 +3580,51 @@ Arquivos Criados/Modificados:
      * Removidos dos seletores de chão de fábrica os complementos operacionais '(Câmara/SC)', '[ID Física Pendente]', '[ID Física Pendente - Sem Dote]', '[ID Física Pendente - Com Dote]' e colchetes associados.
      * Propriedade 'rotulo_completo' em 'matrizaria/models.py' ajustada para retornar diretamente 'self.nome_exibicao'.
      * Mantidos no '/admin/' todos os campos técnicos individuais ('situacao_identificacao', 'possui_dote', 'numero_fisico_confirmado', etc.) e preservados os IDs de formulários, histórico e integridade do banco.
+
+
+9. Módulo Matrizaria — Opção 'Matrizaria' em Prensa/Máquina, Ajuste de Edição/Exclusão Operacional e Exclusão Administrativa pelo Superuser:
+   - Opção 'Matrizaria — Serviço interno / Sem máquina' em Prensa/Máquina:
+     * Adicionado discriminador explícito 'destino' ('MAQUINA' ou 'MATRIZARIA') em 'SolicitacaoServicoMatrizaria' com 'prensa' opcional ('null=True, blank=True').
+     * Implementado 'PrensaOuMatrizariaChoiceField' nos formulários da Matrizaria apresentando a opção 'Matrizaria — Serviço interno / Sem máquina' integrada ao select.
+     * Validação estrita no backend: se destino='MAQUINA', prensa é estritamente obrigatória; se destino='MATRIZARIA', prensa é nula e destino='MATRIZARIA'. Nenhuma máquina fictícia foi criada.
+     * Todas as telas (solicitação, detalhe, kanban, painel TV, linha do tempo, relatórios e exportação Excel) foram adaptadas para exibir 'Matrizaria' sem erros, hífens ou 'None'.
+     * Solicitações internas não aparecem na linha do tempo de máquinas reais.
+   - Botões de Edição e Exclusão de Solicitações:
+     * Causa raiz identificada: a view de detalhe possuía botão de exclusão que chamava 'detalhe_solicitacao' via modal sem endpoint dedicado de exclusão, e o formulário de edição requeria prensa obrigatória bloqueando serviços internos.
+     * Implementada rota e view 'excluir_solicitacao_view' via POST com CSRF, modal com confirmação explícita e validação de permissões ('matrizaria.delete_solicitacaoservicomatrizaria' ou superuser/staff).
+     * Mensagens de sucesso ou bloqueio amigável adicionadas (ex: solicitações em execução/concluídas protegidas).
+   - Exclusão Administrativa Segura pelo Superuser no Django Admin:
+     * Criado 'AdminCascadeDeletionService' e mixin 'SuperuserCascadeDeleteMixin' em 'matrizaria/admin.py'.
+     * Permite ao superuser excluir solicitações ou tipos de serviço no '/admin/' mesmo quando possuem ciclos de execução, históricos, auditorias ou retrabalhos dependentes.
+     * Exclusão forçada protegida: tela de confirmação prévia listando explicitamente todos os objetos relacionados que serão removidos, execução atômica ('transaction.atomic()') com rollback completo em falhas.
+     * As relações normais de domínio mantêm 'on_delete=models.PROTECT' sem conversão global para CASCADE.
+     * Restrição absoluta: disponível unicamente para 'is_superuser=True'. Usuários comuns ou staff operacional continuam com proteções normais.
+     * Zero escrita ou exclusão no alias 'scada'.
+     * 54 testes automatizados em 'matrizaria' cobrindo todos os cenários e aprovados 100%.
+
+10. Monitoramento SCADA e Alertas de Manutenção via WhatsApp:
+   - Reutilização da Infraestrutura Existente:
+     * Evoluído o modelo canônico 'ProductionGlobalAlarm' em 'production/models.py' adicionando limites numéricos ('valor_minimo', 'valor_maximo'), delay anti-oscilação ('delay_segundos'), intervalo de repetição ('intervalo_repeticao_minutos'), 'destinatarios' individuais e 'grupos' de WhatsApp.
+     * Reutilizados o modelo 'WhatsAppGroup' (de 'maintenance'), o microserviço Node.js/Baileys e o coletor em background 'collect_production_scada'. Nenhuma porta, QR Code ou serviço paralelo foi criado.
+     * Criado modelo 'WhatsAppAlertRecipient' no banco 'default' (registrado no 'ScadaRouter.LOCAL_MANAGED_MODELS') com normalização automática de telefone.
+   - Máquina de Estados e Resiliência:
+     * Estados: 'NORMAL', 'PENDENTE', 'ALARME_ATIVO', 'DESABILITADO'.
+     * Delay anti-oscilação: o valor precisa permanecer continuamente fora da faixa permitida pelo tempo configurado antes do envio do primeiro alerta. Oscilações breves que retornam ao normal cancelam a pendência sem envio.
+     * Intervalos de repetição (1, 5, 10, 30 min): respeitam 'agora >= proxima_notificacao'.
+     * Mensagem de normalização: enviada uma única vez quando o alarme retorna à faixa válida, após o que o alarme volta ao estado 'NORMAL'.
+     * Desativação para manutenção: quando 'habilitado=False', o monitor não envia alertas, repetições ou normalizações. Ao reabilitar, uma nova contagem do zero é iniciada.
+   - Proteção Anti-Spam e Anti-Banimento:
+     * Consolidação de alertas simultâneos: múltiplos alarmes acionados no mesmo ciclo para o mesmo destinatário/grupo são unificados em uma única mensagem elegante.
+     * Respeito rigoroso às proteções do microserviço Baileys: tratamento assíncrono para HTTP 202, contenção defensiva para HTTP 429 (Too Many Requests), respeito ao Circuit Breaker para HTTP 503 e resiliência total a falhas de conexão/offline sem travar o coletor ou gerar HTTP 500 no sistema web.
+   - Teste de XID no Admin:
+     * Ação 'Testar leitura do XID no Scada-LTS' integrada no Django Admin para validação imediata pelo superusuário sem duplicação de serviços.
+   - Testes e Integridade:
+     * 31 testes unitários e de integração em 'production/test_maintenance_alerts.py' cobrindo todos os 31 cenários obrigatórios aprovados 100%.
+     * Suíte do app 'production' com 275 testes e suíte global com 390 testes aprovadas com 0 falhas e 0 erros.
+     * Zero escrita ou migração no banco 'scada'.
+
+   - Ajuste Pontual nos Botoes de Acao e Restricao do Botao de Exclusao (17/09/2026):
+     * Causa raiz da falta de resposta dos botoes 'Editar', 'Excluir' e 'Cancelar': o template base 'base_matrizaria.html' nao importava o script 'bootstrap.bundle.min.js', deixando os atributos 'data-bs-toggle="modal"' sem manipulador de eventos no navegador.
+     * Correcao do JavaScript: incluido 'bootstrap.bundle.min.js' e implementado fallback universal nativo (Vanilla JS) para abertura e fechamento de modais mesmo em ambientes fabris sem acesso externo a CDN.
+     * Acionamento direto: adicionadas funcoes 'openModalDirect' e 'closeModalDirect' com chamadas diretas em 'detalhe_solicitacao.html' garantindo resposta imediata ao clique.
+     * Restricao exclusiva ao SuperUser: o botao 'Excluir Solicitacao' passa a ser exibido no HTML estritamente quando 'user.is_superuser=True'. Operadores, lideres e tecnicos nao visualizam o botao de exclusao. A rota 'excluir_solicitacao' valida e bloqueia qualquer tentativa de exclusao por usuarios nao-superusuarios.

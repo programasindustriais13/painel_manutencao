@@ -1,0 +1,61 @@
+{% extends "admin/base_site.html" %}
+{% load i18n l10n admin_urls static %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; {% translate 'Exclusão Administrativa Forçada' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+    <div style="background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404; padding: 15px; border-radius: 4px; margin-bottom: 20px;">
+        <h3 style="margin-top: 0; color: #856404;">
+            <strong>⚠️ Atenção: Ação Exclusiva de Superusuário</strong>
+        </h3>
+        <p style="margin-bottom: 0;">
+            Você está prestes a realizar uma <strong>exclusão administrativa forçada</strong>.
+            Esta operação removerá permanentemente os registros abaixo e seus dados filhos/dependentes (como ciclos e históricos de transição) através de uma transação atômica.
+            Se ocorrer qualquer erro durante o processo, será realizado rollback total.
+        </p>
+    </div>
+
+    <h2>Registros que serão excluídos:</h2>
+    <ul style="line-height: 1.8; font-size: 14px;">
+        {% for item in preview %}
+            <li>
+                <strong>{{ item.model }}</strong>: {{ item.objeto }} (ID: {{ item.id }})
+                {% if item.dependentes %}
+                    <ul style="color: #ba2121;">
+                        {% for dep in item.dependentes %}
+                            <li>↳ Dependentes vinculados: {{ dep }}</li>
+                        {% endfor %}
+                    </ul>
+                {% else %}
+                    <span style="color: #28a745; font-size: 12px;">(Nenhum dependente adicional)</span>
+                {% endif %}
+            </li>
+        {% endfor %}
+    </ul>
+
+    <form method="post" style="margin-top: 25px;">
+        {% csrf_token %}
+        <input type="hidden" name="confirmar" value="1">
+        {% if action_checkbox_name %}
+            <input type="hidden" name="action" value="excluir_com_dependentes_action">
+            <input type="hidden" name="select_across" value="0">
+            {% for item in preview %}
+                <input type="hidden" name="{{ action_checkbox_name }}" value="{{ item.id }}">
+            {% endfor %}
+        {% endif %}
+
+        <div>
+            <input type="submit" value="Sim, tenho certeza e desejo excluir" style="background-color: #ba2121; color: white; border: none; padding: 10px 18px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 14px;">
+            <a href="javascript:history.back()" class="button cancel-link" style="margin-left: 10px; text-decoration: none; padding: 9px 15px; border: 1px solid #ccc; border-radius: 4px; color: #333; background: #f8f9fa;">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

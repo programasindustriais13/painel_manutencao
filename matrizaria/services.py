@@ -33,20 +33,29 @@ class MatrizariaService:
     @transaction.atomic
     def criar_solicitacao(
         cls,
-        prensa: Machine,
+        prensa: Optional[Machine],
         tipo_servico: TipoServicoMatrizaria,
         descricao_solicitacao: str,
         solicitado_por,
         prioridade: str = "NORMAL",
         matriz_fisica: Optional[MatrizFisica] = None,
+        destino: str = "MAQUINA",
     ) -> SolicitacaoServicoMatrizaria:
         """
         Abre uma nova solicitação de serviço da Matrizaria com validação e snapshots imediatos.
         """
-        if not prensa:
-            raise ValidationError("A prensa é obrigatória.")
-        if is_checklist_machine(prensa):
-            raise ValidationError("Máquinas de apoio ou CHECK-LIST não são válidas para chamados de Matrizaria.")
+        if destino == "MATRIZARIA":
+            prensa = None
+            prensa_nome = "Matrizaria"
+        elif destino == "MAQUINA":
+            if not prensa:
+                raise ValidationError("A prensa é obrigatória.")
+            if is_checklist_machine(prensa):
+                raise ValidationError("Máquinas de apoio ou CHECK-LIST não são válidas para chamados de Matrizaria.")
+            prensa_nome = prensa.nome
+        else:
+            raise ValidationError("Destino inválido.")
+
         if not tipo_servico:
             raise ValidationError("O tipo de serviço é obrigatório.")
         if not descricao_solicitacao or not descricao_solicitacao.strip():
@@ -55,7 +64,6 @@ class MatrizariaService:
             raise ValidationError("Usuário solicitante inválido.")
 
         solicitante_nome = cls.get_user_display_name(solicitado_por)
-        prensa_nome = prensa.nome
         tipo_servico_nome = tipo_servico.nome
         exige_matriz = tipo_servico.exige_matriz_fisica
 
@@ -64,6 +72,7 @@ class MatrizariaService:
             matriz_snapshot = matriz_fisica.nome_exibicao
 
         solicitacao = SolicitacaoServicoMatrizaria.objects.create(
+            destino=destino,
             prensa=prensa,
             prensa_nome_snapshot=prensa_nome,
             matriz_fisica=matriz_fisica,
@@ -89,7 +98,7 @@ class MatrizariaService:
             usuario_nome_snapshot=solicitante_nome,
             data_evento=timezone.now(),
             observacao="Abertura da solicitação no sistema.",
-            dados_modificados=f"Prensa: {prensa_nome} | Tipo: {tipo_servico_nome} | Prioridade: {prioridade}",
+            dados_modificados=f"Destino/Prensa: {prensa_nome} | Tipo: {tipo_servico_nome} | Prioridade: {prioridade}",
         )
 
         return solicitacao
@@ -173,12 +182,13 @@ class MatrizariaService:
         solicitacao_id: int,
         usuario,
         versao_esperada: int,
-        prensa,
-        tipo_servico,
-        matriz_fisica,
+        prensa: Optional[Machine],
+        tipo_servico: TipoServicoMatrizaria,
+        matriz_fisica: Optional[MatrizFisica],
         prioridade: str,
         descricao_solicitacao: str,
         motivo_edicao: str,
+        destino: str = "MAQUINA",
     ) -> SolicitacaoServicoMatrizaria:
         """
         Permite a edição da solicitação antes do primeiro início técnico.
@@ -192,7 +202,7 @@ class MatrizariaService:
 
         # 0. Permissão de edição
         if usuario:
-            from .decorators import _user_can_request_matrizaria
+            from .decorators import _user_can_request_matrizaria, _user_can_inspect_matrizaria
             is_tv = (
                 usuario.username.startswith("tv")
                 or usuario.groups.filter(name__in=["Visualizador", "Visualizador Matrizaria"]).exists()
@@ -200,6 +210,7 @@ class MatrizariaService:
             is_gestao = (
                 usuario.is_superuser
                 or usuario.is_staff
+                or _user_can_inspect_matrizaria(usuario)
                 or usuario.groups.filter(name__in=["Liderança de Produção", "Lideres", "Tecnicos_Lideres"]).exists()
                 or usuario.has_perm("matrizaria.change_solicitacaoservicomatrizaria")
             )
@@ -225,9 +236,18 @@ class MatrizariaService:
         if not motivo_edicao:
             raise ValidationError("O motivo da correção é obrigatório para auditoria.")
 
-        # 4. Validação de Prensa
-        if is_checklist_machine(prensa):
-            raise ValidationError("A máquina selecionada não é permitida para chamados de Matrizaria.")
+        # 4. Validação de Destino e Prensa
+        if destino == "MATRIZARIA":
+            prensa = None
+            prensa_nome = "Matrizaria"
+        elif destino == "MAQUINA":
+            if not prensa:
+                raise ValidationError("A prensa é obrigatória para serviços vinculados a máquina.")
+            if is_checklist_machine(prensa):
+                raise ValidationError("A máquina selecionada não é permitida para chamados de Matrizaria.")
+            prensa_nome = prensa.nome
+        else:
+            raise ValidationError("Destino inválido.")
 
         # 5. Validação de Matriz Física
         if tipo_servico.exige_matriz_fisica and not matriz_fisica:
@@ -235,8 +255,17 @@ class MatrizariaService:
 
         # 6. Comparar alterações
         alteracoes = []
-        if solicitacao.prensa_id != prensa.id:
-            alteracoes.append(f"Prensa: '{solicitacao.prensa.nome}' -> '{prensa.nome}'")
+        if solicitacao.destino != destino:
+            destino_labels = dict(SolicitacaoServicoMatrizaria.DESTINO_CHOICES)
+            alteracoes.append(f"Destino: '{solicitacao.get_destino_display()}' -> '{destino_labels.get(destino, destino)}'")
+
+        antigo_prensa_id = solicitacao.prensa_id
+        novo_prensa_id = prensa.id if prensa else None
+        if antigo_prensa_id != novo_prensa_id:
+            antigo_nome = solicitacao.prensa.nome if solicitacao.prensa else (solicitacao.prensa_nome_snapshot or "Matrizaria")
+            novo_nome = prensa.nome if prensa else "Matrizaria"
+            alteracoes.append(f"Prensa: '{antigo_nome}' -> '{novo_nome}'")
+
         if solicitacao.tipo_servico_id != tipo_servico.id:
             alteracoes.append(f"Tipo: '{solicitacao.tipo_servico.nome}' -> '{tipo_servico.nome}'")
 
@@ -259,7 +288,10 @@ class MatrizariaService:
         autor_nome = cls.get_user_display_name(usuario)
 
         # Salva dados atualizados
+        solicitacao.destino = destino
         solicitacao.prensa = prensa
+        if not solicitacao.prensa_nome_snapshot:
+            solicitacao.prensa_nome_snapshot = prensa_nome
         solicitacao.tipo_servico = tipo_servico
         solicitacao.matriz_fisica = matriz_fisica
         solicitacao.prioridade = prioridade
@@ -835,6 +867,7 @@ class MatrizariaService:
         status: Optional[str] = None,
         solicitante_id: Optional[int] = None,
         executante_id: Optional[int] = None,
+        destino: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Executa consulta canônica de relatórios da Matrizaria respeitando os 4 critérios temporais:
@@ -889,6 +922,8 @@ class MatrizariaService:
             qs = qs.filter(data_solicitacao__gte=dt_inicio_aware, data_solicitacao__lt=dt_fim_exclusive)
 
         # Filtros adicionais
+        if destino:
+            qs = qs.filter(destino=destino)
         if prensa_id:
             qs = qs.filter(prensa_id=prensa_id)
         if tipo_servico_id:
@@ -973,7 +1008,7 @@ class MatrizariaService:
                 "solicitacao": s,
                 "id": s.id,
                 "protocolo": f"SM #{s.id}",
-                "prensa_nome": s.prensa_nome_snapshot or s.prensa.nome,
+                "prensa_nome": s.prensa_nome_snapshot or (s.prensa.nome if s.prensa else "Matrizaria"),
                 "tipo_servico_nome": s.tipo_servico_nome_snapshot or s.tipo_servico.nome,
                 "matriz_identificador": matriz_ident,
                 "status_atual": s.status,
@@ -1003,3 +1038,153 @@ class MatrizariaService:
             })
 
         return resultados
+
+    @classmethod
+    @transaction.atomic(using="default")
+    def excluir_solicitacao_operacional(cls, solicitacao_id: int, usuario) -> None:
+        """
+        Permite a exclusão definitiva de uma solicitação no fluxo operacional.
+        Regras:
+        - Status deve ser estritamente 'SOLICITADO'
+        - Não pode ter ciclos de execução iniciados (ciclos_execucao.count() == 0)
+        - Usuário deve ter permissão (solicitante original ou gestão/liderança autorizada)
+        """
+        solicitacao = SolicitacaoServicoMatrizaria.objects.select_for_update().filter(pk=solicitacao_id).first()
+        if not solicitacao:
+            raise ValidationError("Solicitação não encontrada.")
+
+        # 1. Permissão
+        if usuario:
+            from .decorators import _user_can_request_matrizaria, _user_can_inspect_matrizaria
+            is_tv = (
+                usuario.username.startswith("tv")
+                or usuario.groups.filter(name__in=["Visualizador", "Visualizador Matrizaria"]).exists()
+            )
+            is_gestao = (
+                usuario.is_superuser
+                or usuario.is_staff
+                or _user_can_inspect_matrizaria(usuario)
+                or usuario.groups.filter(name__in=["Liderança de Produção", "Lideres", "Tecnicos_Lideres"]).exists()
+                or usuario.has_perm("matrizaria.delete_solicitacaoservicomatrizaria")
+            )
+            is_solicitante_proprio = (
+                solicitacao.solicitado_por_id == usuario.id
+                and _user_can_request_matrizaria(usuario)
+            )
+            if is_tv or not (is_solicitante_proprio or is_gestao):
+                raise PermissionDenied("Apenas o solicitante original ou liderança autorizada podem excluir uma solicitação pendente.")
+
+        # 2. Status e ciclos
+        if solicitacao.status != "SOLICITADO":
+            raise ValidationError(
+                f"Não é permitido excluir uma solicitação com status '{solicitacao.get_status_display()}'. Apenas chamados pendentes podem ser excluídos."
+            )
+        if solicitacao.ciclos_execucao.exists():
+            raise ValidationError("Não é permitido excluir uma solicitação cujo atendimento técnico já foi iniciado. Utilize o cancelamento.")
+
+        # 3. Remove histórico inicial e o objeto
+        solicitacao.historico_transicoes.all().delete()
+        solicitacao.delete()
+
+
+class AdminCascadeDeletionService:
+    """
+    Serviço administrativo exclusivo para superusuários realizarem exclusão forçada
+    de registros com relacionamentos dependentes (PROTECT) sem alterar as garantias
+    globais do modelo nem afetar o alias scada.
+    """
+
+    @classmethod
+    def validar_permissao_superuser(cls, user):
+        if not user or not user.is_authenticated or not user.is_superuser:
+            raise PermissionDenied("Apenas superusuários têm permissão para exclusão administrativa forçada.")
+
+    @classmethod
+    def coletar_dependentes(cls, queryset_ou_obj) -> List[Dict[str, Any]]:
+        """
+        Inspeciona e retorna um resumo estruturado dos registros e seus dependentes que seriam afetados.
+        """
+        from django.db.models import QuerySet
+        if isinstance(queryset_ou_obj, QuerySet):
+            objs = list(queryset_ou_obj)
+        elif isinstance(queryset_ou_obj, list):
+            objs = queryset_ou_obj
+        else:
+            objs = [queryset_ou_obj]
+
+        preview = []
+        for obj in objs:
+            if getattr(obj._meta, "managed", True) is False:
+                raise ValidationError(f"O modelo '{obj._meta.verbose_name}' não é gerenciado (SCADA) e não pode ser excluído.")
+
+            item = {
+                "objeto": str(obj),
+                "model": str(obj._meta.verbose_name),
+                "id": obj.pk,
+                "dependentes": [],
+            }
+            if isinstance(obj, SolicitacaoServicoMatrizaria):
+                n_ciclos = obj.ciclos_execucao.count()
+                if n_ciclos:
+                    item["dependentes"].append(f"{n_ciclos} Ciclo(s) de Execução")
+                n_hist = obj.historico_transicoes.count()
+                if n_hist:
+                    item["dependentes"].append(f"{n_hist} Histórico(s) de Transição")
+            elif isinstance(obj, TipoServicoMatrizaria):
+                n_sol = obj.solicitacoes.count()
+                if n_sol:
+                    item["dependentes"].append(f"{n_sol} Solicitação(ões) de Serviço vinculada(s)")
+            elif isinstance(obj, MatrizFisica):
+                n_sol = obj.solicitacoes_servico.count()
+                if n_sol:
+                    item["dependentes"].append(f"{n_sol} Solicitação(ões) de Serviço vinculada(s)")
+
+            preview.append(item)
+        return preview
+
+    @classmethod
+    def excluir_objeto(cls, obj, user) -> Dict[str, Any]:
+        cls.validar_permissao_superuser(user)
+        return cls.excluir_objetos([obj], user)
+
+    @classmethod
+    def excluir_objetos(cls, queryset_ou_lista, user) -> Dict[str, Any]:
+        cls.validar_permissao_superuser(user)
+        from django.db.models import QuerySet
+        objs = list(queryset_ou_lista) if isinstance(queryset_ou_lista, QuerySet) else list(queryset_ou_lista)
+
+        total_deletados = 0
+        detalhes = {}
+
+        with transaction.atomic(using="default"):
+            for obj in objs:
+                if getattr(obj._meta, "managed", True) is False:
+                    raise ValidationError(f"O modelo '{obj._meta.verbose_name}' é não-gerenciado (SCADA) e protegido contra exclusão.")
+
+                if isinstance(obj, SolicitacaoServicoMatrizaria):
+                    c_cnt, _ = obj.ciclos_execucao.all().delete()
+                    h_cnt, _ = obj.historico_transicoes.all().delete()
+                    detalhes["CicloExecucaoMatrizaria"] = detalhes.get("CicloExecucaoMatrizaria", 0) + c_cnt
+                    detalhes["HistoricoTransicaoServicoMatrizaria"] = detalhes.get("HistoricoTransicaoServicoMatrizaria", 0) + h_cnt
+                    total_deletados += c_cnt + h_cnt
+                elif isinstance(obj, TipoServicoMatrizaria):
+                    for sol in list(obj.solicitacoes.all()):
+                        c_cnt, _ = sol.ciclos_execucao.all().delete()
+                        h_cnt, _ = sol.historico_transicoes.all().delete()
+                        total_deletados += c_cnt + h_cnt
+                        s_cnt, _ = sol.delete()
+                        total_deletados += s_cnt
+                elif isinstance(obj, MatrizFisica):
+                    for sol in list(obj.solicitacoes_servico.all()):
+                        c_cnt, _ = sol.ciclos_execucao.all().delete()
+                        h_cnt, _ = sol.historico_transicoes.all().delete()
+                        total_deletados += c_cnt + h_cnt
+                        s_cnt, _ = sol.delete()
+                        total_deletados += s_cnt
+
+                m_name = obj._meta.object_name
+                cnt, _ = obj.delete()
+                detalhes[m_name] = detalhes.get(m_name, 0) + cnt
+                total_deletados += cnt
+
+        return {"total_deletados": total_deletados, "detalhes": detalhes}

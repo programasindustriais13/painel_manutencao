@@ -2,7 +2,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from django.utils import timezone
 from django.contrib.auth.models import User
-from maintenance.models import Machine
+from maintenance.models import Machine, WhatsAppGroup
 
 
 class ProductionShift(models.Model):
@@ -262,7 +262,63 @@ class ProductionGlobalParameter(models.Model):
         return f"{self.nome} ({self.chave})"
 
 
+class WhatsAppAlertRecipient(models.Model):
+    nome = models.CharField(
+        max_length=100,
+        verbose_name="Nome do Destinatário"
+    )
+    telefone = models.CharField(
+        max_length=30,
+        verbose_name="Número de WhatsApp",
+        help_text="Informe com DDD (ex: 31999999999 ou 5531999999999)."
+    )
+    ativo = models.BooleanField(
+        default=True,
+        verbose_name="Ativo"
+    )
+    criado_em = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Criado em"
+    )
+
+    class Meta:
+        verbose_name = "Destinatário de Alerta WhatsApp"
+        verbose_name_plural = "Destinatários de Alerta WhatsApp"
+        ordering = ["nome"]
+
+    def __str__(self):
+        return f"{self.nome} ({self.telefone})"
+
+    @property
+    def telefone_normalizado(self) -> str:
+        nums = "".join(ch for ch in (self.telefone or "") if ch.isdigit())
+        if len(nums) in (10, 11):
+            nums = f"55{nums}"
+        return nums
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        super().clean()
+        nums = "".join(ch for ch in (self.telefone or "") if ch.isdigit())
+        if len(nums) < 10:
+            raise ValidationError("O telefone deve conter pelo menos 10 dígitos (DDD + número).")
+
+
 class ProductionGlobalAlarm(models.Model):
+    ESTADO_CHOICES = [
+        ("NORMAL", "Normal"),
+        ("PENDENTE", "Pendente"),
+        ("ALARME_ATIVO", "Alarme Ativo"),
+        ("DESABILITADO", "Desabilitado"),
+    ]
+
+    INTERVALO_REPETICAO_CHOICES = [
+        (1, "1 minuto"),
+        (5, "5 minutos"),
+        (10, "10 minutos"),
+        (30, "30 minutos"),
+    ]
+
     nome = models.CharField(
         max_length=100,
         verbose_name="Nome do Alarme"
@@ -279,9 +335,99 @@ class ProductionGlobalAlarm(models.Model):
         null=True,
         verbose_name="XID no Scada-LTS"
     )
+    descricao = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Descrição do Alarme"
+    )
+    unidade = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        verbose_name="Unidade de Medida",
+        help_text="Ex: bar, °C, litros, %, etc."
+    )
+    valor_minimo = models.FloatField(
+        blank=True,
+        null=True,
+        verbose_name="Valor Mínimo Permitido"
+    )
+    valor_maximo = models.FloatField(
+        blank=True,
+        null=True,
+        verbose_name="Valor Máximo Permitido"
+    )
+    delay_segundos = models.PositiveIntegerField(
+        default=60,
+        verbose_name="Delay antes do Alarme (segundos)",
+        help_text="Tempo de permanência contínua fora da faixa antes de considerar alarme."
+    )
+    intervalo_repeticao_minutos = models.PositiveIntegerField(
+        default=10,
+        choices=INTERVALO_REPETICAO_CHOICES,
+        verbose_name="Repetir enquanto estiver em alarme",
+        help_text="Intervalo mínimo entre notificações enquanto o valor continuar fora da faixa."
+    )
+    destinatarios = models.ManyToManyField(
+        WhatsAppAlertRecipient,
+        blank=True,
+        related_name="alarmes",
+        verbose_name="Destinatários Individuais"
+    )
+    grupos = models.ManyToManyField(
+        WhatsAppGroup,
+        blank=True,
+        related_name="alarmes_scada",
+        verbose_name="Grupos de WhatsApp"
+    )
+    habilitado = models.BooleanField(
+        default=True,
+        verbose_name="Habilitado"
+    )
+    notificar_normalizacao = models.BooleanField(
+        default=True,
+        verbose_name="Notificar Retorno ao Normal"
+    )
     ordem = models.PositiveIntegerField(
         default=0,
         verbose_name="Ordem de Exibição"
+    )
+
+    # Campos de persistência de estado (máquina de estados idempotente)
+    estado_atual = models.CharField(
+        max_length=20,
+        choices=ESTADO_CHOICES,
+        default="NORMAL",
+        verbose_name="Estado Atual"
+    )
+    inicio_fora_faixa = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Início Fora da Faixa"
+    )
+    ultima_leitura_valor = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Última Leitura Válida"
+    )
+    ultima_leitura_timestamp = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora da Última Leitura"
+    )
+    ultimo_alerta_enviado_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Último Alerta Enviado Em"
+    )
+    alerta_inicial_enviado = models.BooleanField(
+        default=False,
+        verbose_name="Alerta Inicial Enviado"
+    )
+    ultima_normalizacao_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Última Normalização Em"
     )
 
     class Meta:
@@ -291,6 +437,32 @@ class ProductionGlobalAlarm(models.Model):
 
     def __str__(self):
         return f"{self.nome} ({self.chave})"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        super().clean()
+        if self.valor_minimo is not None and self.valor_maximo is not None:
+            if self.valor_minimo >= self.valor_maximo:
+                raise ValidationError("O valor mínimo deve ser estritamente menor que o valor máximo.")
+        if not self.habilitado and self.estado_atual != "DESABILITADO":
+            self.estado_atual = "DESABILITADO"
+            self.inicio_fora_faixa = None
+            self.alerta_inicial_enviado = False
+        elif self.habilitado and self.estado_atual == "DESABILITADO":
+            self.estado_atual = "NORMAL"
+            self.inicio_fora_faixa = None
+            self.alerta_inicial_enviado = False
+
+    @property
+    def faixa_formatada(self) -> str:
+        u = f" {self.unidade}" if self.unidade else ""
+        if self.valor_minimo is not None and self.valor_maximo is not None:
+            return f"{self.valor_minimo:.1f} a {self.valor_maximo:.1f}{u}"
+        elif self.valor_minimo is not None:
+            return f"mínimo {self.valor_minimo:.1f}{u}"
+        elif self.valor_maximo is not None:
+            return f"máximo {self.valor_maximo:.1f}{u}"
+        return "Não configurada"
 
 
 class ProductionMachineState(models.Model):

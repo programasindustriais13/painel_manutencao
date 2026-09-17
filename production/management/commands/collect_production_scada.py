@@ -110,6 +110,14 @@ class Command(BaseCommand):
                     from production.models import ProductionMachineConfig
                     scada_vals = ProductionStateService.process_scada_cycle()
                     ProductionStateService.purge_old_rate_aggregates(days=90)
+
+                    # Avaliação de alertas SCADA de manutenção via WhatsApp
+                    try:
+                        from production.maintenance_alerts import MaintenanceAlertService
+                        MaintenanceAlertService.evaluate_due_alerts(scada_values=scada_vals)
+                    except Exception as e:
+                        logger.warning(f"Erro ao avaliar alertas de manutenção SCADA: {type(e).__name__}: {e}")
+
                     machines_count = ProductionMachineConfig.objects.count()
                     logger.info(f"Ciclo concluído: {machines_count} máquina(s) processada(s).")
                     self.stdout.write(".", ending="")

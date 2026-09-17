@@ -8,6 +8,7 @@ from django.contrib.auth.models import Group, Permission
 from django.core.exceptions import ValidationError, PermissionDenied
 from django.utils import timezone
 
+from django.db.models import ProtectedError
 from maintenance.models import Sector, Machine
 from production.models import ProductionMatrixCatalog
 from matrizaria.models import (
@@ -17,7 +18,7 @@ from matrizaria.models import (
     CicloExecucaoMatrizaria,
     HistoricoTransicaoServicoMatrizaria,
 )
-from matrizaria.services import MatrizariaService
+from matrizaria.services import MatrizariaService, AdminCascadeDeletionService
 from matrizaria.views import sanitize_excel_cell
 
 User = get_user_model()
@@ -918,4 +919,335 @@ class MatrizariaCincoAjustesTestCase(MatrizariaBaseTestCase):
             versao_esperada=sol.versao,
         )
         self.assertEqual(sol_transf.responsavel_atribuido, self.tecnico_matrizaria_2)
+
+
+class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
+    """
+    Testes automatizados cobrindo os requisitos da SPEC 1:
+    1. Criação com prensa;
+    2. Criação escolhendo Matrizaria (serviço interno);
+    3. Máquina obrigatória quando destino exigir máquina;
+    4. Relatórios suportam serviço interno;
+    5. Excel suporta serviço interno;
+    6. Edição existente suporta alteração de destino;
+    7. Exclusão operacional funciona conforme permissão;
+    8. Usuário comum não recebe privilégio de exclusão administrativa;
+    9. Superuser consegue excluir registro relacionado usando fluxo administrativo especial;
+    10. Registros protegidos continuam protegidos fora do fluxo do superuser;
+    11. Nenhuma escrita em scada.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.superuser = User.objects.create_superuser(
+            username="admin_supremo",
+            email="admin@example.com",
+            password="adminpassword123",
+        )
+        self.client = Client()
+
+    def test_item1_criacao_com_prensa(self):
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Ajuste normal em prensa",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        self.assertEqual(sol.destino, "MAQUINA")
+        self.assertEqual(sol.prensa, self.prensa_01)
+        self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")
+        self.assertIn("PRENSA BOM 01", str(sol))
+
+    def test_item2_criacao_escolhendo_matrizaria_sem_maquina(self):
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Manutenção interna de bancada e gabarito",
+            solicitado_por=self.solicitante_user,
+            destino="MATRIZARIA",
+        )
+        self.assertEqual(sol.destino, "MATRIZARIA")
+        self.assertIsNone(sol.prensa)
+        self.assertEqual(sol.prensa_nome_snapshot, "Matrizaria")
+        self.assertIn("Matrizaria", str(sol))
+
+    def test_item3_maquina_obrigatoria_quando_destino_maquina(self):
+        # 1. MatrizariaService.criar_solicitacao sem prensa quando destino é MAQUINA
+        with self.assertRaises(ValidationError) as ctx:
+            MatrizariaService.criar_solicitacao(
+                prensa=None,
+                tipo_servico=self.tipo_ajuste,
+                descricao_solicitacao="Tentativa inválida sem máquina",
+                solicitado_por=self.solicitante_user,
+                destino="MAQUINA",
+            )
+        self.assertIn("A prensa é obrigatória", str(ctx.exception))
+
+        # 2. Model clean() rejeita destino=MAQUINA com prensa=None
+        sol_invalida_1 = SolicitacaoServicoMatrizaria(
+            destino="MAQUINA",
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Teste model",
+            solicitado_por=self.solicitante_user,
+        )
+        with self.assertRaises(ValidationError):
+            sol_invalida_1.full_clean()
+
+        # 3. Model clean() rejeita destino=MATRIZARIA com prensa associada
+        sol_invalida_2 = SolicitacaoServicoMatrizaria(
+            destino="MATRIZARIA",
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Teste model",
+            solicitado_por=self.solicitante_user,
+        )
+        with self.assertRaises(ValidationError):
+            sol_invalida_2.full_clean()
+
+    def test_item4_relatorios_suportam_servico_interno(self):
+        sol_int = MatrizariaService.criar_solicitacao(
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Serviço interno para relatório",
+            solicitado_por=self.solicitante_user,
+            destino="MATRIZARIA",
+        )
+        sol_maq = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Serviço máquina para relatório",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+
+        hoje = timezone.localdate()
+        # Filtro com destino=MATRIZARIA
+        res_matriz = MatrizariaService.consultar_relatorio(
+            criterio_temporal="ABERTAS",
+            data_inicio=hoje,
+            data_fim=hoje,
+            destino="MATRIZARIA",
+        )
+        ids_matriz = [r["id"] for r in res_matriz]
+        self.assertIn(sol_int.id, ids_matriz)
+        self.assertNotIn(sol_maq.id, ids_matriz)
+
+        item = next(r for r in res_matriz if r["id"] == sol_int.id)
+        self.assertEqual(item["prensa_nome"], "Matrizaria")
+
+    def test_item5_excel_suporta_servico_interno(self):
+        sol_int = MatrizariaService.criar_solicitacao(
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Serviço interno para Excel",
+            solicitado_por=self.solicitante_user,
+            destino="MATRIZARIA",
+        )
+        self.client.force_login(self.superuser)
+        url = reverse("matrizaria:exportar_excel") + "?criterio_temporal=ABERTAS&prensa=__MATRIZARIA__"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        import io
+        wb = openpyxl.load_workbook(io.BytesIO(response.content))
+        ws_servicos = wb["Serviços"]
+        # Encontra a linha da solicitação interna
+        linhas = list(ws_servicos.iter_rows(values_only=True))
+        self.assertGreater(len(linhas), 1)
+        header = linhas[0]
+        col_prensa = header.index("Prensa")
+        col_prot = header.index("Protocolo")
+        
+        achou = False
+        for row in linhas[1:]:
+            if row[col_prot] == f"SM #{sol_int.id}":
+                self.assertEqual(row[col_prensa], "Matrizaria")
+                achou = True
+                break
+        self.assertTrue(achou, "Solicitação interna não encontrada na planilha gerada")
+
+    def test_item6_edicao_existente_suporta_mudanca_de_destino(self):
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Criado com máquina por engano",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        sol_editada = MatrizariaService.editar_solicitacao(
+            solicitacao_id=sol.id,
+            usuario=self.solicitante_user,
+            versao_esperada=sol.versao,
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            matriz_fisica=None,
+            prioridade="NORMAL",
+            descricao_solicitacao="Corrigido para serviço interno da Matrizaria",
+            motivo_edicao="Não é serviço de prensa, é na bancada",
+            destino="MATRIZARIA",
+        )
+        self.assertEqual(sol_editada.destino, "MATRIZARIA")
+        self.assertIsNone(sol_editada.prensa)
+
+        h = sol_editada.historico_transicoes.filter(tipo_evento="ALTERACAO_DADO").first()
+        self.assertIsNotNone(h)
+        self.assertIn("Destino", h.dados_modificados)
+
+    def test_item7_exclusao_operacional_sucesso_e_restricoes(self):
+        # 1. Cria chamado pendente
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado para teste de exclusão",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        sol_id = sol.id
+
+        # 2. Usuário sem permissão (técnico de manutenção) tenta excluir
+        with self.assertRaises(PermissionDenied):
+            MatrizariaService.excluir_solicitacao_operacional(sol_id, self.tecnico_maint_user)
+
+        # 3. Solicitante próprio exclui com sucesso
+        MatrizariaService.excluir_solicitacao_operacional(sol_id, self.solicitante_user)
+        self.assertFalse(SolicitacaoServicoMatrizaria.objects.filter(id=sol_id).exists())
+        self.assertFalse(HistoricoTransicaoServicoMatrizaria.objects.filter(solicitacao_id=sol_id).exists())
+
+        # 4. Chamado já iniciado NÃO pode ser excluído operacionalmente
+        sol_iniciado = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado iniciado",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        MatrizariaService.iniciar_atendimento(sol_iniciado.id, self.tecnico_matrizaria_1, sol_iniciado.versao)
+        with self.assertRaises(ValidationError) as ctx:
+            MatrizariaService.excluir_solicitacao_operacional(sol_iniciado.id, self.solicitante_user)
+        self.assertIn("Apenas chamados pendentes podem ser excluídos", str(ctx.exception))
+
+        # Se forçado para status SOLICITADO mas ainda com ciclo existente
+        sol_iniciado.status = "SOLICITADO"
+        sol_iniciado.save()
+        with self.assertRaises(ValidationError) as ctx:
+            MatrizariaService.excluir_solicitacao_operacional(sol_iniciado.id, self.solicitante_user)
+        self.assertIn("atendimento técnico já foi iniciado", str(ctx.exception))
+
+    def test_item8_usuario_comum_nao_tem_privilegio_exclusao_administrativa(self):
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Teste privilégio superuser",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        # Operador
+        with self.assertRaises(PermissionDenied):
+            AdminCascadeDeletionService.excluir_objeto(sol, self.solicitante_user)
+        # Líder
+        with self.assertRaises(PermissionDenied):
+            AdminCascadeDeletionService.excluir_objeto(sol, self.lider_user)
+
+    def test_item9_superuser_exclusao_administrativa_forcada_com_dependentes(self):
+        # 1. Cria chamado, inicia atendimento (gerando Ciclo e Históricos)
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado com dependentes",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        sol = MatrizariaService.iniciar_atendimento(sol.id, self.tecnico_matrizaria_1, sol.versao)
+        self.assertGreater(sol.ciclos_execucao.count(), 0)
+        self.assertGreater(sol.historico_transicoes.count(), 0)
+
+        # 2. Preview de dependentes
+        preview = AdminCascadeDeletionService.coletar_dependentes([sol])
+        self.assertEqual(len(preview), 1)
+        self.assertGreater(len(preview[0]["dependentes"]), 0)
+
+        # 3. Exclusão forçada por superusuário
+        sol_id = sol.id
+        resultado = AdminCascadeDeletionService.excluir_objeto(sol, self.superuser)
+        self.assertGreaterEqual(resultado["total_deletados"], 3)
+        self.assertFalse(SolicitacaoServicoMatrizaria.objects.filter(id=sol_id).exists())
+        self.assertFalse(CicloExecucaoMatrizaria.objects.filter(solicitacao_id=sol_id).exists())
+        self.assertFalse(HistoricoTransicaoServicoMatrizaria.objects.filter(solicitacao_id=sol_id).exists())
+
+    def test_item10_registros_protegidos_continuam_protegidos_fora_fluxo_superuser(self):
+        # Cria chamado e ciclo
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado com PROTECT ativo",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        sol = MatrizariaService.iniciar_atendimento(sol.id, self.tecnico_matrizaria_1, sol.versao)
+        
+        # Tentar chamar delete() do Django diretamente no model DEVE falhar com ProtectedError
+        with self.assertRaises(ProtectedError):
+            sol.delete()
+
+    def test_item11_nenhuma_escrita_em_scada(self):
+        # Garante que os modelos residem no banco default
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Verificação de banco",
+            solicitado_por=self.solicitante_user,
+            destino="MATRIZARIA",
+        )
+        self.assertEqual(sol._state.db, "default")
+
+    def test_botao_excluir_aparece_exclusivamente_para_superuser(self):
+        """
+        Valida que o botão 'Excluir Solicitação' é exibido no HTML exclusivamente
+        quando o usuário logado é SuperUser (is_superuser=True).
+        Operadores, técnicos e líderes não visualizam o botão de exclusão.
+        """
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Teste de visibilidade de botões",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        url = reverse("matrizaria:detalhe_servico", kwargs={"pk": sol.id})
+
+        # 1. Solicitante comum acessa a tela de detalhes
+        self.client.force_login(self.solicitante_user)
+        res_user = self.client.get(url)
+        self.assertEqual(res_user.status_code, 200)
+        self.assertFalse(res_user.context["can_excluir"])
+        self.assertNotContains(res_user, "Excluir Solicitação")
+        self.assertContains(res_user, "Editar Solicitação")
+        self.assertContains(res_user, "Cancelar Solicitação")
+        self.assertContains(res_user, "bootstrap.bundle.min.js")
+        self.assertContains(res_user, "openModalDirect")
+
+        # 2. Usuário não-superuser tenta postar para exclusão -> Bloqueado
+        res_delete_denied = self.client.post(reverse("matrizaria:excluir_solicitacao", kwargs={"pk": sol.id}))
+        self.assertEqual(res_delete_denied.status_code, 302)
+        self.assertTrue(SolicitacaoServicoMatrizaria.objects.filter(id=sol.id).exists())
+
+        # 3. SuperUser acessa a tela de detalhes -> Botão Excluir presente
+        self.client.force_login(self.superuser)
+        res_super = self.client.get(url)
+        self.assertEqual(res_super.status_code, 200)
+        self.assertTrue(res_super.context["can_excluir"])
+        self.assertContains(res_super, "Excluir Solicitação")
+        self.assertContains(res_super, "Editar Solicitação")
+        self.assertContains(res_super, "Cancelar Solicitação")
+
+        # 4. SuperUser posta exclusão -> Excluído com sucesso
+        res_delete_ok = self.client.post(reverse("matrizaria:excluir_solicitacao", kwargs={"pk": sol.id}))
+        self.assertEqual(res_delete_ok.status_code, 302)
+        self.assertFalse(SolicitacaoServicoMatrizaria.objects.filter(id=sol.id).exists())
 

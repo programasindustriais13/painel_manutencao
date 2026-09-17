@@ -1,4 +1,7 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied
+from django.shortcuts import redirect
+from django.template.response import TemplateResponse
 from .models import (
     TipoServicoMatrizaria,
     MatrizFisica,
@@ -7,10 +10,72 @@ from .models import (
     CicloExecucaoMatrizaria,
     HistoricoTransicaoServicoMatrizaria,
 )
+from .services import AdminCascadeDeletionService
+
+
+class SuperuserCascadeDeleteMixin:
+    """
+    Mixin para fornecer exclusão em cascata atômica e segura exclusivamente para superusuários
+    no Django Admin, contornando proteções (PROTECT) de registros operacionais/treinamento
+    sem enfraquecer os models no banco de dados.
+    """
+    actions = ["excluir_com_dependentes_action"]
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(request.user and request.user.is_superuser)
+
+    @admin.action(description="Excluir selecionados (Forçado p/ Superuser - com dependentes)")
+    def excluir_com_dependentes_action(self, request, queryset):
+        if not request.user.is_superuser:
+            self.message_user(request, "Apenas superusuários podem utilizar a exclusão forçada.", level=messages.ERROR)
+            return None
+        if "confirmar" in request.POST:
+            resultado = AdminCascadeDeletionService.excluir_objetos(queryset, request.user)
+            self.message_user(
+                request,
+                f"Exclusão concluída com sucesso! Total de registros removidos: {resultado['total_deletados']}.",
+                level=messages.SUCCESS,
+            )
+            return None
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": "Confirmação de Exclusão Administrativa com Dependentes",
+            "preview": AdminCascadeDeletionService.coletar_dependentes(queryset),
+            "queryset": queryset,
+            "opts": self.model._meta,
+            "action_checkbox_name": admin.helpers.ACTION_CHECKBOX_NAME,
+        }
+        return TemplateResponse(request, "admin/matrizaria/confirm_cascade_delete.html", context)
+
+    def delete_view(self, request, object_id, extra_context=None):
+        if not request.user.is_superuser:
+            raise PermissionDenied("Apenas superusuários podem excluir este registro.")
+        obj = self.get_object(request, object_id)
+        if obj is None:
+            return redirect(f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_changelist")
+        if request.method == "POST" and "confirmar" in request.POST:
+            resultado = AdminCascadeDeletionService.excluir_objeto(obj, request.user)
+            self.message_user(
+                request,
+                f"Registro '{obj}' e seus dependentes foram excluídos com sucesso ({resultado['total_deletados']} itens removidos).",
+                level=messages.SUCCESS,
+            )
+            return redirect(f"admin:{self.model._meta.app_label}_{self.model._meta.model_name}_changelist")
+
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Confirmação de Exclusão: {obj}",
+            "preview": AdminCascadeDeletionService.coletar_dependentes([obj]),
+            "object": obj,
+            "opts": self.model._meta,
+            **(extra_context or {}),
+        }
+        return TemplateResponse(request, "admin/matrizaria/confirm_cascade_delete.html", context)
 
 
 @admin.register(TipoServicoMatrizaria)
-class TipoServicoMatrizariaAdmin(admin.ModelAdmin):
+class TipoServicoMatrizariaAdmin(SuperuserCascadeDeleteMixin, admin.ModelAdmin):
     list_display = ("nome", "exige_matriz_fisica", "ativo", "ordem_exibicao")
     list_filter = ("ativo", "exige_matriz_fisica")
     search_fields = ("nome", "descricao")
@@ -18,7 +83,7 @@ class TipoServicoMatrizariaAdmin(admin.ModelAdmin):
 
 
 @admin.register(MatrizFisica)
-class MatrizFisicaAdmin(admin.ModelAdmin):
+class MatrizFisicaAdmin(SuperuserCascadeDeleteMixin, admin.ModelAdmin):
     list_display = (
         "nome_exibicao",
         "modelo",
@@ -99,8 +164,8 @@ class CicloExecucaoInline(admin.TabularInline):
         "usuario_fim",
         "data_fim",
         "forma_encerramento",
-        "matriz_fisica_snapshot",
         "descricao_servico_executado",
+        "matriz_fisica_snapshot",
     )
 
     def has_add_permission(self, request, obj=None):
@@ -118,11 +183,12 @@ class HistoricoTransicaoInline(admin.TabularInline):
     extra = 0
     can_delete = False
     readonly_fields = (
-        "data_evento",
-        "usuario_nome_snapshot",
         "tipo_evento",
         "status_anterior",
         "status_novo",
+        "usuario",
+        "usuario_nome_snapshot",
+        "data_evento",
         "observacao",
         "dados_modificados",
     )
@@ -138,9 +204,10 @@ class HistoricoTransicaoInline(admin.TabularInline):
 
 
 @admin.register(SolicitacaoServicoMatrizaria)
-class SolicitacaoServicoMatrizariaAdmin(admin.ModelAdmin):
+class SolicitacaoServicoMatrizariaAdmin(SuperuserCascadeDeleteMixin, admin.ModelAdmin):
     list_display = (
         "id",
+        "destino",
         "prensa_nome_snapshot",
         "tipo_servico_nome_snapshot",
         "status",
@@ -149,7 +216,7 @@ class SolicitacaoServicoMatrizariaAdmin(admin.ModelAdmin):
         "data_solicitacao",
         "versao",
     )
-    list_filter = ("status", "tipo_servico", "prensa")
+    list_filter = ("status", "destino", "tipo_servico", "prensa")
     search_fields = (
         "id",
         "prensa_nome_snapshot",
@@ -158,9 +225,9 @@ class SolicitacaoServicoMatrizariaAdmin(admin.ModelAdmin):
         "descricao_servico_executado",
     )
     inlines = [CicloExecucaoInline, HistoricoTransicaoInline]
-    actions = None
 
     readonly_fields = (
+        "destino",
         "prensa",
         "tipo_servico",
         "matriz_fisica",
@@ -193,12 +260,9 @@ class SolicitacaoServicoMatrizariaAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
-    def has_delete_permission(self, request, obj=None):
-        return False
-
 
 @admin.register(CicloExecucaoMatrizaria)
-class CicloExecucaoMatrizariaAdmin(admin.ModelAdmin):
+class CicloExecucaoMatrizariaAdmin(SuperuserCascadeDeleteMixin, admin.ModelAdmin):
     list_display = (
         "solicitacao",
         "numero_ciclo",
@@ -210,7 +274,6 @@ class CicloExecucaoMatrizariaAdmin(admin.ModelAdmin):
     )
     list_filter = ("forma_encerramento", "data_inicio")
     search_fields = ("solicitacao__id", "descricao_servico_executado", "matriz_fisica_snapshot")
-    actions = None
 
     def has_add_permission(self, request):
         return False
@@ -218,12 +281,9 @@ class CicloExecucaoMatrizariaAdmin(admin.ModelAdmin):
     def has_change_permission(self, request, obj=None):
         return False
 
-    def has_delete_permission(self, request, obj=None):
-        return False
-
 
 @admin.register(HistoricoTransicaoServicoMatrizaria)
-class HistoricoTransicaoServicoMatrizariaAdmin(admin.ModelAdmin):
+class HistoricoTransicaoServicoMatrizariaAdmin(SuperuserCascadeDeleteMixin, admin.ModelAdmin):
     list_display = (
         "solicitacao",
         "tipo_evento",
@@ -233,14 +293,10 @@ class HistoricoTransicaoServicoMatrizariaAdmin(admin.ModelAdmin):
         "data_evento",
     )
     list_filter = ("tipo_evento", "status_novo", "data_evento")
-    search_fields = ("solicitacao__id", "detalhes")
-    actions = None
+    search_fields = ("solicitacao__id", "observacao", "dados_modificados")
 
     def has_add_permission(self, request):
         return False
 
     def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
         return False

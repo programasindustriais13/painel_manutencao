@@ -340,16 +340,31 @@ class SolicitacaoServicoMatrizaria(models.Model):
         ("URGENTE", "Urgente"),
     ]
 
+    DESTINO_CHOICES = [
+        ("MAQUINA", "Prensa / Máquina"),
+        ("MATRIZARIA", "Matrizaria — Serviço interno / Sem máquina"),
+    ]
+
     versao = models.PositiveIntegerField(
         default=1,
         db_index=True,
         verbose_name="Versão de Concorrência"
     )
 
-    # Vínculo com Prensa (obrigatório, reutiliza maintenance.Machine)
+    destino = models.CharField(
+        max_length=20,
+        choices=DESTINO_CHOICES,
+        default="MAQUINA",
+        db_index=True,
+        verbose_name="Destino do Atendimento",
+    )
+
+    # Vínculo com Prensa (opcional quando destino for Matrizaria, reutiliza maintenance.Machine)
     prensa = models.ForeignKey(
         Machine,
         on_delete=models.PROTECT,
+        null=True,
+        blank=True,
         related_name="solicitacoes_matrizaria",
         verbose_name="Prensa / Máquina"
     )
@@ -554,7 +569,8 @@ class SolicitacaoServicoMatrizaria(models.Model):
 
     def __str__(self):
         matriz_str = self.matriz_identificador_snapshot or (self.matriz_fisica.nome_exibicao if self.matriz_fisica else "Matriz N/I")
-        return f"SM #{self.pk} - {self.prensa_nome_snapshot or self.prensa.nome} - {matriz_str} ({self.get_status_display()})"
+        equipamento = self.prensa_nome_snapshot or (self.prensa.nome if self.prensa else "Matrizaria")
+        return f"SM #{self.pk} - {equipamento} - {matriz_str} ({self.get_status_display()})"
 
     @property
     def ciclo_atual(self):
@@ -620,11 +636,14 @@ class SolicitacaoServicoMatrizaria(models.Model):
 
     def clean(self):
         super().clean()
-        try:
-            if hasattr(self, "prensa") and self.prensa and is_checklist_machine(self.prensa):
+        if self.destino == "MAQUINA":
+            if not self.prensa:
+                raise ValidationError({"prensa": "Prensa/Máquina é obrigatória quando o destino for máquina."})
+            if is_checklist_machine(self.prensa):
                 raise ValidationError({"prensa": "Máquinas de apoio ou CHECK-LIST não são permitidas para chamados de Matrizaria."})
-        except Machine.DoesNotExist:
-            pass
+        elif self.destino == "MATRIZARIA":
+            if self.prensa is not None:
+                raise ValidationError({"prensa": "Serviço interno da Matrizaria não deve possuir máquina vinculada."})
 
 
 class CicloExecucaoMatrizaria(models.Model):

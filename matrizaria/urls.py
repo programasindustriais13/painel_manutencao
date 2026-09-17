@@ -16,6 +16,7 @@ urlpatterns = [
     path("servicos/<int:pk>/finalizar/", views.finalizar_execucao_view, name="finalizar_execucao"),
     path("servicos/<int:pk>/conferir/", views.conferir_servico_view, name="conferir_servico"),
     path("servicos/<int:pk>/cancelar/", views.cancelar_servico_view, name="cancelar_servico"),
+    path("servicos/<int:pk>/excluir/", views.excluir_solicitacao_view, name="excluir_solicitacao"),
 
     # Relatórios e Exportação
     path("relatorios/", views.relatorios_view, name="relatorios"),

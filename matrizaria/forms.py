@@ -56,6 +56,33 @@ def get_prensas_queryset():
     return prensas
 
 
+OPCAO_MATRIZARIA_VALOR = "__MATRIZARIA__"
+OPCAO_MATRIZARIA_LABEL = "Matrizaria — Serviço interno / Sem máquina"
+
+
+class PrensaOuMatrizariaChoiceIterator(forms.models.ModelChoiceIterator):
+    def __iter__(self):
+        if self.field.empty_label is not None:
+            yield ("", self.field.empty_label)
+        yield (OPCAO_MATRIZARIA_VALOR, OPCAO_MATRIZARIA_LABEL)
+        for obj in self.queryset:
+            yield self.choice(obj)
+
+
+class PrensaOuMatrizariaChoiceField(forms.ModelChoiceField):
+    iterator = PrensaOuMatrizariaChoiceIterator
+
+    def to_python(self, value):
+        if value == OPCAO_MATRIZARIA_VALOR:
+            return OPCAO_MATRIZARIA_VALOR
+        return super().to_python(value)
+
+    def validate(self, value):
+        if value == OPCAO_MATRIZARIA_VALOR:
+            return
+        return super().validate(value)
+
+
 def format_matriz_fisica_label(obj: MatrizFisica) -> str:
     if not obj:
         return ""
@@ -64,6 +91,13 @@ def format_matriz_fisica_label(obj: MatrizFisica) -> str:
 
 class SolicitacaoServicoForm(forms.ModelForm):
     idempotency_key = forms.CharField(widget=forms.HiddenInput(), required=False)
+    prensa = PrensaOuMatrizariaChoiceField(
+        queryset=Machine.objects.none(),
+        required=True,
+        empty_label="--- Selecione a Prensa / Máquina ---",
+        widget=forms.Select(attrs={"class": "form-select"}),
+        label="Prensa / Máquina",
+    )
 
     class Meta:
         model = SolicitacaoServicoMatrizaria
@@ -75,7 +109,6 @@ class SolicitacaoServicoForm(forms.ModelForm):
             "descricao_solicitacao",
         ]
         widgets = {
-            "prensa": forms.Select(attrs={"class": "form-select"}),
             "tipo_servico": forms.Select(attrs={"class": "form-select"}),
             "matriz_fisica": forms.Select(attrs={"class": "form-select"}),
             "prioridade": forms.Select(attrs={"class": "form-select"}),
@@ -93,22 +126,37 @@ class SolicitacaoServicoForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields["prensa"].queryset = get_prensas_queryset()
         self.fields["prensa"].label_from_instance = lambda obj: format_prensa_label(obj)
+        if self.instance and self.instance.pk and self.instance.destino == "MATRIZARIA":
+            self.initial["prensa"] = OPCAO_MATRIZARIA_VALOR
         self.fields["tipo_servico"].queryset = TipoServicoMatrizaria.objects.filter(ativo=True).order_by("ordem_exibicao", "nome")
         self.fields["matriz_fisica"].queryset = MatrizFisica.objects.filter(ativo=True).select_related("modelo").order_by("modelo__nome_exibicao", "numero_sequencial")
         self.fields["matriz_fisica"].label_from_instance = lambda obj: format_matriz_fisica_label(obj)
         self.fields["matriz_fisica"].required = False
         self.fields["matriz_fisica"].empty_label = "--- Matriz física não definida no momento ---"
-        self.fields["prensa"].empty_label = "--- Selecione a Prensa ---"
         self.fields["tipo_servico"].empty_label = "--- Selecione o Tipo de Serviço ---"
 
         if not self.initial.get("idempotency_key"):
             self.initial["idempotency_key"] = str(uuid.uuid4())
 
     def clean_prensa(self):
-        prensa = self.cleaned_data.get("prensa")
-        if prensa and is_checklist_machine(prensa):
-            raise forms.ValidationError("Máquinas de apoio ou CHECK-LIST não são válidas para chamados de Matrizaria.")
-        return prensa
+        prensa_val = self.cleaned_data.get("prensa")
+        if prensa_val == OPCAO_MATRIZARIA_VALOR:
+            self.cleaned_data["destino"] = "MATRIZARIA"
+            return None
+        elif prensa_val:
+            if is_checklist_machine(prensa_val):
+                raise forms.ValidationError("Máquinas de apoio ou CHECK-LIST não são válidas para chamados de Matrizaria.")
+            self.cleaned_data["destino"] = "MAQUINA"
+            return prensa_val
+        raise forms.ValidationError("Selecione uma Prensa / Máquina ou a opção Matrizaria.")
+
+    def clean(self):
+        cleaned_data = super().clean()
+        destino = cleaned_data.get("destino")
+        prensa = cleaned_data.get("prensa")
+        if destino == "MAQUINA" and not prensa:
+            self.add_error("prensa", "Prensa / Máquina é obrigatória quando o destino for máquina.")
+        return cleaned_data
 
 
 class FinalizarExecucaoForm(forms.Form):
@@ -232,10 +280,10 @@ class TransferirResponsabilidadeForm(forms.Form):
 
 
 class EditarSolicitacaoForm(forms.Form):
-    prensa = forms.ModelChoiceField(
+    prensa = PrensaOuMatrizariaChoiceField(
         queryset=Machine.objects.none(),
         required=True,
-        empty_label="--- Selecione a Prensa ---",
+        empty_label="--- Selecione a Prensa / Máquina ---",
         widget=forms.Select(attrs={"class": "form-select"}),
         label="Prensa / Máquina",
     )
@@ -289,10 +337,16 @@ class EditarSolicitacaoForm(forms.Form):
         self.fields["matriz_fisica"].label_from_instance = lambda obj: format_matriz_fisica_label(obj)
 
     def clean_prensa(self):
-        prensa = self.cleaned_data.get("prensa")
-        if prensa and is_checklist_machine(prensa):
-            raise ValidationError("A máquina 'CHECK-LIST' não é permitida para chamados de Matrizaria.")
-        return prensa
+        prensa_val = self.cleaned_data.get("prensa")
+        if prensa_val == OPCAO_MATRIZARIA_VALOR:
+            self.cleaned_data["destino"] = "MATRIZARIA"
+            return None
+        elif prensa_val:
+            if is_checklist_machine(prensa_val):
+                raise ValidationError("A máquina 'CHECK-LIST' não é permitida para chamados de Matrizaria.")
+            self.cleaned_data["destino"] = "MAQUINA"
+            return prensa_val
+        raise ValidationError("Selecione uma Prensa / Máquina ou a opção Matrizaria.")
 
     def clean(self):
         cleaned_data = super().clean()
@@ -344,10 +398,10 @@ class RelatorioFiltroForm(forms.Form):
         widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}),
         label="Data Final",
     )
-    prensa = forms.ModelChoiceField(
+    prensa = PrensaOuMatrizariaChoiceField(
         queryset=Machine.objects.none(),
         required=False,
-        empty_label="Todas as Prensas",
+        empty_label="Todas as Prensas / Máquinas",
         widget=forms.Select(attrs={"class": "form-select"}),
         label="Prensa",
     )

@@ -38,6 +38,7 @@ from .models import (
     ScadaPointValue,
     ScadaPointValueAnnotation,
 )
+from .maintenance_alerts import MaintenanceAlertService
 
 logger = logging.getLogger(__name__)
 
