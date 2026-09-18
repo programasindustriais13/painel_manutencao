@@ -567,9 +567,16 @@ class SolicitacaoServicoMatrizaria(models.Model):
             models.Index(fields=["data_inicio_execucao", "data_fim_execucao"]),
         ]
 
+    @property
+    def equipamento_display(self):
+        """Retorna o nome da prensa ou 'Matrizaria' para serviços internos."""
+        if self.destino == "MATRIZARIA":
+            return "Matrizaria"
+        return (self.prensa.nome if self.prensa else None) or self.prensa_nome_snapshot or "Matrizaria"
+
     def __str__(self):
         matriz_str = self.matriz_identificador_snapshot or (self.matriz_fisica.nome_exibicao if self.matriz_fisica else "Matriz N/I")
-        equipamento = self.prensa_nome_snapshot or (self.prensa.nome if self.prensa else "Matrizaria")
+        equipamento = self.equipamento_display
         return f"SM #{self.pk} - {equipamento} - {matriz_str} ({self.get_status_display()})"
 
     @property
@@ -636,6 +643,8 @@ class SolicitacaoServicoMatrizaria(models.Model):
 
     def clean(self):
         super().clean()
+        if not self.destino:
+            raise ValidationError({"destino": "O destino do serviço é obrigatório."})
         if self.destino == "MAQUINA":
             if not self.prensa:
                 raise ValidationError({"prensa": "Prensa/Máquina é obrigatória quando o destino for máquina."})

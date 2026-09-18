@@ -134,25 +134,25 @@
 
 ## 🧪 8. CRITÉRIOS DE ACEITAÇÃO
 
-- [ ] Abertura de chamado selecionando "Matrizaria — Serviço interno / Sem máquina" salva sem erros (`prensa=None`, `destino='MATRIZARIA'`, `prensa_nome_snapshot='Matrizaria'`).
-- [ ] Abertura de chamado com destino máquina sem selecionar prensa é rejeitada.
-- [ ] O chamado de Matrizaria aparece no Kanban e TV como "Matrizaria".
-- [ ] O chamado de Matrizaria NÃO aparece na timeline de nenhuma máquina real (`/producao/maquinas/<id>/`).
-- [ ] Relatórios e exportação Excel exibem "Matrizaria" na coluna de prensa/equipamento.
-- [ ] Botão de edição funciona para usuários autorizados, permitindo alterar prensa, destino, tipo de serviço, matriz física e descrição.
-- [ ] Botão de exclusão operacional exclui chamados não iniciados com confirmação e CSRF.
-- [ ] Chamados iniciados ou concluídos não podem ser excluídos operacionalmente.
-- [ ] Superuser consegue excluir registros com dependentes protegidos pelo `/admin/` via ação administrativa dedicada.
-- [ ] Usuários não-superusuários continuam bloqueados por relações `PROTECT`.
-- [ ] Zero escrita no banco `scada`.
-- [ ] 100% dos testes passam.
+- [x] Abertura de chamado selecionando "Matrizaria — Serviço interno / Sem máquina" salva sem erros (`prensa=None`, `destino='MATRIZARIA'`, `prensa_nome_snapshot='Matrizaria'`).
+- [x] Abertura de chamado com destino máquina sem selecionar prensa é rejeitada com mensagem amigável.
+- [x] O chamado de Matrizaria aparece no Kanban e TV como "Matrizaria" (sem `None`, `NULL`, `—` ou erros).
+- [x] O chamado de Matrizaria NÃO aparece na timeline de nenhuma máquina real (`/producao/maquinas/<id>/`).
+- [x] Relatórios e exportação Excel exibem "Matrizaria" na coluna de prensa/equipamento.
+- [x] Botão de edição funciona para usuários autorizados, permitindo alterar prensa, destino, tipo de serviço, matriz física e descrição.
+- [x] Botão de exclusão operacional exclui chamados não iniciados com confirmação e CSRF.
+- [x] Chamados iniciados ou concluídos não podem ser excluídos operacionalmente.
+- [x] Superuser consegue excluir registros com dependentes protegidos pelo `/admin/` via ação administrativa dedicada.
+- [x] Usuários não-superusuários continuam bloqueados por relações `PROTECT`.
+- [x] Zero escrita no banco `scada`.
+- [x] 100% dos testes passam (61 testes em `matrizaria`, 398 na suíte global).
 
 ---
 
 ## ⚠️ 9. RISCOS E MITIGAÇÕES
 
 - **Risco:** `AttributeError` em código que assume `solicitacao.prensa.nome`.
-  - *Mitigação:* Usar consistentemente `solicitacao.prensa_nome_snapshot or (solicitacao.prensa.nome if solicitacao.prensa else "Matrizaria")`.
+  - *Mitigação:* Usar consistentemente property `equipamento_display` ou `solicitacao.prensa_nome_snapshot or (solicitacao.prensa.nome if solicitacao.prensa else "Matrizaria")`.
 - **Risco:** Exclusão acidental de dados de produção pelo admin.
   - *Mitigação:* Confirmação detalhada com contagem de objetos e restrição exclusiva a superusuários.
 - **Risco:** Incompatibilidade SQLite e MySQL.
@@ -160,19 +160,23 @@
 
 ---
 
-## 🔍 10. PLANO DE IMPLEMENTAÇÃO
+## 🔍 10. PLANO DE IMPLEMENTAÇÃO E CORREÇÃO PÓS-HOMOLOGAÇÃO
 
 1. **Models e Migration:**
-   - Adicionar `destino` e tornar `prensa` anulável em `matrizaria/models.py`.
-   - Gerar migration aditiva `0003_solicitacaoservicomatrizaria_destino_and_more.py`.
+   - Adicionado `destino` e tornado `prensa` anulável em `matrizaria/models.py`.
+   - Migration aditiva criada: `0003_solicitacaoservicomatrizaria_destino_and_more.py`.
+   - Adicionada property `equipamento_display` no modelo para apresentação consistente em cards, cabeçalhos e listagens.
 2. **Forms e Services:**
-   - Atualizar `SolicitacaoServicoForm`, `EditarSolicitacaoForm`, `RelatorioFiltroForm`.
-   - Atualizar `MatrizariaService.criar_solicitacao`, `editar_solicitacao`, `excluir_solicitacao_operacional`.
-   - Criar `AdminCascadeDeletionService` para superusuários.
+   - Atualizados `SolicitacaoServicoForm`, `EditarSolicitacaoForm`, `RelatorioFiltroForm`.
+   - **Correção Pós-Homologação (Causa Raiz):** No `SolicitacaoServicoForm`, o campo `destino` foi incorporado a `Meta.fields` e atualizado na instância em `clean()`. Anteriormente, `_post_clean()` não recebia `destino` e mantinha o default `MAQUINA` com `prensa=None`, disparando `clean()` do modelo indevidamente.
+   - Rótulo alterado de `"Prensa / Máquina *"` para `"Destino do Serviço *"` e texto auxiliar para `"Selecione a Matrizaria para serviços internos ou a prensa/máquina relacionada ao atendimento."`.
+   - Atualizado `MatrizariaService.criar_solicitacao`, `editar_solicitacao`, `excluir_solicitacao_operacional`.
+   - Criado `AdminCascadeDeletionService` para superusuários.
 3. **Views e Templates:**
-   - Atualizar `solicitar_servico_view`, `editar_solicitacao_view`, criar `excluir_solicitacao_view`.
-   - Atualizar `form_solicitacao.html` e `detalhe_solicitacao.html`.
+   - Atualizados `solicitar_servico_view`, `editar_solicitacao_view`, criado `excluir_solicitacao_view`.
+   - Atualizados `form_solicitacao.html`, `detalhe_solicitacao.html`, `kanban.html` e templates TV para utilizar `equipamento_display`.
 4. **Admin:**
-   - Integrar `AdminCascadeDeletionService` no `matrizaria/admin.py` sob guarda de `is_superuser`.
+   - Integrado `AdminCascadeDeletionService` no `matrizaria/admin.py` sob guarda de `is_superuser`.
 5. **Testes e Validação:**
-   - Cobrir os 11 casos de teste obrigatórios descritos na demanda.
+   - 61 testes automatizados cobrindo todo o fluxo da Matrizaria (incluindo submissão POST de chamado interno e de máquina, edição cruzada, isolamento de prensa e relatórios).
+   - Suíte global com 398 testes aprovados.

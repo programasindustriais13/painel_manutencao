@@ -157,7 +157,7 @@ def solicitar_servico_view(request):
 
                 messages.success(
                     request,
-                    f"Solicitação SM #{solicitacao.id} para {solicitacao.prensa_nome_snapshot} aberta com sucesso!",
+                    f"Solicitação SM #{solicitacao.id} para {solicitacao.equipamento_display} aberta com sucesso!",
                 )
                 return redirect("matrizaria:detalhe_servico", pk=solicitacao.id)
             except ValidationError as e:
@@ -246,6 +246,7 @@ def detalhe_servico_view(request, pk):
     form_cancelar = CancelarServicoForm(initial={"versao": solicitacao.versao})
     form_editar = EditarSolicitacaoForm(
         initial={
+            "destino": solicitacao.destino,
             "prensa": "__MATRIZARIA__" if solicitacao.destino == "MATRIZARIA" else solicitacao.prensa_id,
             "tipo_servico": solicitacao.tipo_servico_id,
             "matriz_fisica": solicitacao.matriz_fisica_id,

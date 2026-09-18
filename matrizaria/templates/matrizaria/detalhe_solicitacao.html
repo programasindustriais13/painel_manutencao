@@ -1,6 +1,6 @@
 {% extends "matrizaria/base_matrizaria.html" %}
 
-{% block title %}SM #{{ solicitacao.id }} &bull; {{ solicitacao.prensa_nome_snapshot }} &bull; Matrizaria{% endblock %}
+{% block title %}SM #{{ solicitacao.id }} &bull; {{ solicitacao.equipamento_display }} &bull; Matrizaria{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -75,7 +75,7 @@
                     {% endif %}
                 </div>
                 <div class="text-muted small mt-1">
-                    Equipamento: <strong class="text-light">{{ solicitacao.prensa_nome_snapshot }}</strong> &bull; 
+                    Equipamento / Destino: <strong class="text-light">{{ solicitacao.equipamento_display }}</strong> &bull; 
                     Aberto em {{ solicitacao.data_solicitacao|date:"d/m/Y H:i" }} por {{ solicitacao.solicitado_por_nome }}
                 </div>
             </div>
@@ -424,6 +424,7 @@
             <form action="{% url 'matrizaria:editar_solicitacao' solicitacao.id %}" method="post">
                 {% csrf_token %}
                 <input type="hidden" name="versao" value="{{ solicitacao.versao }}">
+                {{ form_editar.destino }}
                 <div class="modal-body">
                     <p class="text-muted small mb-3">
                         Corrija as informações da solicitação original. Todas as alterações serão auditadas e salvas na linha do tempo.
@@ -432,9 +433,10 @@
                     <div class="row g-3">
                         <div class="col-12 col-md-6">
                             <label for="{{ form_editar.prensa.id_for_label }}" class="form-label fw-semibold text-light">
-                                Prensa / Máquina <span class="text-danger">*</span>
+                                Destino do Serviço <span class="text-danger">*</span>
                             </label>
                             {{ form_editar.prensa }}
+                            <div class="form-text text-muted">Selecione a Matrizaria para serviços internos ou a prensa/máquina relacionada ao atendimento.</div>
                         </div>
 
                         <div class="col-12 col-md-6">
@@ -568,7 +570,7 @@
                 {% csrf_token %}
                 <div class="modal-body">
                     <p class="text-light">
-                        Você está prestes a excluir permanentemente a solicitação <strong>SM #{{ solicitacao.id }}</strong> ({{ solicitacao.prensa_nome_snapshot }} - {{ solicitacao.tipo_servico_nome_snapshot }}).
+                        Você está prestes a excluir permanentemente a solicitação <strong>SM #{{ solicitacao.id }}</strong> ({{ solicitacao.equipamento_display }} - {{ solicitacao.tipo_servico_nome_snapshot }}).
                     </p>
                     <div class="alert alert-danger bg-danger bg-opacity-10 border-danger border-opacity-25 text-danger small">
                         <i class="bi bi-exclamation-triangle-fill me-1"></i>

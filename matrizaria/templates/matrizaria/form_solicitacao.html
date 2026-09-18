@@ -26,6 +26,7 @@
             <form method="post" novalidate id="form-solicitacao">
                 {% csrf_token %}
                 {{ form.idempotency_key }}
+                {{ form.destino }}
 
                 {% if form.non_field_errors %}
                 <div class="alert alert-danger border-0">
@@ -36,16 +37,16 @@
                 {% endif %}
 
                 <div class="row g-3 mb-4">
-                    <!-- Prensa -->
+                    <!-- Destino do Serviço -->
                     <div class="col-12 col-md-6">
                         <label for="{{ form.prensa.id_for_label }}" class="form-label fw-semibold text-light">
-                            Prensa / Máquina <span class="text-danger">*</span>
+                            Destino do Serviço <span class="text-danger">*</span>
                         </label>
                         {{ form.prensa }}
                         {% if form.prensa.errors %}
                         <div class="text-danger small mt-1">{{ form.prensa.errors.0 }}</div>
                         {% endif %}
-                        <div class="form-text text-muted">Prensas de vulcanização ativas no parque fabril.</div>
+                        <div class="form-text text-muted">Selecione a Matrizaria para serviços internos ou a prensa/máquina relacionada ao atendimento.</div>
                     </div>
 
                     <!-- Tipo de Serviço -->

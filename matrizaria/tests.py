@@ -1251,3 +1251,178 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
         self.assertEqual(res_delete_ok.status_code, 302)
         self.assertFalse(SolicitacaoServicoMatrizaria.objects.filter(id=sol.id).exists())
 
+    def test_abrir_chamado_matrizaria_via_post_sucesso(self):
+        """
+        1. Abrir chamado selecionando MATRIZARIA via POST:
+           - HTTP esperado (302 -> redireciona para detalhe);
+           - registro criado com prensa=None;
+           - destino identificado como MATRIZARIA;
+           - prensa_nome_snapshot preenchido como 'Matrizaria'.
+        """
+        self.client.force_login(self.solicitante_user)
+        url = reverse("matrizaria:solicitar_servico")
+        payload = {
+            "prensa": "__MATRIZARIA__",
+            "tipo_servico": self.tipo_ajuste.id,
+            "descricao_solicitacao": "Serviço interno na bancada da Matrizaria",
+            "prioridade": "NORMAL",
+            "idempotency_key": "test-key-matrizaria-01",
+        }
+        res = self.client.post(url, data=payload)
+        self.assertEqual(res.status_code, 302)
+
+        sol = SolicitacaoServicoMatrizaria.objects.filter(descricao_solicitacao="Serviço interno na bancada da Matrizaria").first()
+        self.assertIsNotNone(sol)
+        self.assertRedirects(res, reverse("matrizaria:detalhe_servico", kwargs={"pk": sol.id}))
+        self.assertEqual(sol.destino, "MATRIZARIA")
+        self.assertIsNone(sol.prensa)
+        self.assertEqual(sol.prensa_nome_snapshot, "Matrizaria")
+        self.assertEqual(sol.equipamento_display, "Matrizaria")
+
+    def test_abrir_chamado_prensa_real_via_post_sucesso(self):
+        """
+        2. Abrir chamado selecionando uma prensa real via POST:
+           - registro criado;
+           - prensa corretamente vinculada;
+           - destino identificado como MAQUINA.
+        """
+        self.client.force_login(self.solicitante_user)
+        url = reverse("matrizaria:solicitar_servico")
+        payload = {
+            "prensa": self.prensa_01.id,
+            "tipo_servico": self.tipo_ajuste.id,
+            "descricao_solicitacao": "Ajuste na prensa 01",
+            "prioridade": "URGENTE",
+            "idempotency_key": "test-key-prensa-01",
+        }
+        res = self.client.post(url, data=payload)
+        self.assertEqual(res.status_code, 302)
+
+        sol = SolicitacaoServicoMatrizaria.objects.filter(descricao_solicitacao="Ajuste na prensa 01").first()
+        self.assertIsNotNone(sol)
+        self.assertRedirects(res, reverse("matrizaria:detalhe_servico", kwargs={"pk": sol.id}))
+        self.assertEqual(sol.destino, "MAQUINA")
+        self.assertEqual(sol.prensa, self.prensa_01)
+        self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")
+        self.assertEqual(sol.equipamento_display, "PRENSA BOM 01")
+
+    def test_abrir_chamado_sem_selecionar_destino_invalido(self):
+        """
+        3. Informar destino de máquina sem selecionar uma máquina (ou deixar campo vazio):
+           - formulário inválido;
+           - mensagem amigável;
+           - nenhum registro criado.
+        """
+        self.client.force_login(self.solicitante_user)
+        url = reverse("matrizaria:solicitar_servico")
+        payload = {
+            "prensa": "",
+            "tipo_servico": self.tipo_ajuste.id,
+            "descricao_solicitacao": "Tentativa sem selecionar destino",
+            "prioridade": "NORMAL",
+            "idempotency_key": "test-key-vazio",
+        }
+        res = self.client.post(url, data=payload)
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Selecione o Destino do Serviço (Matrizaria ou uma Prensa / Máquina).")
+        self.assertFalse(SolicitacaoServicoMatrizaria.objects.filter(descricao_solicitacao="Tentativa sem selecionar destino").exists())
+
+    def test_servico_interno_no_kanban_exibe_matrizaria_sem_null(self):
+        """
+        4. Serviço interno aparece corretamente no Kanban:
+           - exibe 'Matrizaria';
+           - não exibe None, NULL, —, vazio ou erro de template.
+        """
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado para validar Kanban visual",
+            solicitado_por=self.solicitante_user,
+            destino="MATRIZARIA",
+        )
+        self.client.force_login(self.solicitante_user)
+        res = self.client.get(reverse("matrizaria:kanban"))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Matrizaria")
+        self.assertNotContains(res, "None")
+        self.assertNotContains(res, "NULL")
+
+    def test_servico_interno_nao_aparece_na_linha_do_tempo_de_nenhuma_prensa(self):
+        """
+        5. Serviço interno não aparece na linha do tempo de nenhuma prensa.
+        """
+        sol_int = MatrizariaService.criar_solicitacao(
+            prensa=None,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado interno de bancada",
+            solicitado_por=self.solicitante_user,
+            destino="MATRIZARIA",
+        )
+        self.assertEqual(self.prensa_01.solicitacoes_matrizaria.count(), 0)
+        self.assertEqual(self.prensa_02.solicitacoes_matrizaria.count(), 0)
+
+        # Agora cria um chamado para a prensa 01
+        sol_maq = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado para a prensa 01",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        self.assertEqual(self.prensa_01.solicitacoes_matrizaria.count(), 1)
+        self.assertIn(sol_maq, self.prensa_01.solicitacoes_matrizaria.all())
+        self.assertNotIn(sol_int, self.prensa_01.solicitacoes_matrizaria.all())
+        self.assertEqual(self.prensa_02.solicitacoes_matrizaria.count(), 0)
+
+    def test_edicao_alternando_entre_maquina_e_matrizaria_via_post(self):
+        """
+        Testa edição via formulário / POST mudando de Máquina para Matrizaria e vice-versa.
+        """
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Ajuste inicial em máquina",
+            solicitado_por=self.solicitante_user,
+            destino="MAQUINA",
+        )
+        self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")
+
+        self.client.force_login(self.solicitante_user)
+        # Edita para Matrizaria
+        res_edit_1 = self.client.post(
+            reverse("matrizaria:editar_solicitacao", kwargs={"pk": sol.id}),
+            data={
+                "versao": sol.versao,
+                "prensa": "__MATRIZARIA__",
+                "tipo_servico": self.tipo_ajuste.id,
+                "prioridade": "NORMAL",
+                "descricao_solicitacao": "Corrigido para bancada Matrizaria",
+                "motivo_edicao": "Não era problema na prensa, e sim bancada",
+            },
+        )
+        self.assertEqual(res_edit_1.status_code, 302)
+        sol.refresh_from_db()
+        self.assertEqual(sol.destino, "MATRIZARIA")
+        self.assertIsNone(sol.prensa)
+        self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")  # Preserva snapshot da abertura
+        self.assertEqual(sol.equipamento_display, "Matrizaria")
+
+        # Edita de volta para Prensa 02
+        res_edit_2 = self.client.post(
+            reverse("matrizaria:editar_solicitacao", kwargs={"pk": sol.id}),
+            data={
+                "versao": sol.versao,
+                "prensa": self.prensa_02.id,
+                "tipo_servico": self.tipo_ajuste.id,
+                "prioridade": "NORMAL",
+                "descricao_solicitacao": "Corrigido agora para prensa 02",
+                "motivo_edicao": "Confirmado que é na prensa 02",
+            },
+        )
+        self.assertEqual(res_edit_2.status_code, 302)
+        sol.refresh_from_db()
+        self.assertEqual(sol.destino, "MAQUINA")
+        self.assertEqual(sol.prensa, self.prensa_02)
+        self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")  # Preserva snapshot da abertura
+        self.assertEqual(sol.equipamento_display, "PRENSA BOM 02")
+

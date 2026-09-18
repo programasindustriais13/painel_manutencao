@@ -1,7 +1,7 @@
 {% for s in em_execucao %}
 <div class="tv-service-card {% if s.prioridade == 'URGENTE' %}urgente{% endif %}">
     <div class="d-flex justify-content-between align-items-start mb-1">
-        <span class="fs-5 fw-bold text-white">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</span>
+        <span class="fs-5 fw-bold text-white">{{ s.equipamento_display }}</span>
         <div class="d-flex gap-1">
             <span class="badge bg-primary">Em Execução</span>
             {% if s.prioridade == "URGENTE" %}

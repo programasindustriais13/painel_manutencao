@@ -91,17 +91,20 @@ def format_matriz_fisica_label(obj: MatrizFisica) -> str:
 
 class SolicitacaoServicoForm(forms.ModelForm):
     idempotency_key = forms.CharField(widget=forms.HiddenInput(), required=False)
+    destino = forms.CharField(widget=forms.HiddenInput(), required=False)
     prensa = PrensaOuMatrizariaChoiceField(
         queryset=Machine.objects.none(),
         required=True,
-        empty_label="--- Selecione a Prensa / Máquina ---",
+        empty_label="--- Selecione o Destino do Serviço ---",
         widget=forms.Select(attrs={"class": "form-select"}),
-        label="Prensa / Máquina",
+        label="Destino do Serviço",
+        error_messages={"required": "Selecione o Destino do Serviço (Matrizaria ou uma Prensa / Máquina)."},
     )
 
     class Meta:
         model = SolicitacaoServicoMatrizaria
         fields = [
+            "destino",
             "prensa",
             "tipo_servico",
             "matriz_fisica",
@@ -148,14 +151,22 @@ class SolicitacaoServicoForm(forms.ModelForm):
                 raise forms.ValidationError("Máquinas de apoio ou CHECK-LIST não são válidas para chamados de Matrizaria.")
             self.cleaned_data["destino"] = "MAQUINA"
             return prensa_val
-        raise forms.ValidationError("Selecione uma Prensa / Máquina ou a opção Matrizaria.")
+        raise forms.ValidationError("Selecione o Destino do Serviço (Matrizaria ou uma Prensa / Máquina).")
 
     def clean(self):
         cleaned_data = super().clean()
         destino = cleaned_data.get("destino")
         prensa = cleaned_data.get("prensa")
+
+        # Garante a atualização da instância antes do _post_clean() executar instance.full_clean()
+        if destino:
+            self.instance.destino = destino
+        self.instance.prensa = prensa
+
         if destino == "MAQUINA" and not prensa:
             self.add_error("prensa", "Prensa / Máquina é obrigatória quando o destino for máquina.")
+        elif destino == "MATRIZARIA" and prensa is not None:
+            self.add_error("prensa", "Serviço interno da Matrizaria não deve possuir máquina vinculada.")
         return cleaned_data
 
 
@@ -280,12 +291,14 @@ class TransferirResponsabilidadeForm(forms.Form):
 
 
 class EditarSolicitacaoForm(forms.Form):
+    destino = forms.CharField(widget=forms.HiddenInput(), required=False)
     prensa = PrensaOuMatrizariaChoiceField(
         queryset=Machine.objects.none(),
         required=True,
-        empty_label="--- Selecione a Prensa / Máquina ---",
+        empty_label="--- Selecione o Destino do Serviço ---",
         widget=forms.Select(attrs={"class": "form-select"}),
-        label="Prensa / Máquina",
+        label="Destino do Serviço",
+        error_messages={"required": "Selecione o Destino do Serviço (Matrizaria ou uma Prensa / Máquina)."},
     )
     tipo_servico = forms.ModelChoiceField(
         queryset=TipoServicoMatrizaria.objects.filter(ativo=True).order_by("nome"),
@@ -346,10 +359,17 @@ class EditarSolicitacaoForm(forms.Form):
                 raise ValidationError("A máquina 'CHECK-LIST' não é permitida para chamados de Matrizaria.")
             self.cleaned_data["destino"] = "MAQUINA"
             return prensa_val
-        raise ValidationError("Selecione uma Prensa / Máquina ou a opção Matrizaria.")
+        raise ValidationError("Selecione o Destino do Serviço (Matrizaria ou uma Prensa / Máquina).")
 
     def clean(self):
         cleaned_data = super().clean()
+        destino = cleaned_data.get("destino")
+        prensa = cleaned_data.get("prensa")
+        if destino == "MAQUINA" and not prensa:
+            self.add_error("prensa", "Prensa / Máquina é obrigatória quando o destino for máquina.")
+        elif destino == "MATRIZARIA" and prensa is not None:
+            self.add_error("prensa", "Serviço interno da Matrizaria não deve possuir máquina vinculada.")
+
         tipo = cleaned_data.get("tipo_servico")
         matriz = cleaned_data.get("matriz_fisica")
         if tipo and tipo.exige_matriz_fisica and not matriz:

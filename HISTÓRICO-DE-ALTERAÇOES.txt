@@ -53,3 +53,18 @@ HISTÓRICO DE ALTERAÇÕES DO PROJETO
      * Causa raiz: o método 'ProductionStateService.process_scada_cycle()' busca apenas telemetria de máquinas, cavidades e parâmetros de prensas. Ao repassar 'scada_vals' para 'MaintenanceAlertService.evaluate_due_alerts()', os XIDs de alarmes globais (como 'DP_760076') não vinham no dicionário e a avaliação era ignorada com telemetria nula.
      * Correção aplicada: 'MaintenanceAlertService.evaluate_due_alerts()' agora identifica os XIDs de alarmes globais que não estão presentes no dicionário fornecido e realiza a busca desses pontos faltantes diretamente no SCADA via 'scada_reader.get_last_values_batch()'.
      * Validação: adicionado teste 32 em 'production/test_maintenance_alerts.py' comprovando a leitura automática e atualização do estado ('PENDENTE'/'ALARME_ATIVO').
+
+11. Correção Pós-Homologação — Abertura de Chamado na Matrizaria (Opção 'Matrizaria — Serviço interno / Sem máquina') (18/09/2026):
+   - Causa Raiz:
+     * No formulário 'SolicitacaoServicoForm', ao selecionar a opção 'Matrizaria — Serviço interno / Sem máquina' ('__MATRIZARIA__'), 'clean_prensa()' definia 'destino = MATRIZARIA' e 'prensa = None'.
+     * O campo 'destino' não estava registrado em 'Meta.fields' do 'ModelForm'. Durante o ciclo 'ModelForm._post_clean()', o método 'construct_instance()' não recebia o campo 'destino', preservando o valor padrão do modelo ('MAQUINA') com 'prensa=None'.
+     * Ao executar 'self.instance.full_clean()', o método 'clean()' de 'SolicitacaoServicoMatrizaria' identificava 'destino=MAQUINA' sem máquina vinculada e levantava erro de validação: "Prensa/Máquina é obrigatória quando o destino for máquina.", impedindo o salvamento.
+   - Solução Implementada de Ponta a Ponta:
+     * Formulários ('matrizaria/forms.py'): incluído campo 'destino' (HiddenInput) em 'Meta.fields' de 'SolicitacaoServicoForm'. No método 'clean()', sincronizada a atribuição 'self.instance.destino = destino' e 'self.instance.prensa = prensa' antes do 'instance.full_clean()'. Atualizado também 'EditarSolicitacaoForm'.
+     * Renomeação e Textos de Ajuda: alterado o rótulo do campo de "Prensa / Máquina *" para "Destino do Serviço *" e o texto auxiliar para "Selecione a Matrizaria para serviços internos ou a prensa/máquina relacionada ao atendimento." em 'form_solicitacao.html' e modal de edição em 'detalhe_solicitacao.html'.
+     * Modelos ('matrizaria/models.py'): adicionada property 'equipamento_display' para garantir apresentação elegante ("Matrizaria" para serviços internos e o nome da máquina para atendimentos de prensa) sem exibir 'None', 'NULL', '—' ou erros de template.
+     * Camada Visual ('kanban.html', TV, Detalhes): atualizados os cards e cabeçalhos para utilizar 'equipamento_display'.
+     * Preservação da Auditoria de Abertura: 'prensa_nome_snapshot' preserva a evidência original da abertura, enquanto 'equipamento_display' reflete atualizações operacionais dinâmicas.
+   - Validação e Integridade:
+     * Adicionados testes automatizados cobrindo abertura via POST com Matrizaria, com máquina real, rejeição com mensagem amigável para envio vazio, presença no Kanban e isolamento de máquinas reais.
+     * Suíte de 'matrizaria' com 61 testes aprovados e suíte global com 398 testes aprovados 100% (0 falhas, 0 erros).

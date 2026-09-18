@@ -1,7 +1,7 @@
 {% for s in aguardando_conferencia %}
 <div class="tv-service-card">
     <div class="d-flex justify-content-between align-items-start mb-1">
-        <span class="fs-5 fw-bold text-white">{{ s.prensa_nome_snapshot|default:s.prensa.nome }}</span>
+        <span class="fs-5 fw-bold text-white">{{ s.equipamento_display }}</span>
         <span class="badge bg-info text-dark">Aguardando Inspeção</span>
     </div>
     <div class="text-info fw-semibold mb-1" style="font-size: 0.95rem;">
