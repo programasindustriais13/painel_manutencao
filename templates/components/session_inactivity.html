@@ -37,10 +37,16 @@
     var lastInteractionTime = Date.now();
     var hasPendingInteraction = false;
     var isWarningShown = false;
+    var isExpiring = false;
     var keepAliveThrottled = 0;
     var keepAliveUrl = "{% url 'api_session_keep_alive' %}";
     var statusUrl = "{% url 'api_session_status' %}";
-    var logoutUrl = "{% url 'logout' %}";
+    var loginUrl = "{% url 'login' %}";
+
+    // Limpa marcação de expiração anterior se nova página carregou autenticada
+    try {
+        localStorage.removeItem('freedom_session_expired');
+    } catch(e) {}
 
     function getCookie(name) {
         var cookieValue = null;
@@ -59,8 +65,21 @@
 
     var csrftoken = getCookie('csrftoken');
 
+    // Manipulador centralizado, idempotente e seguro contra concorrência para sessão expirada
+    function handleSessionExpired(targetUrl) {
+        if (isExpiring) return;
+        isExpiring = true;
+        // Notifica outras abas no mesmo navegador para evitar disputas de redirect ou polling
+        try {
+            localStorage.setItem('freedom_session_expired', Date.now().toString());
+        } catch(e) {}
+        var dest = targetUrl || loginUrl;
+        window.location.href = dest;
+    }
+
     // Registra interação humana real (clique, toque, digitação, scroll)
     function registerHumanInteraction() {
+        if (isExpiring) return;
         lastInteractionTime = Date.now();
         hasPendingInteraction = true;
         // Notifica outras abas no mesmo navegador
@@ -78,11 +97,14 @@
         if (e.key === 'freedom_human_act_ts' && e.newValue) {
             lastInteractionTime = parseInt(e.newValue, 10) || Date.now();
             hideWarningModal();
+        } else if (e.key === 'freedom_session_expired') {
+            handleSessionExpired();
         }
     });
 
     // Envia keep-alive com throttling (máximo de 1 request a cada 30 segundos)
     function sendKeepAlive(force) {
+        if (isExpiring) return;
         var now = Date.now();
         if (!force && (now - keepAliveThrottled < 30000 || !hasPendingInteraction)) {
             return;
@@ -100,13 +122,14 @@
         })
         .then(function(res) {
             if (res.status === 401) {
-                // Sessão já expirou no backend
-                window.location.href = logoutUrl;
+                // Sessão expirou no backend: redirecionamento idempotente
+                handleSessionExpired();
                 return;
             }
             return res.json();
         })
         .then(function(data) {
+            if (isExpiring) return;
             if (data && data.status === 'ok') {
                 lastInteractionTime = Date.now();
                 if (data.timeout_seconds) TIMEOUT_SECS = data.timeout_seconds;
@@ -124,6 +147,7 @@
 
     // Modal helpers
     function showWarningModal(secondsLeft) {
+        if (isExpiring) return;
         if (!isWarningShown) {
             isWarningShown = true;
             var modalEl = document.getElementById('inactivityWarningModal');
@@ -171,7 +195,11 @@
     });
 
     // Checagem contínua de inatividade no cliente (a cada 2 segundos)
-    setInterval(function() {
+    var checkInterval = setInterval(function() {
+        if (isExpiring) {
+            clearInterval(checkInterval);
+            return;
+        }
         var elapsedSecs = (Date.now() - lastInteractionTime) / 1000;
         var remainingSecs = TIMEOUT_SECS - elapsedSecs;
 
@@ -189,27 +217,29 @@
 
         // Tempo expirado no frontend
         if (remainingSecs <= 0) {
-            window.location.href = logoutUrl;
+            handleSessionExpired();
         }
     }, 2000);
 
     // Verificação de autoridade no retorno de suspensão (wake up do tablet/laptop)
     document.addEventListener('visibilitychange', function() {
+        if (isExpiring) return;
         if (document.visibilityState === 'visible') {
             fetch(statusUrl, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' }
             })
             .then(function(res) {
                 if (res.status === 401) {
-                    window.location.href = logoutUrl;
+                    handleSessionExpired();
                     return;
                 }
                 return res.json();
             })
             .then(function(data) {
+                if (isExpiring) return;
                 if (data && data.remaining_seconds !== undefined) {
                     if (data.remaining_seconds <= 0) {
-                        window.location.href = logoutUrl;
+                        handleSessionExpired(data.redirect_url);
                     } else {
                         // Sincroniza com tempo real do servidor
                         lastInteractionTime = Date.now() - (data.elapsed_seconds * 1000);

@@ -1899,6 +1899,318 @@ class OrdemServicoEndToEndQATestCase(TestCase):
         self.assertContains(res_detail, "Anel O-ring Viton 50mm")
 
 
+class SessionConcurrencyAndExpiryTestCase(TestCase):
+    """
+    Suíte de testes de regressão e concorrência para controle de sessão e expiração:
+    1. Usuário ativo: interação humana válida renova a sessão.
+    2. Polling da TV: requisição /matrizaria/api/tv-data/ NÃO altera _last_human_activity.
+    3. Status de sessão: /api/session/status/ não renova atividade humana.
+    4. Expiração: sessão acima do timeout é bloqueada corretamente.
+    5. AJAX expirado: retorna 401 e JSON consistente.
+    6. Navegação normal expirada: conduzida de forma segura ao login.
+    7. Keep-alive após expiração: não reativa sessão já expirada.
+    8. Conta TV: continua isenta da expiração humana.
+    9. Login normal: novo login funciona normalmente após expiração.
+    10. Logout normal: continua funcionando sem exceções.
+    11. Concorrência: Request A inicia com sessão X, Request B expira sessão X,
+        Request A termina depois sem SessionInterrupted / UpdateError / Forced update.
+    12. Duas abas: requisições simultâneas na mesma sessão não destroem o estado uma da outra.
+    """
+
+    def setUp(self):
+        import time
+        self.operator_group, _ = Group.objects.get_or_create(name='Operadores')
+        self.viewer_group, _ = Group.objects.get_or_create(name='Visualizador')
+
+        self.user_password = 'Password123!'
+        self.human_user = User.objects.create_user(
+            username='operador_sessao',
+            password=self.user_password,
+            email='operador@teste.com'
+        )
+        self.human_user.groups.add(self.operator_group)
+
+        self.tv_user = User.objects.create_user(
+            username='tv',
+            password=self.user_password,
+            email='tv@teste.com'
+        )
+
+    def _get_session_store(self, session_key=None):
+        from importlib import import_module
+        from django.conf import settings
+        engine = import_module(settings.SESSION_ENGINE)
+        return engine.SessionStore(session_key=session_key)
+
+    def test_01_active_user_renews_session(self):
+        """1. Usuário ativo: interação humana válida (keep-alive) renova a sessão."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        t_initial = time.time() - 60
+        session = client.session
+        session['_last_human_activity'] = t_initial
+        session.save()
+
+        res = client.post(reverse('api_session_keep_alive'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data.get('status'), 'ok')
+
+        session_store = self._get_session_store(session.session_key)
+        self.assertGreater(session_store['_last_human_activity'], t_initial)
+
+    def test_02_tv_polling_does_not_renew_last_human_activity(self):
+        """2. Polling da TV: requisição /matrizaria/api/tv-data/ NÃO altera _last_human_activity."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        fixed_ts = round(time.time() - 20, 2)
+        session = client.session
+        session['_last_human_activity'] = fixed_ts
+        session.save()
+
+        # Chama a rota real de polling da Matrizaria
+        res = client.get('/matrizaria/api/tv-data/', HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertIn(res.status_code, [200, 302])
+
+        # Valida que o timestamp gravado na sessão permanece estritamente intocado
+        session_store = self._get_session_store(session.session_key)
+        self.assertEqual(session_store.get('_last_human_activity'), fixed_ts)
+
+    def test_03_session_status_does_not_renew_last_human_activity(self):
+        """3. Status de sessão: /api/session/status/ não renova atividade humana."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        fixed_ts = round(time.time() - 20, 2)
+        session = client.session
+        session['_last_human_activity'] = fixed_ts
+        session.save()
+
+        res = client.get(reverse('api_session_status'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertTrue(data.get('is_authenticated'))
+
+        session_store = self._get_session_store(session.session_key)
+        self.assertEqual(session_store.get('_last_human_activity'), fixed_ts)
+
+    def test_04_session_above_timeout_is_blocked(self):
+        """4. Expiração: sessão acima do timeout é bloqueada corretamente."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        session = client.session
+        session['_last_human_activity'] = time.time() - 400  # > 300s
+        session.save()
+
+        res = client.get(reverse('technician_management'))
+        # Redirecionado para login com ?next=
+        self.assertEqual(res.status_code, 302)
+        self.assertIn('login', res.url)
+
+        # Sessão marcada logicamente como expirada
+        session_store = self._get_session_store(session.session_key)
+        self.assertTrue(session_store.get('_session_expired'))
+
+    def test_05_ajax_expired_returns_401_json(self):
+        """5. AJAX expirado: retorna 401 e JSON consistente."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        session = client.session
+        session['_last_human_activity'] = time.time() - 400
+        session.save()
+
+        res = client.get(reverse('api_session_status'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res.status_code, 401)
+        data = res.json()
+        self.assertEqual(data.get('error'), 'session_expired')
+        self.assertIn('redirect_url', data)
+
+    def test_06_normal_navigation_expired_redirects_to_login(self):
+        """6. Navegação normal expirada: é conduzida de forma segura ao login."""
+        import time
+        from django.shortcuts import resolve_url
+        from django.conf import settings
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        session = client.session
+        session['_last_human_activity'] = time.time() - 400
+        session.save()
+
+        res = client.get('/dashboard/')
+        self.assertEqual(res.status_code, 302)
+        login_url = resolve_url(settings.LOGIN_URL)
+        self.assertIn(login_url, res.url)
+
+    def test_07_keep_alive_after_expiry_does_not_revive_session(self):
+        """7. Keep-alive após expiração: não reativa uma sessão que já expirou."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        # Caso A: Sessão já com flag lógica _session_expired
+        session = client.session
+        session['_session_expired'] = True
+        session.save()
+
+        res = client.post(reverse('api_session_keep_alive'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res.status_code, 401)
+
+        # Caso B: Sessão com tempo decorrido > timeout
+        session['_session_expired'] = False
+        session['_last_human_activity'] = time.time() - 500
+        session.save()
+
+        res2 = client.post(reverse('api_session_keep_alive'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res2.status_code, 401)
+
+        session_store = self._get_session_store(session.session_key)
+        self.assertTrue(session_store.get('_session_expired'))
+
+    def test_08_dedicated_tv_account_exempt_from_human_timeout(self):
+        """8. Conta TV: continua isenta da expiração humana."""
+        import time
+        client = Client()
+        client.login(username='tv', password=self.user_password)
+
+        # Configura atividade humana extremamente antiga
+        session = client.session
+        session['_last_human_activity'] = time.time() - 100000
+        session.save()
+
+        # Acesso ao painel TV continua 200 OK sem logout
+        res = client.get(reverse('tv_dashboard'))
+        self.assertEqual(res.status_code, 200)
+
+        # Status de sessão indica TV perpétua
+        res_status = client.get(reverse('api_session_status'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res_status.status_code, 200)
+        data = res_status.json()
+        self.assertTrue(data.get('is_tv'))
+        self.assertGreater(data.get('remaining_seconds'), 1000000)
+
+    def test_09_login_after_session_expired_works_normally(self):
+        """9. Login normal: novo login continua funcionando depois de uma sessão ter expirado."""
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        # Expira a sessão anterior
+        session = client.session
+        session['_last_human_activity'] = time.time() - 400
+        session.save()
+
+        # Requisição bloqueada
+        res = client.get(reverse('technician_management'))
+        self.assertEqual(res.status_code, 302)
+
+        # Realiza novo login com credenciais
+        res_login = client.post(reverse('login'), {
+            'username': 'operador_sessao',
+            'password': self.user_password,
+        })
+        self.assertEqual(res_login.status_code, 302)
+
+        # Nova sessão tem flag de expiração limpa e atividade atualizada
+        new_session = client.session
+        self.assertFalse(new_session.get('_session_expired'))
+        self.assertIsNotNone(new_session.get('_last_human_activity'))
+
+        # Navegação pós-login funciona normalmente (200 OK)
+        res_panel = client.get(reverse('technician_management'))
+        self.assertEqual(res_panel.status_code, 200)
+
+    def test_10_normal_logout_works_without_exceptions(self):
+        """10. Logout normal: continua funcionando sem exceções."""
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        res = client.get(reverse('logout'))
+        self.assertEqual(res.status_code, 302)
+        self.assertIn(reverse('login'), res.url)
+
+    def test_11_concurrency_race_does_not_cause_session_interrupted(self):
+        """
+        11. Concorrência:
+        Reproduz a corrida de produção:
+        - Request A carrega sessão X e faz modificação em memória.
+        - Request B detecta expiração da mesma sessão X e completa.
+        - Request A termina e tenta salvar a sessão.
+        Valida que a nova estratégia NÃO produz:
+        SessionInterrupted, UpdateError ou Forced update did not affect any rows.
+        """
+        import time
+        from django.conf import settings
+
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+        s_key = client.session.session_key
+
+        # Request A: carrega a sessão e prepara para salvar
+        session_a = self._get_session_store(session_key=s_key)
+        session_a['flag_request_a'] = 'in_flight_value'
+        session_a.modified = True
+
+        # Request B: detecta expiração da mesma sessão e finaliza antes de A
+        session_b = self._get_session_store(session_key=s_key)
+        session_b['_last_human_activity'] = time.time() - 400
+        session_b.save()
+
+        client_b = Client()
+        client_b.cookies[settings.SESSION_COOKIE_NAME] = s_key
+        res_b = client_b.get(reverse('api_session_status'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res_b.status_code, 401)
+
+        # Request A agora finaliza após Request B ter detectado a expiração
+        # Na implementação antiga com logout(request)/flush(), esta linha causava SessionInterrupted!
+        # Na nova implementação lógica, o registro no banco não foi apagado e a gravação ocorre sem erro:
+        try:
+            session_a.save()
+        except Exception as e:
+            self.fail(f"Erro de concorrência detectado ao salvar Request A: {type(e).__name__}: {e}")
+
+        # O registro da sessão continua existindo no banco
+        self.assertTrue(self._get_session_store().exists(s_key))
+
+    def test_12_two_concurrent_tabs_near_timeout_do_not_destroy_session_state(self):
+        """12. Duas abas: requisições concorrentes próximas ao timeout não destroem o estado da sessão."""
+        import time
+        from django.conf import settings
+
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+        s_key = client.session.session_key
+
+        # Simula Aba 1 e Aba 2
+        tab1_session = self._get_session_store(session_key=s_key)
+        tab2_session = self._get_session_store(session_key=s_key)
+
+        # Aba 1 verifica status
+        client_tab1 = Client()
+        client_tab1.cookies[settings.SESSION_COOKIE_NAME] = s_key
+        res_tab1 = client_tab1.get(reverse('api_session_status'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res_tab1.status_code, 200)
+
+        # Aba 2 envia keep-alive quase ao mesmo tempo
+        client_tab2 = Client()
+        client_tab2.cookies[settings.SESSION_COOKIE_NAME] = s_key
+        res_tab2 = client_tab2.post(reverse('api_session_keep_alive'), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(res_tab2.status_code, 200)
+
+        # Nenhuma das abas destruiu a sessão e a chave continua válida
+        self.assertTrue(self._get_session_store().exists(s_key))
+
+
+
 
 
 

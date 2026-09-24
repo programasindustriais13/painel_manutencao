@@ -1,4 +1,4 @@
-from django.shortcuts import render, redirect, get_object_or_404
+from django.shortcuts import render, redirect, get_object_or_404, resolve_url
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST, require_GET
 from django.conf import settings
@@ -2196,17 +2196,41 @@ def link_allocation_os(request, allocation_id):
     return redirect('technician_management')
 
 
-@login_required
 @require_POST
 def api_session_keep_alive(request):
     """
-    Endpoint autenticado para sinalização de atividade humana (cliques, digitação, toques).
-    Valida CSRF, atualiza o timestamp da última atividade humana no servidor e retorna status OK.
+    Endpoint para sinalização de atividade humana (cliques, digitação, toques).
+    Valida CSRF, rejeita sessões expiradas ou não autenticadas com 401 JSON
+    e renova a inatividade humana apenas para sessões válidas.
     """
     import time
+    login_url = resolve_url(settings.LOGIN_URL)
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated or request.session.get("_session_expired"):
+        return JsonResponse(
+            {
+                "error": "session_expired",
+                "message": "Sua sessão já expirou por inatividade.",
+                "redirect_url": login_url,
+            },
+            status=401,
+        )
+
     now_ts = time.time()
-    request.session['_last_human_activity'] = now_ts
     timeout = getattr(settings, "INACTIVITY_TIMEOUT_SECONDS", 300)
+    last_act = request.session.get("_last_human_activity")
+    if last_act is not None and (now_ts - float(last_act)) > timeout:
+        request.session["_session_expired"] = True
+        return JsonResponse(
+            {
+                "error": "session_expired",
+                "message": "Sua sessão já expirou por inatividade.",
+                "redirect_url": login_url,
+            },
+            status=401,
+        )
+
+    request.session["_last_human_activity"] = now_ts
     warning = getattr(settings, "INACTIVITY_WARNING_SECONDS", 30)
     return JsonResponse({
         "status": "ok",
@@ -2216,17 +2240,29 @@ def api_session_keep_alive(request):
     })
 
 
-@login_required
 @require_GET
 def api_session_status(request):
     """
     Endpoint leve para verificação do tempo restante de inatividade pelo frontend.
     NÃO renova a inatividade humana.
+    Retorna 401 JSON previsível caso a sessão esteja expirada ou não autenticada.
     """
     import time
     from .middleware import is_dedicated_tv_account
 
-    user = request.user
+    login_url = resolve_url(settings.LOGIN_URL)
+    user = getattr(request, "user", None)
+    if not user or not user.is_authenticated or request.session.get("_session_expired"):
+        return JsonResponse(
+            {
+                "error": "session_expired",
+                "is_authenticated": False,
+                "remaining_seconds": 0,
+                "redirect_url": login_url,
+            },
+            status=401,
+        )
+
     if is_dedicated_tv_account(user):
         return JsonResponse({
             "is_authenticated": True,
@@ -2241,6 +2277,18 @@ def api_session_status(request):
     elapsed = max(0.0, now_ts - float(last_act))
     remaining = max(0.0, timeout - elapsed)
 
+    if remaining <= 0:
+        request.session["_session_expired"] = True
+        return JsonResponse(
+            {
+                "error": "session_expired",
+                "is_authenticated": False,
+                "remaining_seconds": 0,
+                "redirect_url": login_url,
+            },
+            status=401,
+        )
+
     return JsonResponse({
         "is_authenticated": True,
         "is_tv": False,
@@ -2249,3 +2297,4 @@ def api_session_status(request):
         "timeout_seconds": timeout,
         "warning_seconds": warning,
     })
+

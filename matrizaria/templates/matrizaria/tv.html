@@ -386,8 +386,8 @@
                 }
             })
             .then(function(res) {
-                if (res.redirected && res.url.includes('/login/')) {
-                    window.location.href = res.url;
+                if (res.status === 401 || (res.redirected && res.url.includes('/login/'))) {
+                    window.location.href = "{% url 'login' %}";
                     return;
                 }
                 if (!res.ok) throw new Error('HTTP ' + res.status);

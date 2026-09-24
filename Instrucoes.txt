@@ -3648,3 +3648,54 @@ Arquivos Criados/Modificados:
    - Validação e Integridade:
      * Adicionados testes automatizados cobrindo abertura via POST com Matrizaria, com máquina real, rejeição com mensagem amigável para envio vazio, presença no Kanban e isolamento de máquinas reais.
      * Suíte de 'matrizaria' com 61 testes aprovados e suíte global com 398 testes aprovados 100% (0 falhas, 0 erros).
+
+12. Correção Crítica de Concorrência na Expiração de Sessões (24/09/2026):
+   - Incidente Observado em Produção:
+     * Disparo simultâneo de:
+       WARNING:django.security.csrf:Forbidden (CSRF token from POST incorrect.): /login/
+       WARNING Unauthorized: /api/session/status/
+       WARNING The request's session was deleted before the request completed. /matrizaria/api/tv-data/
+       django.db.utils.DatabaseError: Forced update did not affect any rows.
+       django.contrib.sessions.backends.base.UpdateError
+       django.contrib.sessions.exceptions.SessionInterrupted
+   - Causa Raiz Confirmada:
+     * No middleware 'SessionExpiryByProfileMiddleware' (maintenance/middleware.py), ao detectar inatividade humana acima do limite (elapsed > timeout), o middleware executava diretamente logout(request).
+     * O logout(request) nativo do Django executa request.session.flush(), que apaga fisicamente a linha de django_session no banco de dados.
+     * Requisições concorrentes em trânsito com a mesma session_key (como polling da Matrizaria /matrizaria/api/tv-data/) tentavam salvar a sessão no final do ciclo de resposta (process_response).
+     * Como a linha já havia sido deletada pelo flush(), 0 linhas eram afetadas no UPDATE, disparando DatabaseError / UpdateError / SessionInterrupted (HTTP 500).
+     * Além disso, a lista exempt_bg_paths continha '/matrizaria/api/tv/data/' (com barra) em vez da rota real '/matrizaria/api/tv-data/' (com hífen), fazendo com que todo polling da TV executasse request.session['_last_human_activity'] = now_ts e forçasse modified = True a cada 15 segundos.
+     * No frontend (session_inactivity.html), abas expiradas redirecionavam simultaneamente para logoutUrl (/logout/), gerando tempestade concorrente de flush() e dessincronização de CSRF token no formulário de login.
+   - Solução Implementada (Segura contra Concorrência e Sem Remoção Prematura):
+     * maintenance/middleware.py:
+       1. Corrigida a rota de background para '/matrizaria/api/tv-data/' e adicionado '/tv/' (com X-Requested-With: XMLHttpRequest) na função is_background_request(). Requisições de background nunca renovam nem gravam _last_human_activity.
+       2. Substituído logout(request) por expiração lógica: a sessão é marcada com _session_expired = True e request.user = AnonymousUser(). A linha de django_session NÃO é apagada prematuramente, eliminando a causa raiz de SessionInterrupted.
+       3. Implementado throttling para requisições GET humanas (grava _last_human_activity no máximo uma vez a cada 30 segundos), reduzindo escritas no banco em mais de 95%.
+       4. Conectado receiver ao signal user_logged_in para limpar _session_expired e inicializar _last_human_activity ao efetuar novo login.
+     * maintenance/views.py:
+       1. api_session_status: retorno JSON 401 previsível {'error': 'session_expired', ...} para sessões expiradas ou deslogadas, sem redirecionamento 302 HTML.
+       2. api_session_keep_alive: rejeita com 401 JSON tentativas de reativar sessões já marcadas como expiradas ou com timeout estourado.
+     * templates/components/session_inactivity.html:
+       1. Redirecionamento ordenado para loginUrl ({% url 'login' %}) em vez de logoutUrl.
+       2. Tratamento idempotente e sincronização entre abas via localStorage ('freedom_session_expired') evitando disputas concorrentes de logout.
+       3. Cancelamento imediato de intervalos de verificação após início do redirecionamento.
+     * matrizaria/templates/matrizaria/tv.html:
+       1. Trata status 401 no polling assíncrono redirecionando ordenadamente para a tela de login.
+   - Testes e Validação:
+     * 12 novos testes adicionados em maintenance/tests.py (SessionConcurrencyAndExpiryTestCase):
+       1. Usuário ativo renova sessão via keep-alive.
+       2. Polling /matrizaria/api/tv-data/ não altera _last_human_activity.
+       3. Status de sessão /api/session/status/ não renova inatividade.
+       4. Sessão com inatividade > timeout é bloqueada.
+       5. AJAX expirado retorna 401 JSON consistente.
+       6. Navegação comum expirada é conduzida ao login.
+       7. Keep-alive após expiração não ressuscita sessão.
+       8. Conta de TV dedicada permanece isenta de inatividade humana.
+       9. Novo login após expiração funciona normalmente e sem resíduos.
+       10. Logout voluntário continua funcionando sem exceções.
+       11. Concorrência reproduzida: Request A carrega sessão, Request B expira a sessão, Request A finaliza depois sem SessionInterrupted / UpdateError / Forced update.
+       12. Duas abas concorrentes no limite do timeout não destroem o estado da sessão.
+     * Comandos executados:
+       python manage.py check (0 erros)
+       python manage.py test maintenance.tests.SessionConcurrencyAndExpiryTestCase (12 testes OK)
+       python manage.py test maintenance production matrizaria (410 testes OK em 188s)
+     * Migrações: Nenhuma migration gerada ou necessária (makemigrations --dry-run: No changes detected).

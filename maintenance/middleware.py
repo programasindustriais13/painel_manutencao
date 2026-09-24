@@ -1,9 +1,14 @@
 import time
+import logging
 from django.conf import settings
-from django.contrib.auth import logout
 from django.contrib import messages
+from django.contrib.auth.models import AnonymousUser
+from django.contrib.auth.signals import user_logged_in
+from django.dispatch import receiver
 from django.http import JsonResponse
-from django.shortcuts import redirect
+from django.shortcuts import redirect, resolve_url
+
+logger = logging.getLogger(__name__)
 
 
 def is_dedicated_tv_account(user) -> bool:
@@ -38,10 +43,41 @@ def is_dedicated_tv_account(user) -> bool:
     return is_tv_name or is_tv_group
 
 
+def is_background_request(request) -> bool:
+    """
+    Identifica requisições automáticas de background / polling que:
+    - Podem consultar a sessão;
+    - NUNCA renovam inatividade humana nem atualizam _last_human_activity;
+    - Não gravam desnecessariamente na sessão para evitar contenção de concorrência.
+    """
+    path = request.path
+    # 1. Rota real do polling assíncrono da TV da Matrizaria
+    if path.startswith("/matrizaria/api/tv-data/"):
+        return True
+    # 2. Endpoint de consulta periódica de status de sessão pelo frontend
+    if path.startswith("/api/session/status/"):
+        return True
+    # 3. Polling assíncrono do painel TV de manutenção via AJAX
+    if path == "/tv/" and request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return True
+    return False
+
+
+@receiver(user_logged_in)
+def reset_session_inactivity_on_login(sender, request, user, **kwargs):
+    """
+    Ao realizar login com sucesso, limpa qualquer marcação residual de expiração lógica
+    e reinicia o cronômetro de atividade humana no servidor.
+    """
+    if hasattr(request, "session"):
+        request.session.pop("_session_expired", None)
+        request.session["_last_human_activity"] = time.time()
+
+
 class SessionExpiryByProfileMiddleware:
     """
     Middleware compartilhado de expiração e inatividade de sessão por perfil.
-    Posicionamento: APÓS AuthenticationMiddleware.
+    Posicionamento: APÓS AuthenticationMiddleware e MessageMiddleware.
 
     1. Contas exclusivas de TV (Visualizador / Visualizador Matrizaria / 'tv' / 'tv_matrizaria'):
        - Sessão perpétua de exibição contínua (~10 anos).
@@ -52,7 +88,8 @@ class SessionExpiryByProfileMiddleware:
        - O servidor é a autoridade máxima de validação do tempo decorrido.
        - Consultas automáticas em background (TV polling, status de sessão) NÃO renovam a inatividade.
        - Ações humanas reais (navegação, cliques, digitação via keep-alive) renovam a sessão.
-       - Ao expirar: encerra a sessão via logout seguro, bloqueia ações e redireciona para login.
+       - Ao expirar: expiração LÓGICA e IDEMPOTENTE (sem delete físico no banco que cause SessionInterrupted
+         em requisições concorrentes em trânsito).
     """
 
     def __init__(self, get_response):
@@ -79,42 +116,57 @@ class SessionExpiryByProfileMiddleware:
                 timeout = getattr(settings, "INACTIVITY_TIMEOUT_SECONDS", 300)
                 last_activity = request.session.get("_last_human_activity")
 
-                if last_activity is not None:
+                # Verifica se a sessão já foi logicamente expirada ou ultrapassou o timeout
+                is_expired = bool(request.session.get("_session_expired"))
+                if not is_expired and last_activity is not None:
                     elapsed = now_ts - float(last_activity)
                     if elapsed > timeout:
-                        # Sessão expirada no servidor!
-                        logout(request)
+                        is_expired = True
 
-                        is_ajax = (
-                            request.headers.get("x-requested-with") == "XMLHttpRequest"
-                            or request.path.startswith("/api/")
-                            or "application/json" in request.headers.get("Accept", "")
+                if is_expired:
+                    # Marca logicamente na sessão sem deletar a linha de django_session (evita SessionInterrupted)
+                    if not request.session.get("_session_expired"):
+                        request.session["_session_expired"] = True
+                        logger.info(
+                            "Sessão humana expirada por inatividade (user=%s, path=%s)",
+                            getattr(user, "username", "unknown"),
+                            request.path,
                         )
-                        if is_ajax:
-                            return JsonResponse(
-                                {
-                                    "error": "session_expired",
-                                    "message": "Sua sessão foi encerrada por inatividade.",
-                                    "redirect_url": str(settings.LOGIN_URL),
-                                },
-                                status=401,
-                            )
 
-                        try:
-                            messages.info(request, "Sua sessão foi encerrada por inatividade.")
-                        except Exception:
-                            pass
-                        return redirect(f"{settings.LOGIN_URL}?next={request.path}")
+                    # Desautentica em runtime na requisição atual
+                    request.user = AnonymousUser()
 
-                # Filtra requisições de background automatizadas que NÃO devem renovar a inatividade
-                exempt_bg_paths = [
-                    "/matrizaria/api/tv/data/",
-                    "/api/session/status/",
-                ]
-                is_bg = any(request.path.startswith(p) for p in exempt_bg_paths)
+                    is_ajax = (
+                        request.headers.get("x-requested-with") == "XMLHttpRequest"
+                        or request.path.startswith("/api/")
+                        or "application/json" in request.headers.get("Accept", "")
+                    )
+                    login_url = resolve_url(settings.LOGIN_URL)
+                    if is_ajax:
+                        logger.info("Requisição AJAX recusada por sessão expirada (path=%s)", request.path)
+                        return JsonResponse(
+                            {
+                                "error": "session_expired",
+                                "message": "Sua sessão foi encerrada por inatividade.",
+                                "redirect_url": login_url,
+                            },
+                            status=401,
+                        )
 
-                if not is_bg:
+                    try:
+                        messages.info(request, "Sua sessão foi encerrada por inatividade.")
+                    except Exception:
+                        pass
+                    return redirect(f"{login_url}?next={request.path}")
+
+                # Sessão ativa e válida:
+                if last_activity is None:
                     request.session["_last_human_activity"] = now_ts
+                elif not is_background_request(request):
+                    # Throttling de atualização: evita UPDATE constante no banco para requisições GET rápidas
+                    if request.method != "GET" or (now_ts - float(last_activity)) >= 30:
+                        request.session["_last_human_activity"] = now_ts
 
         response = self.get_response(request)
         return response
+
