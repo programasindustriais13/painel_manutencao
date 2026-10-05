@@ -144,18 +144,81 @@
 - `maintenance/views.py` (helpers de acesso, `home_redirect` e `portal_select`)
 - `maintenance/context_processors.py` (`can_access_bladder`)
 - `maintenance/templates/maintenance/portal_select.html` (Card 5: Setor de Bladder)
-- `Instrucoes.txt` (Seção 13 adicionada documentando a entrega)
+- `Instrucoes.txt` (Seção 13 adicionada documentando a entrega; Seção 14 adicionada com Passagem de Turno)
 
 ---
 
-## 🚀 7. PRÓXIMO PASSO RECOMENDADO AO USUÁRIO
+## 🔄 7. PASSAGEM DE TURNO ENTRE AS EQUIPES DO SETOR DE BLADDER (NOVA FUNCIONALIDADE)
 
-O módulo está $100\%$ pronto, testado e funcional no ambiente local.
-Para homologação manual antes de qualquer decisão de commit/push/deploy:
-1. Iniciar o servidor local: `python manage.py runserver 0.0.0.0:8000`
-2. Acessar `/portal/` e verificar o card **"Setor de Bladder"**.
-3. Acessar `/bladder/` para visualizar o Dashboard e indicadores.
-4. Acessar `/bladder/operador/` para testar o fluxo de chão de fábrica com botões touch.
-5. Criar uma OP em `/bladder/ordens/nova/`, apontar parcialmente e testar a geração do saldo no Ledger e sua incorporação automática na próxima OP do mesmo modelo.
-6. Acessar `/bladder/cronograma/` para conferir a alternância das Turmas A e B no calendário mensal.
-7. Acessar `/bladder/relatorios/` e testar a exportação da planilha Excel.
+### 7.1. Visão Geral e Conceito
+- **Comunicação Operacional Assíncrona e Contextualizada:** Permite que a equipe do turno atual registre recados operacionais (informativos ou de acompanhamento) diretamente no Chão de Fábrica (`/bladder/operador/`) ou na tela de Fechamento de Turno (`/bladder/fechamento/`).
+- **Determinação Automática de Escala:** O colaborador **NUNCA** escolhe turma destinatária, data ou operador manual. O sistema utiliza `calcular_proximo_turno_operacional()` baseado em `ConfiguracaoEscalaBladder` e `AjusteEscalaExcepcionalBladder` (dias de `FOLGA` são saltados automaticamente) para direcionar o recado ao próximo turno operacional real.
+- **Isolamento Total do Ledger e Produção:** Nenhuma mensagem altera ordens de produção (`OrdemProducaoBladder`), metas, volumes realizados ou saldos de pendência (`SaldoPendenteBladder`).
+
+### 7.2. Tipos de Mensagem e Ciclo de Vida
+1. **INFORMATIVO:** Comunicação para ciência da equipe seguinte (ex: material separado, aviso operacional). Ação disponível: `[ CIENTE ]`.
+2. **ACOMPANHAMENTO:** Ocorrências que demandam ação ou verificação (ex: ruído em prensa, verificação de vazamento). Ações disponíveis:
+   - `[ CIENTE ]`: Registra ciência individual por usuário;
+   - `[ RESOLVIDO ]`: Conclui o chamado operacional com registro de usuário e timestamp;
+   - `[ REPASSAR AO PRÓXIMO TURNO ]`: Cria nova mensagem encadeada para a turma seguinte (`mensagem_origem`), preservando a mensagem anterior e gerando a cadeia rastreável ($A \to B \to A \to \dots$).
+
+### 7.3. Persistência e Models
+- `MensagemPassagemTurnoBladder`:
+  * `autor` (User), `data_turno_origem`, `turma_origem` (A/B);
+  * `data_turno_destino`, `turma_destino` (A/B);
+  * `tipo` (`INFORMATIVO`, `ACOMPANHAMENTO`);
+  * `categoria` (`PRODUCAO`, `EQUIPAMENTO`, `QUALIDADE`, `MATERIAL`, `SEGURANCA`, `OUTRO`);
+  * `prioridade` (`NORMAL`, `IMPORTANTE`, `URGENTE`);
+  * `status` (`ABERTA`, `RESOLVIDA`, `REPASSADA`);
+  * `ordem_producao`, `recurso` (máquina);
+  * `mensagem_origem` (auto-relacionamento ForeignKey para cadeia de repasse);
+  * `mensagem` (TextField).
+- `AcaoMensagemTurnoBladder`:
+  * `mensagem` (FK), `usuario` (FK User), `acao` (`CIENTE`, `RESOLVIDO`, `REPASSADO`), `observacao`, `created_at`.
+  * `UniqueConstraint(fields=['mensagem', 'usuario', 'acao'])` para evitar ciências duplicadas.
+
+### 7.4. Telas e Experiência do Usuário (UX Tablet)
+- **Nova Tela: Recados Criados (`/bladder/recados/`):**
+  * Acessível por **todos os colaboradores de Bladder** (Operadores titulares, Apoio operacional, Líderes e Superusuários) diretamente pela barra de navegação superior ("Recados Criados") e por botões contextuais;
+  * **Acompanhamento de Leitura:** Exibe claramente os recados deixados pela equipe, indicando se a equipe do próximo turno já deu `[ CIENTE ]` (com nome e data/hora de cada operador) ou se ainda está aguardando confirmação de leitura;
+  * **Navegação Rápida por Visão:** Filtros de 1 clique para "Recados do Turno de Hoje", "Todos os Recados", "Criados por Mim", "Acompanhamentos em Aberto" e "Resolvidos";
+  * **Filtros Avançados:** Filtro por período, tipo, categoria, prioridade, turma de origem e busca textual;
+  * **Ações Rápidas:** Botão touch `+ NOVO RECADO` e botões de `[ RESOLVER ]` e `[ REPASSAR ]` diretamente nos cards de acompanhamento abertos.
+- **Chão de Fábrica (`/bladder/operador/`):**
+  * Painel superior retrátil **"PASSAGEM DO TURNO ANTERIOR"** com contadores por tipo e destaque para não lidas e prioridade urgente;
+  * Botão de acesso rápido **"VER RECADOS CRIADOS"** integrado ao painel;
+  * Botão **"DEIXAR RECADO PARA O PRÓXIMO TURNO"** no cabeçalho;
+  * Botão contextual **"DEIXAR RECADO"** em cada card de atividade programada (pré-preenche automaticamente OP e Máquina);
+  * Botões touch-friendly com modais rápidos para registro de Ciente, Resolução e Repasse.
+- **Fechamento de Turno (`/bladder/fechamento/`):**
+  * Seção **"PASSAGEM PARA O PRÓXIMO TURNO"** integrada de forma leve (não obrigatória, não trava o fechamento);
+  * Exibe recados criados no turno e acompanhamentos pendentes para resolução ou repasse rápido com botão para ver histórico completo.
+- **Gestão da Liderança (`/bladder/passagem-turno/`):**
+  * Visão consolidada com cards KPI, filtros por período (data início/fim), tipo, categoria, prioridade, status e busca textual;
+  * Rastreabilidade completa da cadeia de repasse com badges e linha do tempo das ações.
+
+---
+
+## 🧪 8. TESTES E REGRESSÃO ATUALIZADOS
+
+- **Testes do App `bladder`:** 173 testes executados e aprovados ($100\%$ GREEN).
+  * Inclui 39 testes da classe `PassagemTurnoBladderTestCase` cobrindo escala automática, cadeia de repasse $A \to B \to A$, ciência por usuário, vínculos com OP, segurança de acesso, tela de Recados Criados e isolamento do Ledger.
+- **Testes de Regressão da Manutenção:** 74 testes aprovados ($100\%$ GREEN).
+- **Testes de Regressão da Matrizaria:** 61 testes aprovados ($100\%$ GREEN).
+- **Total Integrado:** 308 testes aprovados (Zero falhas, Zero erros).
+- **Verificações Django:**
+  * `python manage.py check`: 0 erros (0 silenced).
+  * `python manage.py makemigrations --check`: No changes detected (schema totalmente sincronizado).
+
+---
+
+## 🚀 9. PRÓXIMO PASSO RECOMENDADO AO USUÁRIO
+
+O módulo e a nova Passagem de Turno estão $100\%$ prontos, testados e funcionais no ambiente local (sem commit/push/deploy conforme solicitado).
+Para homologação manual da nova tela de recados:
+1. Iniciar o servidor local: `python manage.py runserver 0.0.0.0:8000` (ou utilizar a porta ativa `8080`).
+2. Fazer login com qualquer operador (ex: `joao_op` ou `admin`) e acessar a nova tela em `/bladder/recados/` pelo menu superior ("Recados Criados").
+3. Criar um recado clicando em `+ NOVO RECADO`.
+4. Observar que o recado aparece listado na aba "Recados do Turno de Hoje" com o badge "Aguardando ciência da equipe destinatária".
+5. Simular login da Turma B (ou data seguinte) em `/bladder/operador/` e marcar `[ CIENTE ]`.
+6. Retornar à tela `/bladder/recados/` e observar a confirmação de leitura com o nome do operador e timestamp.

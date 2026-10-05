@@ -224,6 +224,98 @@
                         {% endfor %}
                     </div>
 
+                    <!-- ============================================================== -->
+                    <!-- SEÇÃO: PASSAGEM PARA O PRÓXIMO TURNO                           -->
+                    <!-- ============================================================== -->
+                    <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                            <div>
+                                <h5 class="fw-bold text-light mb-0 d-flex align-items-center gap-2">
+                                    <i class="bi bi-arrow-left-right text-warning"></i> PASSAGEM PARA O PRÓXIMO TURNO
+                                </h5>
+                                <span class="small text-muted">Comunicação e recados operacionais entre turmas (opcional &bull; não bloqueia o fechamento)</span>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-secondary btn-sm text-light fw-bold d-flex align-items-center gap-1 touch-btn">
+                                    <i class="bi bi-list-check"></i> VER RECADOS
+                                </a>
+                                <button type="button" class="btn btn-outline-warning btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" onclick="abrirModalRecadoGeral()">
+                                    <i class="bi bi-chat-square-text-fill"></i> + DEIXAR RECADO
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 1. Recados já criados neste turno -->
+                        <div class="mb-3">
+                            <h6 class="small text-secondary fw-bold text-uppercase mb-2">
+                                <i class="bi bi-send-check text-success"></i> Recados Criados Neste Turno ({{ recados_criados_turno|length }})
+                            </h6>
+                            {% if recados_criados_turno %}
+                                <div class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20">
+                                    {% for r in recados_criados_turno %}
+                                        <div class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2 px-3">
+                                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <span class="badge {% if r.prioridade == 'URGENTE' %}bg-danger{% elif r.prioridade == 'IMPORTANTE' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                                                        {{ r.get_prioridade_display }}
+                                                    </span>
+                                                    <span class="badge bg-dark border border-secondary text-light">{{ r.get_tipo_display }}</span>
+                                                    <span class="badge bg-dark border border-warning border-opacity-25 text-warning">{{ r.get_categoria_display }}</span>
+                                                    {% if r.ordem_producao %}
+                                                        <span class="small font-monospace text-info">{{ r.ordem_producao.numero_ordem_curto }}</span>
+                                                    {% endif %}
+                                                </div>
+                                                <span class="small text-muted">{{ r.created_at|date:"H:i" }} &bull; {{ r.autor.get_full_name|default:r.autor.username }}</span>
+                                            </div>
+                                            <div class="small text-light">{{ r.mensagem }}</div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="p-2 rounded bg-black bg-opacity-20 border border-secondary border-opacity-25 text-muted small">
+                                    Nenhum recado criado para o próximo turno até o momento.
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- 2. Acompanhamentos recebidos ainda abertos -->
+                        <div class="mb-3">
+                            <h6 class="small text-secondary fw-bold text-uppercase mb-2">
+                                <i class="bi bi-clock-history text-warning"></i> Acompanhamentos Recebidos Ainda em Aberto ({{ acompanhamentos_abertos|length }})
+                            </h6>
+                            {% if acompanhamentos_abertos %}
+                                <div class="row g-2">
+                                    {% for r in acompanhamentos_abertos %}
+                                        <div class="col-12">
+                                            <div class="p-2 rounded border border-warning border-opacity-40 bg-black bg-opacity-30 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                                <div>
+                                                    <div class="d-flex align-items-center gap-2 mb-1">
+                                                        <span class="badge {% if r.prioridade == 'URGENTE' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ r.get_prioridade_display }}</span>
+                                                        <span class="badge bg-dark border border-warning border-opacity-25 text-warning">{{ r.get_categoria_display }}</span>
+                                                        <span class="small text-muted">{{ r.autor.get_full_name|default:r.autor.username }} &bull; {{ r.data_turno_origem|date:"d/m" }}</span>
+                                                    </div>
+                                                    <div class="small text-light">"{{ r.mensagem }}"</div>
+                                                </div>
+                                                <div class="d-flex gap-2">
+                                                    <button type="button" class="btn btn-success btn-sm fw-bold px-3" onclick="abrirModalResolverRecado('{{ r.id }}', '{{ r.mensagem|escapejs }}')">
+                                                        <i class="bi bi-check-lg"></i> RESOLVIDO
+                                                    </button>
+                                                    <button type="button" class="btn btn-info btn-sm fw-bold px-3" onclick="abrirModalRepassarRecado('{{ r.id }}', '{{ r.mensagem|escapejs }}')">
+                                                        <i class="bi bi-arrow-repeat"></i> REPASSAR AO PRÓXIMO TURNO
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            {% else %}
+                                <div class="p-2 rounded bg-black bg-opacity-20 border border-secondary border-opacity-25 text-muted small">
+                                    Nenhum acompanhamento pendente de resolução para este turno.
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
                     <!-- Observações Gerais do Fechamento -->
                     <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
                         <label class="form-label small text-light fw-bold" for="observacoes_gerais">
@@ -231,6 +323,7 @@
                         </label>
                         <textarea name="observacoes_gerais" id="observacoes_gerais" rows="2" class="form-control" placeholder="Observações para a liderança ou para o próximo turno..."></textarea>
                     </div>
+
 
                     <!-- Botão de Confirmação com Proteção de Duplo Clique -->
                     <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top border-secondary border-opacity-25">
@@ -244,7 +337,9 @@
         {% endif %}
     </div>
 </div>
+{% include "bladder/includes/modal_mensagem_turno.html" %}
 {% endblock %}
+
 
 {% block extra_js %}
 <script>
@@ -346,3 +441,5 @@
     });
 </script>
 {% endblock %}
+
+

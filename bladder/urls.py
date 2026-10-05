@@ -19,6 +19,12 @@ urlpatterns = [
     path("ordens/<int:pk>/encerrar-parcial/", views.encerrar_parcial_view, name="encerrar_parcial"),
     path("api/saldo-produto/<int:produto_id>/", views.api_saldo_produto, name="api_saldo_produto"),
     path("api/escala-dia/", views.api_escala_dia, name="api_escala_dia"),
+    path("passagem-turno/", views.passagem_turno_lista, name="passagem_turno_lista"),
+    path("passagem-turno/criar/", views.passagem_turno_criar, name="passagem_turno_criar"),
+    path("passagem-turno/<int:pk>/acao/", views.passagem_turno_acao, name="passagem_turno_acao"),
+    path("recados/", views.recados_criados_lista, name="recados_criados"),
+    path("passagem-turno/recados/", views.recados_criados_lista, name="recados_lista"),
     path("relatorios/", views.relatorios, name="relatorios"),
     path("relatorios/exportar-excel/", views.relatorios_exportar_excel, name="relatorios_exportar_excel"),
 ]
+

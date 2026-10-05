@@ -4165,4 +4165,61 @@ Status: 100% HOMOLOGADO E APROVADO (GREEN)
    - Total Integrado: 269 testes aprovados (100% GREEN).
    - Zero operações no banco SCADA. Zero commit, zero push, zero deploy.
 ================================================================================
+14. PASSAGEM DE TURNO — COMUNICAÇÃO OPERACIONAL ENTRE TURMAS A/B (SETOR DE BLADDER)
+================================================================================
+
+1. OBJETIVO E DIRETRIZES FUNDAMENTAIS:
+   - Funcionalidade interna ao sistema Django Bladder para comunicação operacional assíncrona entre turmas titulares (Turma A e Turma B, jornada alternada 12x36).
+   - O operador NUNCA seleciona turma destinatária, data ou usuário manual: o sistema calcula o próximo turno operacional através de `calcular_proximo_turno_operacional()` respeitando `ConfiguracaoEscalaBladder` e saltando dias com ajuste excepcional `FOLGA`.
+   - Isolamento absoluto: Nenhuma mensagem altera OPs, metas, realizado ou Ledger de pendências (`SaldoPendenteBladder`).
+   - Sem dependência externa: sem WhatsApp, sem Baileys, sem WebSockets.
+
+2. TIPOS DE MENSAGENS E CICLO DE VIDA:
+   a) INFORMATIVO:
+      - Registro de avisos e comunicações de conhecimento (ex: material separado, avisos operacionais).
+      - Ação permitida: `[ CIENTE ]`.
+   b) ACOMPANHAMENTO:
+      - Ocorrências técnicas ou operacionais que requerem verificação/ação da próxima equipe.
+      - Ações permitidas:
+        * `[ CIENTE ]`: Registra ciência do usuário individual;
+        * `[ RESOLVIDO ]`: Finaliza a ocorrência com registro de autor e data/hora;
+        * `[ REPASSAR AO PRÓXIMO TURNO ]`: Cria nova mensagem continuada para a turma seguinte, preservando o histórico e a referência à mensagem de origem (cadeia A -> B -> A...).
+
+3. MODELAGEM E PERSISTÊNCIA (MIGRATION ADITIVA 0005):
+   - Model `MensagemPassagemTurnoBladder`:
+     * `autor`, `data_turno_origem`, `turma_origem` (A/B);
+     * `data_turno_destino`, `turma_destino` (A/B);
+     * `tipo` (INFORMATIVO, ACOMPANHAMENTO);
+     * `categoria` (PRODUCAO, EQUIPAMENTO, QUALIDADE, MATERIAL, SEGURANCA, OUTRO);
+     * `prioridade` (NORMAL, IMPORTANTE, URGENTE);
+     * `status` (ABERTA, RESOLVIDA, REPASSADA);
+     * `ordem_producao` (FK opcional), `recurso` (FK opcional);
+     * `mensagem_origem` (FK autoreferencial opcional para rastreabilidade de repasse);
+     * `mensagem` (TextField).
+   - Model `AcaoMensagemTurnoBladder`:
+     * `mensagem` (FK), `usuario` (FK), `acao` (CIENTE, RESOLVIDO, REPASSADO), `observacao`, `created_at`.
+     * `UniqueConstraint(fields=['mensagem', 'usuario', 'acao'])` para evitar ciências duplicadas.
+
+4. PONTOS DE INTERAÇÃO NA INTERFACE:
+   - Nova Tela: Recados Criados (`/bladder/recados/` e `/bladder/passagem-turno/recados/`):
+     * Acessível por todos os operadores (Turma A / B / Apoio) e líderes no menu superior ("Recados Criados");
+     * Acompanhamento em tempo real da confirmação de leitura (ciência) da equipe do turno seguinte;
+     * Abas rápidas: Recados do Turno de Hoje, Todos os Recados, Criados por Mim, Acompanhamentos Abertos e Resolvidos;
+     * Filtros detalhados por período, tipo, prioridade, categoria e busca textual;
+     * Botão touch `+ NOVO RECADO` e resolução/repasse direto nos cards de acompanhamento.
+   - Chão de Fábrica (`/bladder/operador/`):
+     * Painel retrátil no topo "PASSAGEM DO TURNO ANTERIOR" com priorização visual (Urgente > Importante > Normal);
+     * Botão "VER RECADOS CRIADOS" integrado ao painel;
+     * Botão geral "DEIXAR RECADO PARA O PRÓXIMO TURNO" no header;
+     * Botão contextual discreto "DEIXAR RECADO" em cada card de atividade (pré-preenche OP e Máquina);
+     * Ações CIENTE, RESOLVIDO e REPASSAR integradas via modais touch-friendly.
+   - Fechamento do Turno (`/bladder/fechamento/`):
+     * Seção "PASSAGEM PARA O PRÓXIMO TURNO" com lista de recados criados no turno e acompanhamentos abertos para resolução ou repasse rápido, com botão "VER RECADOS".
+   - Visão da Liderança (`/bladder/passagem-turno/`):
+     * Painel analítico com contadores de status e filtros combinados (período, tipo, categoria, prioridade, status e busca textual).
+
+5. SEGURANÇA E ACESSO:
+   - Restrito a Operador Bladder, Apoio autorizado ativo, Líder Bladder e Superuser.
+   - Validação backend em todas as rotas de criação e ação. Staff genérico e operadores de outros módulos são bloqueados.
+================================================================================
 

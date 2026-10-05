@@ -146,3 +146,60 @@ class CorrecaoApontamentoForm(forms.Form):
         if len(m) < 4:
             raise forms.ValidationError("Informe uma justificativa com no mínimo 4 caracteres.")
         return m
+
+
+class MensagemPassagemTurnoForm(forms.Form):
+    """Formulário para registrar uma mensagem de Passagem de Turno."""
+    tipo = forms.ChoiceField(
+        label="Tipo de Recado",
+        choices=[
+            ('INFORMATIVO', 'Informativo (Apenas dar ciência)'),
+            ('ACOMPANHAMENTO', 'Acompanhamento (Pede ação / verificação)'),
+        ],
+        initial='INFORMATIVO',
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    categoria = forms.ChoiceField(
+        label="Categoria",
+        choices=[
+            ('PRODUCAO', 'Produção'),
+            ('EQUIPAMENTO', 'Equipamento'),
+            ('QUALIDADE', 'Qualidade'),
+            ('MATERIAL', 'Material'),
+            ('SEGURANCA', 'Segurança'),
+            ('OUTRO', 'Outro'),
+        ],
+        initial='PRODUCAO',
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    prioridade = forms.ChoiceField(
+        label="Prioridade",
+        choices=[
+            ('NORMAL', 'Normal'),
+            ('IMPORTANTE', 'Importante'),
+            ('URGENTE', 'Urgente'),
+        ],
+        initial='NORMAL',
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    mensagem = forms.CharField(
+        label="Mensagem para o Próximo Turno",
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 3,
+            'placeholder': 'O que o próximo turno precisa saber ou verificar com atenção?...'
+        }),
+        required=True
+    )
+    # Campos contextuais opcionais
+    ordem_producao_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
+    processo_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
+    maquina_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
+    produto_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
+
+    def clean_mensagem(self):
+        m = self.cleaned_data.get('mensagem', '').strip()
+        if not m:
+            raise forms.ValidationError("A mensagem não pode ser vazia.")
+        return m
+

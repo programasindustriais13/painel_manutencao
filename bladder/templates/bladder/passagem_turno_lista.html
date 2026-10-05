@@ -1,0 +1,310 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Passagens de Turno &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <span class="badge bg-warning text-dark fw-bold fs-6 px-2 py-1">
+                <i class="bi bi-arrow-left-right me-1"></i> PASSAGEM DE TURNO
+            </span>
+            <span class="badge bg-dark border border-secondary text-secondary">Comunicação Operacional Turma A &bull; Turma B</span>
+        </div>
+        <h1 class="h3 fw-bold text-light mb-0">Histórico e Gestão de Recados entre Equipes</h1>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-warning fw-bold d-flex align-items-center gap-2" onclick="abrirModalRecadoGeral()">
+            <i class="bi bi-chat-square-text-fill"></i> + Novo Recado
+        </button>
+        <a href="{% url 'bladder:dashboard' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Voltar ao Dashboard
+        </a>
+    </div>
+</div>
+
+<!-- Métricas Resumo -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Total de Recados</span>
+            <span class="fs-3 fw-bold text-light font-monospace">{{ total_geral }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Informativos</span>
+            <span class="fs-3 fw-bold text-info font-monospace">{{ total_informativos }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Acompanhamentos</span>
+            <span class="fs-3 fw-bold text-primary font-monospace">{{ total_acompanhamentos }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Abertos / Em Ação</span>
+            <span class="fs-3 fw-bold text-warning font-monospace">{{ total_abertas }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Resolvidos</span>
+            <span class="fs-3 fw-bold text-success font-monospace">{{ total_resolvidas }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card p-3 text-center h-100 border-danger border-opacity-40">
+            <span class="text-muted small d-block mb-1">Urgentes</span>
+            <span class="fs-3 fw-bold text-danger font-monospace">{{ total_urgentes }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Filtros de Pesquisa -->
+<div class="glass-card p-3 mb-4 border-secondary border-opacity-25">
+    <form method="GET" class="row g-2 align-items-end">
+        <div class="col-12 col-sm-6 col-md-3 col-xl-2">
+            <label class="form-label text-secondary small fw-bold mb-1">Data Início (Origem)</label>
+            <input type="date" name="data_inicio" value="{{ data_inicio }}" class="form-control form-control-sm bg-dark text-light border-secondary">
+        </div>
+        <div class="col-12 col-sm-6 col-md-3 col-xl-2">
+            <label class="form-label text-secondary small fw-bold mb-1">Data Fim (Origem)</label>
+            <input type="date" name="data_fim" value="{{ data_fim }}" class="form-control form-control-sm bg-dark text-light border-secondary">
+        </div>
+        <div class="col-6 col-md-2 col-xl-1">
+            <label class="form-label text-secondary small fw-bold mb-1">Tipo</label>
+            <select name="tipo" class="form-select form-select-sm bg-dark text-light border-secondary">
+                <option value="">Todos</option>
+                <option value="INFORMATIVO" {% if tipo_filtro == 'INFORMATIVO' %}selected{% endif %}>Informativo</option>
+                <option value="ACOMPANHAMENTO" {% if tipo_filtro == 'ACOMPANHAMENTO' %}selected{% endif %}>Acompanhamento</option>
+            </select>
+        </div>
+        <div class="col-6 col-md-2 col-xl-2">
+            <label class="form-label text-secondary small fw-bold mb-1">Prioridade</label>
+            <select name="prioridade" class="form-select form-select-sm bg-dark text-light border-secondary">
+                <option value="">Todas</option>
+                <option value="URGENTE" {% if prioridade_filtro == 'URGENTE' %}selected{% endif %}>Urgente</option>
+                <option value="IMPORTANTE" {% if prioridade_filtro == 'IMPORTANTE' %}selected{% endif %}>Importante</option>
+                <option value="NORMAL" {% if prioridade_filtro == 'NORMAL' %}selected{% endif %}>Normal</option>
+            </select>
+        </div>
+        <div class="col-6 col-md-2 col-xl-1">
+            <label class="form-label text-secondary small fw-bold mb-1">Status</label>
+            <select name="status" class="form-select form-select-sm bg-dark text-light border-secondary">
+                <option value="">Todos</option>
+                <option value="ABERTA" {% if status_filtro == 'ABERTA' %}selected{% endif %}>Aberta</option>
+                <option value="RESOLVIDA" {% if status_filtro == 'RESOLVIDA' %}selected{% endif %}>Resolvida</option>
+                <option value="REPASSADA" {% if status_filtro == 'REPASSADA' %}selected{% endif %}>Repassada</option>
+            </select>
+        </div>
+        <div class="col-6 col-md-2 col-xl-1">
+            <label class="form-label text-secondary small fw-bold mb-1">Turma Destino</label>
+            <select name="turma_destino" class="form-select form-select-sm bg-dark text-light border-secondary">
+                <option value="">Todas</option>
+                <option value="TURMA_A" {% if turma_destino_filtro == 'TURMA_A' %}selected{% endif %}>Turma A</option>
+                <option value="TURMA_B" {% if turma_destino_filtro == 'TURMA_B' %}selected{% endif %}>Turma B</option>
+            </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+            <label class="form-label text-secondary small fw-bold mb-1">Buscar Termo</label>
+            <input type="text" name="q" value="{{ q }}" placeholder="Mensagem, autor, OP..." class="form-control form-control-sm bg-dark text-light border-secondary">
+        </div>
+        <div class="col-12 col-md-4 col-xl-1 d-flex gap-1">
+            <button type="submit" class="btn btn-warning btn-sm fw-bold w-100" title="Aplicar Filtros">
+                <i class="bi bi-funnel-fill"></i>
+            </button>
+            <a href="{% url 'bladder:passagem_turno_lista' %}" class="btn btn-outline-secondary btn-sm" title="Limpar Filtros">
+                <i class="bi bi-x-lg"></i>
+            </a>
+        </div>
+    </form>
+</div>
+
+<!-- Listagem de Mensagens -->
+<div class="glass-card p-3 border-secondary border-opacity-25">
+    {% if mensagens %}
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0 small">
+                <thead>
+                    <tr class="text-secondary border-secondary border-opacity-50">
+                        <th style="width: 100px;">Prioridade</th>
+                        <th style="width: 110px;">Tipo</th>
+                        <th style="width: 110px;">Categoria</th>
+                        <th style="width: 140px;">Origem &rarr; Destino</th>
+                        <th>Mensagem &bull; Contexto Operacional</th>
+                        <th style="width: 140px;">Autor</th>
+                        <th style="width: 110px;" class="text-center">Status</th>
+                        <th style="width: 120px;" class="text-center">Ações / Detalhes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for m in mensagens %}
+                        <tr class="{% if m.prioridade == 'URGENTE' %}table-danger bg-opacity-10{% elif m.prioridade == 'IMPORTANTE' %}table-warning bg-opacity-10{% endif %}">
+                            <td>
+                                {% if m.prioridade == 'URGENTE' %}
+                                    <span class="badge bg-danger fw-bold"><i class="bi bi-exclamation-octagon-fill"></i> URGENTE</span>
+                                {% elif m.prioridade == 'IMPORTANTE' %}
+                                    <span class="badge bg-warning text-dark fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> IMPORTANTE</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">NORMAL</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge {% if m.tipo == 'ACOMPANHAMENTO' %}bg-primary{% else %}bg-dark border border-secondary text-light{% endif %}">
+                                    {{ m.get_tipo_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge bg-dark border border-warning border-opacity-25 text-warning">
+                                    {{ m.get_categoria_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="font-monospace fw-semibold">
+                                    {{ m.get_turma_origem_display }} <span class="text-muted">({{ m.data_turno_origem|date:"d/m" }})</span>
+                                </div>
+                                <div class="text-muted" style="font-size: 0.8rem;">
+                                    &rarr; {{ m.get_turma_destino_display }} ({{ m.data_turno_destino|date:"d/m" }})
+                                </div>
+                            </td>
+                            <td>
+                                <!-- Contexto -->
+                                {% if m.ordem_producao or m.processo or m.maquina or m.produto %}
+                                    <div class="small text-warning mb-1 d-flex flex-wrap align-items-center gap-2">
+                                        <i class="bi bi-gear-fill"></i>
+                                        {% if m.maquina %}<span>{{ m.maquina.nome }}</span>{% endif %}
+                                        {% if m.processo %}<span>&bull; {{ m.processo.nome }}</span>{% endif %}
+                                        {% if m.produto %}<span>&bull; {{ m.produto.codigo_com_medida }}</span>{% endif %}
+                                        {% if m.ordem_producao %}<span>&bull; {{ m.ordem_producao.numero_ordem_curto }}</span>{% endif %}
+                                    </div>
+                                {% endif %}
+                                <div class="text-light fs-6" style="white-space: pre-line;">{{ m.mensagem }}</div>
+
+                                <!-- Histórico de Repasses (Cadeia) -->
+                                {% if m.mensagem_origem or m.repasses.all %}
+                                    <div class="mt-2 p-2 rounded bg-black bg-opacity-40 border border-info border-opacity-25 small">
+                                        <strong class="text-info"><i class="bi bi-diagram-3-fill"></i> Cadeia de Repasse:</strong>
+                                        <div class="mt-1">
+                                            {% if m.cadeia_historica %}
+                                                {% for anterior in m.cadeia_historica %}
+                                                    <span class="badge bg-secondary me-1">
+                                                        {{ anterior.get_turma_origem_display }} ({{ anterior.data_turno_origem|date:"d/m" }})
+                                                    </span>
+                                                    &rarr;
+                                                {% endfor %}
+                                            {% endif %}
+                                            <span class="badge bg-warning text-dark fw-bold me-1">
+                                                {{ m.get_turma_origem_display }} ({{ m.data_turno_origem|date:"d/m" }})
+                                            </span>
+                                            {% if m.repasses.all %}
+                                                &rarr;
+                                                {% for prox in m.repasses.all %}
+                                                    <span class="badge bg-info text-dark">
+                                                        {{ prox.get_turma_destino_display }} ({{ prox.data_turno_destino|date:"d/m" }})
+                                                    </span>
+                                                {% endfor %}
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                {% endif %}
+
+                                <!-- Observações de Resolução / Repasse -->
+                                {% if m.resolvido_em %}
+                                    <div class="small text-success mt-1">
+                                        <i class="bi bi-check-circle-fill"></i> Resolvido por <strong>{{ m.resolvido_por.get_full_name|default:m.resolvido_por.username }}</strong>
+                                        em {{ m.resolvido_em|date:"d/m/Y H:i" }}
+                                        {% if m.observacao_resolucao %}&bull; <em>"{{ m.observacao_resolucao }}"</em>{% endif %}
+                                    </div>
+                                {% endif %}
+                                {% if m.repassado_em %}
+                                    <div class="small text-info mt-1">
+                                        <i class="bi bi-arrow-repeat"></i> Repassado por <strong>{{ m.repassado_por.get_full_name|default:m.repassado_por.username }}</strong>
+                                        em {{ m.repassado_em|date:"d/m/Y H:i" }}
+                                        {% if m.observacao_repasse %}&bull; <em>"{{ m.observacao_repasse }}"</em>{% endif %}
+                                    </div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="fw-semibold text-light">{{ m.autor.get_full_name|default:m.autor.username }}</div>
+                                <span class="text-muted" style="font-size: 0.75rem;">{{ m.created_at|date:"d/m/Y H:i" }}</span>
+                            </td>
+                            <td class="text-center">
+                                {% if m.status == 'ABERTA' %}
+                                    <span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> Aberta</span>
+                                {% elif m.status == 'RESOLVIDA' %}
+                                    <span class="badge bg-success"><i class="bi bi-check2-circle"></i> Resolvida</span>
+                                {% elif m.status == 'REPASSADA' %}
+                                    <span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat"></i> Repassada</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#modalAuditoria{{ m.id }}" title="Ver Trilha de Ações e Leituras">
+                                    <i class="bi bi-eye"></i> Auditoria
+                                </button>
+
+                                <!-- Modal de Auditoria e Ciência -->
+                                <div class="modal fade" id="modalAuditoria{{ m.id }}" tabindex="-1" aria-hidden="true">
+                                    <div class="modal-dialog modal-dialog-centered">
+                                        <div class="modal-content bg-dark text-light border border-secondary shadow-lg text-start">
+                                            <div class="modal-header border-secondary">
+                                                <h6 class="modal-title fw-bold text-warning mb-0">
+                                                    <i class="bi bi-shield-check"></i> Trilha de Ações &bull; Recado #{{ m.id }}
+                                                </h6>
+                                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                                            </div>
+                                            <div class="modal-body p-3">
+                                                <div class="mb-3">
+                                                    <strong class="text-light d-block mb-1">Recado Operacional:</strong>
+                                                    <div class="p-2 rounded bg-black bg-opacity-30 border border-secondary border-opacity-25 small text-light">
+                                                        {{ m.mensagem }}
+                                                    </div>
+                                                </div>
+
+                                                <h6 class="small text-secondary fw-bold text-uppercase mb-2">Ciências e Ações Registradas:</h6>
+                                                {% if m.acoes.all %}
+                                                    <ul class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20 small">
+                                                        {% for acao in m.acoes.all %}
+                                                            <li class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2">
+                                                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                                                    <span class="badge {% if acao.acao == 'CIENTE' %}bg-success{% elif acao.acao == 'RESOLVIDO' %}bg-primary{% else %}bg-info text-dark{% endif %}">
+                                                                        {{ acao.get_acao_display }}
+                                                                    </span>
+                                                                    <span class="text-muted" style="font-size: 0.75rem;">{{ acao.created_at|date:"d/m/Y H:i:s" }}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <strong>{{ acao.usuario.get_full_name|default:acao.usuario.username }}</strong>
+                                                                    {% if acao.observacao %}<span class="text-secondary">&bull; "{{ acao.observacao }}"</span>{% endif %}
+                                                                </div>
+                                                            </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                {% else %}
+                                                    <div class="text-muted small">Nenhuma ação ou leitura registrada até o momento.</div>
+                                                {% endif %}
+                                            </div>
+                                            <div class="modal-footer border-secondary">
+                                                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fechar</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="text-center py-5">
+            <i class="bi bi-chat-square-dots text-secondary fs-1 d-block mb-3"></i>
+            <h5 class="fw-bold text-light">Nenhum recado de passagem de turno encontrado.</h5>
+            <p class="text-muted small">Utilize os filtros acima ou registre um novo recado para o próximo turno operacional.</p>
+        </div>
+    {% endif %}
+</div>
+
+{% include "bladder/includes/modal_mensagem_turno.html" %}
+{% endblock %}

@@ -1,5 +1,6 @@
 import datetime
 from django.db import transaction
+from django.db.models import Case, When, Value, IntegerField, Q
 from django.utils import timezone
 from .models import (
     ConfiguracaoEscalaBladder,
@@ -13,6 +14,8 @@ from .models import (
     CategoriaDesvioBladder,
     HistoricoApontamentoBladder,
     HistoricoProgramacaoBladder,
+    MensagemPassagemTurnoBladder,
+    AcaoMensagemTurnoBladder,
 )
 
 
@@ -684,4 +687,281 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
         )
 
     return fechamento
+
+
+def calcular_proximo_turno_operacional(data_referencia=None):
+    """
+    Calcula dinamicamente a data e a turma do próximo turno operacional a partir de uma data de referência.
+    Varre os dias subsequentes respeitando a alternância 12x36 de ConfiguracaoEscalaBladder
+    e eventuais ajustes excepcionais em AjusteEscalaExcepcionalBladder.
+    Dias marcados como 'FOLGA' (sem produção) são pulados até encontrar o próximo turno ativo.
+    Retorna tupla: (data_proximo_turno, turma_proximo_turno, is_ajuste, motivo)
+    """
+    if data_referencia is None:
+        data_referencia = timezone.localdate()
+
+    dia_candidato = data_referencia + datetime.timedelta(days=1)
+    limite_dias = 60  # Proteção contra loop infinito
+
+    for _ in range(limite_dias):
+        turma, is_ajuste, motivo = calcular_turma_do_dia(dia_candidato)
+        if turma in ['TURMA_A', 'TURMA_B']:
+            return dia_candidato, turma, is_ajuste, motivo
+        dia_candidato += datetime.timedelta(days=1)
+
+    # Fallback seguro caso não encontre
+    turma_ref, _, _ = calcular_turma_do_dia(data_referencia)
+    prox_turma = 'TURMA_B' if turma_ref == 'TURMA_A' else 'TURMA_A'
+    return data_referencia + datetime.timedelta(days=1), prox_turma, False, None
+
+
+@transaction.atomic(using='default')
+def criar_mensagem_passagem_turno(
+    autor,
+    mensagem,
+    tipo='INFORMATIVO',
+    categoria='PRODUCAO',
+    prioridade='NORMAL',
+    data_turno_origem=None,
+    ordem_producao=None,
+    processo=None,
+    maquina=None,
+    produto=None,
+    mensagem_origem=None
+):
+    """
+    Cria uma mensagem de passagem de turno formal do Bladder.
+    A turma de origem é calculada a partir da data de origem.
+    A data e turma de destino são calculadas automaticamente para o próximo turno operacional.
+    O operador não escolhe destinatário manual.
+    """
+    from .decorators import user_is_operador_bladder
+    if not autor or not autor.is_authenticated or not user_is_operador_bladder(autor):
+        raise PermissionError("Usuário não possui autorização para registrar recados no Setor de Bladder.")
+
+    msg_texto = (mensagem or "").strip()
+    if not msg_texto:
+        raise ValueError("O conteúdo da mensagem é obrigatório.")
+
+    if tipo not in ['INFORMATIVO', 'ACOMPANHAMENTO']:
+        raise ValueError(f"Tipo de mensagem inválido: {tipo}")
+
+    categorias_validas = ['PRODUCAO', 'EQUIPAMENTO', 'QUALIDADE', 'MATERIAL', 'SEGURANCA', 'OUTRO']
+    if categoria not in categorias_validas:
+        raise ValueError(f"Categoria inválida: {categoria}")
+
+    prioridades_validas = ['NORMAL', 'IMPORTANTE', 'URGENTE']
+    if prioridade not in prioridades_validas:
+        raise ValueError(f"Prioridade inválida: {prioridade}")
+
+    if data_turno_origem is None:
+        data_turno_origem = timezone.localdate()
+
+    turma_origem, _, _ = calcular_turma_do_dia(data_turno_origem)
+    data_turno_destino, turma_destino, _, _ = calcular_proximo_turno_operacional(data_turno_origem)
+
+    # Derivação de contexto da OP se fornecida
+    if ordem_producao:
+        if not processo:
+            processo = ordem_producao.processo
+        if not produto:
+            produto = ordem_producao.produto
+        if not maquina and processo and processo.maquina:
+            maquina = processo.maquina
+    elif processo and not maquina and processo.maquina:
+        maquina = processo.maquina
+
+    msg = MensagemPassagemTurnoBladder.objects.create(
+        autor=autor,
+        data_turno_origem=data_turno_origem,
+        turma_origem=turma_origem,
+        data_turno_destino=data_turno_destino,
+        turma_destino=turma_destino,
+        tipo=tipo,
+        categoria=categoria,
+        prioridade=prioridade,
+        mensagem=msg_texto,
+        ordem_producao=ordem_producao,
+        processo=processo,
+        maquina=maquina,
+        produto=produto,
+        status='ABERTA',
+        mensagem_origem=mensagem_origem,
+    )
+    return msg
+
+
+def registrar_ciencia_mensagem_turno(mensagem, usuario):
+    """
+    Registra ciência individual do usuário na mensagem de turno.
+    Idempotente: o mesmo usuário não duplica registro de CIENTE.
+    Não marca ciência para outros usuários.
+    """
+    from .decorators import user_is_operador_bladder
+    if not usuario or not usuario.is_authenticated or not user_is_operador_bladder(usuario):
+        raise PermissionError("Usuário não autorizado a registrar ciência no Setor de Bladder.")
+
+    acao_obj, created = AcaoMensagemTurnoBladder.objects.get_or_create(
+        mensagem=mensagem,
+        usuario=usuario,
+        acao='CIENTE'
+    )
+    return acao_obj, created
+
+
+@transaction.atomic(using='default')
+def resolver_mensagem_acompanhamento(mensagem, usuario, observacao=""):
+    """
+    Marca uma mensagem do tipo ACOMPANHAMENTO como RESOLVIDA.
+    Preserva histórico completo e registra a ação de resolução.
+    """
+    from .decorators import user_is_operador_bladder
+    if not usuario or not usuario.is_authenticated or not user_is_operador_bladder(usuario):
+        raise PermissionError("Usuário não autorizado a resolver acompanhamentos no Setor de Bladder.")
+
+    if mensagem.tipo != 'ACOMPANHAMENTO':
+        raise ValueError("Apenas mensagens do tipo Acompanhamento podem ser resolvidas.")
+
+    if mensagem.status != 'ABERTA':
+        raise ValueError("Esta mensagem não está aberta para resolução.")
+
+    obs = (observacao or "").strip()
+    agora = timezone.now()
+
+    mensagem.status = 'RESOLVIDA'
+    mensagem.resolvido_por = usuario
+    mensagem.resolvido_em = agora
+    mensagem.observacao_resolucao = obs
+    mensagem.save(update_fields=['status', 'resolvido_por', 'resolvido_em', 'observacao_resolucao', 'updated_at'])
+
+    AcaoMensagemTurnoBladder.objects.create(
+        mensagem=mensagem,
+        usuario=usuario,
+        acao='RESOLVIDO',
+        observacao=obs
+    )
+    # Garante também registro de ciência
+    AcaoMensagemTurnoBladder.objects.get_or_create(
+        mensagem=mensagem,
+        usuario=usuario,
+        acao='CIENTE'
+    )
+    return mensagem
+
+
+@transaction.atomic(using='default')
+def repassar_mensagem_acompanhamento(mensagem, usuario, observacao=""):
+    """
+    Repassa um acompanhamento não resolvido para o próximo turno operacional.
+    A mensagem original é marcada como REPASSADA e uma nova mensagem é criada
+    com destino para o próximo turno da escala, vinculada através de mensagem_origem
+    (preservando a cadeia A -> B -> A...).
+    """
+    from .decorators import user_is_operador_bladder
+    if not usuario or not usuario.is_authenticated or not user_is_operador_bladder(usuario):
+        raise PermissionError("Usuário não autorizado a repassar recados no Setor de Bladder.")
+
+    if mensagem.tipo != 'ACOMPANHAMENTO':
+        raise ValueError("Apenas mensagens do tipo Acompanhamento podem ser repassadas.")
+
+    if mensagem.status != 'ABERTA':
+        raise ValueError("Esta mensagem não está aberta para repasse.")
+
+    obs = (observacao or "").strip()
+    agora = timezone.now()
+
+    # 1. Encerra a mensagem atual como REPASSADA
+    mensagem.status = 'REPASSADA'
+    mensagem.repassado_por = usuario
+    mensagem.repassado_em = agora
+    mensagem.observacao_repasse = obs
+    mensagem.save(update_fields=['status', 'repassado_por', 'repassado_em', 'observacao_repasse', 'updated_at'])
+
+    AcaoMensagemTurnoBladder.objects.create(
+        mensagem=mensagem,
+        usuario=usuario,
+        acao='REPASSADO',
+        observacao=obs
+    )
+    AcaoMensagemTurnoBladder.objects.get_or_create(
+        mensagem=mensagem,
+        usuario=usuario,
+        acao='CIENTE'
+    )
+
+    # 2. Calcula próximo turno operacional de destino a partir da data de recebimento
+    data_origem_repasse = mensagem.data_turno_destino
+    turma_origem_repasse = mensagem.turma_destino
+    prox_data_destino, prox_turma_destino, _, _ = calcular_proximo_turno_operacional(data_origem_repasse)
+
+    texto_repassado = mensagem.mensagem
+    if obs:
+        autor_repasse = usuario.get_full_name() or usuario.username
+        texto_repassado = f"{mensagem.mensagem}\n\n[Repasse por {autor_repasse}]: {obs}"
+
+    nova_mensagem = MensagemPassagemTurnoBladder.objects.create(
+        autor=usuario,
+        data_turno_origem=data_origem_repasse,
+        turma_origem=turma_origem_repasse,
+        data_turno_destino=prox_data_destino,
+        turma_destino=prox_turma_destino,
+        tipo='ACOMPANHAMENTO',
+        categoria=mensagem.categoria,
+        prioridade=mensagem.prioridade,
+        mensagem=texto_repassado,
+        ordem_producao=mensagem.ordem_producao,
+        processo=mensagem.processo,
+        maquina=mensagem.maquina,
+        produto=mensagem.produto,
+        status='ABERTA',
+        mensagem_origem=mensagem,
+    )
+    return nova_mensagem
+
+
+def obter_mensagens_recebidas_turno(data_turno=None, turma=None, usuario=None):
+    """
+    Retorna a lista de mensagens recebidas para a data/turma informada.
+    Ordenação canônica:
+    1. Urgentes primeiro
+    2. Importantes em seguida
+    3. Normais por último
+    4. Mais recentes (-created_at)
+    Cada mensagem recebe o atributo `usuario_ciente` se usuario for informado.
+    """
+    if data_turno is None:
+        data_turno = timezone.localdate()
+
+    if turma is None:
+        turma, _, _ = calcular_turma_do_dia(data_turno)
+
+    # Inclui recados destinados para esta data/turma que estejam abertos ou que foram recebidos neste turno
+    # Permite também ver recados em aberto de datas anteriores destinados a esta turma se não foram tratados
+    qs = MensagemPassagemTurnoBladder.objects.filter(
+        Q(data_turno_destino=data_turno, turma_destino=turma) |
+        Q(data_turno_destino__lt=data_turno, turma_destino=turma, status='ABERTA')
+    ).select_related(
+        'autor', 'ordem_producao', 'processo', 'maquina', 'produto',
+        'resolvido_por', 'repassado_por', 'mensagem_origem'
+    ).prefetch_related(
+        'acoes__usuario'
+    ).annotate(
+        peso_prioridade=Case(
+            When(prioridade='URGENTE', then=Value(1)),
+            When(prioridade='IMPORTANTE', then=Value(2)),
+            default=Value(3),
+            output_field=IntegerField()
+        )
+    ).order_by('peso_prioridade', '-created_at')
+
+    mensagens_lista = list(qs)
+    if usuario and usuario.is_authenticated:
+        for m in mensagens_lista:
+            m.usuario_ciente = any(a.usuario_id == usuario.id and a.acao == 'CIENTE' for a in m.acoes.all())
+    else:
+        for m in mensagens_lista:
+            m.usuario_ciente = False
+
+    return mensagens_lista
+
 

@@ -95,6 +95,151 @@
     </div>
 </div>
 
+<!-- ===================================================================== -->
+<!-- PAINEL COMPACTO: PASSAGEM DO TURNO ANTERIOR                           -->
+<!-- ===================================================================== -->
+<div class="mb-4">
+    <div class="glass-card p-3 border-opacity-30 {% if recados_urgentes > 0 %}border-danger shadow-sm{% else %}border-secondary{% endif %}">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2 pb-2 border-bottom border-secondary border-opacity-25">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <span class="badge {% if recados_urgentes > 0 %}bg-danger animate-pulse{% elif total_recados > 0 %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-3 py-1">
+                    <i class="bi bi-arrow-left-right me-1"></i> PASSAGEM DO TURNO ANTERIOR
+                </span>
+                {% if total_recados > 0 %}
+                    <span class="badge bg-dark border border-secondary text-light fs-6">
+                        {{ total_recados }} recado{{ total_recados|pluralize }}
+                        {% if recados_pendentes_ciencia > 0 %}
+                            &bull; <span class="text-warning">{{ recados_pendentes_ciencia }} não lido{{ recados_pendentes_ciencia|pluralize }}</span>
+                        {% endif %}
+                    </span>
+                    {% if recados_urgentes > 0 %}
+                        <span class="badge bg-danger text-light fs-6">
+                            <i class="bi bi-exclamation-triangle-fill"></i> {{ recados_urgentes }} urgente{{ recados_urgentes|pluralize }}
+                        </span>
+                    {% endif %}
+                {% else %}
+                    <span class="badge bg-dark border border-secondary text-muted">Nenhum recado recebido para hoje</span>
+                {% endif %}
+            </div>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                {% if total_recados > 0 %}
+                    <button class="btn btn-sm btn-outline-secondary text-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapseRecadosTurno" aria-expanded="true" aria-controls="collapseRecadosTurno">
+                        <i class="bi bi-chevron-expand me-1"></i> Expandir / Recolher
+                    </button>
+                {% endif %}
+                <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-warning btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" title="Ver recados criados para o próximo turno">
+                    <i class="bi bi-list-check"></i> VER RECADOS CRIADOS
+                </a>
+                <button type="button" class="btn btn-warning btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" onclick="abrirModalRecadoGeral()">
+                    <i class="bi bi-chat-square-text-fill"></i> + DEIXAR RECADO PARA O PRÓXIMO TURNO
+                </button>
+            </div>
+        </div>
+
+        {% if total_recados > 0 %}
+            <div class="collapse show" id="collapseRecadosTurno">
+                <div class="row g-2 pt-1">
+                    {% for recado in recados_recebidos %}
+                        <div class="col-12 {% if total_recados > 1 %}col-lg-6{% endif %}">
+                            <div class="p-3 rounded border {% if recado.prioridade == 'URGENTE' %}border-danger bg-danger bg-opacity-10{% elif recado.prioridade == 'IMPORTANTE' %}border-warning border-opacity-50 bg-black bg-opacity-30{% else %}border-secondary border-opacity-40 bg-black bg-opacity-20{% endif %} {% if recado.usuario_ciente %}opacity-75{% endif %} h-100 d-flex flex-column justify-content-between">
+                                <div>
+                                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                        <div class="d-flex flex-wrap align-items-center gap-1">
+                                            <!-- Prioridade -->
+                                            {% if recado.prioridade == 'URGENTE' %}
+                                                <span class="badge bg-danger fw-bold"><i class="bi bi-exclamation-octagon-fill"></i> URGENTE</span>
+                                            {% elif recado.prioridade == 'IMPORTANTE' %}
+                                                <span class="badge bg-warning text-dark fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> IMPORTANTE</span>
+                                            {% else %}
+                                                <span class="badge bg-secondary">NORMAL</span>
+                                            {% endif %}
+
+                                            <!-- Tipo -->
+                                            <span class="badge {% if recado.tipo == 'ACOMPANHAMENTO' %}bg-primary{% else %}bg-dark border border-secondary text-light{% endif %}">
+                                                {{ recado.get_tipo_display }}
+                                            </span>
+
+                                            <!-- Categoria -->
+                                            <span class="badge bg-dark border border-warning border-opacity-25 text-warning">
+                                                {{ recado.get_categoria_display }}
+                                            </span>
+
+                                            {% if recado.mensagem_origem %}
+                                                <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25" title="Recado repassado de turno anterior">
+                                                    <i class="bi bi-arrow-repeat"></i> Repassado
+                                                </span>
+                                            {% endif %}
+                                        </div>
+
+                                        <!-- Status do Recado -->
+                                        <div>
+                                            {% if recado.status == 'RESOLVIDA' %}
+                                                <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Resolvido</span>
+                                            {% elif recado.status == 'REPASSADA' %}
+                                                <span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat"></i> Repassado</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+
+                                    <!-- Contexto Operacional (se houver) -->
+                                    {% if recado.ordem_producao or recado.processo or recado.maquina or recado.produto %}
+                                        <div class="small text-warning text-opacity-90 fw-semibold mb-2 d-flex flex-wrap align-items-center gap-2 bg-black bg-opacity-40 px-2 py-1 rounded">
+                                            <i class="bi bi-gear-fill"></i>
+                                            {% if recado.maquina %}<span>{{ recado.maquina.nome }}</span>{% endif %}
+                                            {% if recado.processo %}<span>&bull; {{ recado.processo.nome }}</span>{% endif %}
+                                            {% if recado.produto %}<span>&bull; {{ recado.produto.codigo_com_medida }}</span>{% endif %}
+                                            {% if recado.ordem_producao %}<span>&bull; {{ recado.ordem_producao.numero_ordem_curto }}</span>{% endif %}
+                                        </div>
+                                    {% endif %}
+
+                                    <!-- Mensagem -->
+                                    <div class="text-light fs-6 mb-2" style="white-space: pre-line;">{{ recado.mensagem }}</div>
+                                </div>
+
+                                <!-- Rodapé do Card: Autoria e Ações -->
+                                <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                    <div class="small text-muted">
+                                        <i class="bi bi-person"></i> <strong class="text-light">{{ recado.autor.get_full_name|default:recado.autor.username }}</strong> &bull;
+                                        {{ recado.get_turma_origem_display }} &bull; {{ recado.data_turno_origem|date:"d/m" }} às {{ recado.created_at|date:"H:i" }}
+                                    </div>
+
+                                    <div class="d-flex align-items-center gap-2">
+                                        <!-- Ciência individual -->
+                                        {% if recado.usuario_ciente %}
+                                            <span class="badge bg-success-subtle text-success border border-success py-1 px-2 small">
+                                                <i class="bi bi-check2-all"></i> Ciente
+                                            </span>
+                                        {% else %}
+                                            <form method="POST" action="{% url 'bladder:passagem_turno_acao' recado.id %}" class="d-inline">
+                                                {% csrf_token %}
+                                                <input type="hidden" name="acao" value="CIENTE">
+                                                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+                                                <button type="submit" class="btn btn-outline-success btn-sm fw-bold px-3 py-1 touch-btn">
+                                                    <i class="bi bi-check2"></i> CIENTE
+                                                </button>
+                                            </form>
+                                        {% endif %}
+
+                                        <!-- Ações de Acompanhamento -->
+                                        {% if recado.tipo == 'ACOMPANHAMENTO' and recado.status == 'ABERTA' %}
+                                            <button type="button" class="btn btn-success btn-sm fw-bold px-2 py-1 touch-btn" onclick="abrirModalResolverRecado('{{ recado.id }}', '{{ recado.mensagem|escapejs }}')">
+                                                <i class="bi bi-check-lg"></i> RESOLVIDO
+                                            </button>
+                                            <button type="button" class="btn btn-info btn-sm fw-bold px-2 py-1 touch-btn" onclick="abrirModalRepassarRecado('{{ recado.id }}', '{{ recado.mensagem|escapejs }}')">
+                                                <i class="bi bi-arrow-repeat"></i> REPASSAR
+                                            </button>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
 <!-- Fila de Atividades Programadas para o Turno (Responsivo: 1 col mobile, 2 col tablet, 2 a 3 col desktop) -->
 <div class="mb-4">
     <div class="d-flex justify-content-between align-items-center mb-3">
@@ -161,14 +306,18 @@
                             </div>
                         </div>
 
-                        <!-- Botão FICHA TÉCNICA (Área de toque confortável para Tablet) -->
-                        <div class="mt-2 pt-2 border-top border-secondary border-opacity-25">
-                            <button type="button" class="btn btn-outline-warning w-100 fw-bold py-2 d-flex align-items-center justify-content-center gap-2 touch-btn" data-bs-toggle="modal" data-bs-target="#modalDetalhes{{ op.pk }}" title="Ficha Técnica &bull; Ver Detalhes Técnicos">
+                        <!-- Botões FICHA TÉCNICA e DEIXAR RECADO (Área de toque confortável para Tablet) -->
+                        <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex gap-2">
+                            <button type="button" class="btn btn-outline-warning flex-grow-1 fw-bold py-2 d-flex align-items-center justify-content-center gap-2 touch-btn" data-bs-toggle="modal" data-bs-target="#modalDetalhes{{ op.pk }}" title="Ficha Técnica &bull; Ver Detalhes Técnicos">
                                 <i class="bi bi-file-earmark-text-fill"></i> FICHA TÉCNICA
+                            </button>
+                            <button type="button" class="btn btn-outline-light px-3 fw-bold py-2 d-flex align-items-center justify-content-center gap-1 touch-btn" onclick="abrirModalRecadoContextual('{{ op.id }}', '{{ op.processo.id|default:'' }}', '{{ op.processo.maquina.id|default:'' }}', '{{ op.produto.id|default:'' }}', '{{ op.numero_ordem_curto }}', '{{ op.produto.codigo_com_medida|escapejs }}', '{{ op.processo.nome|default:''|escapejs }}', '{{ op.processo.maquina.nome|default:''|escapejs }}')" title="Deixar Recado desta Atividade para o Próximo Turno">
+                                <i class="bi bi-chat-left-text"></i> <span class="d-none d-sm-inline">RECADO</span>
                             </button>
                         </div>
                     </div>
                 </div>
+
 
                 <!-- Modal de Ficha Técnica da OP (Consulta Exclusiva Organizada por Grupos Técnicos Reais) -->
                 <div class="modal fade" id="modalDetalhes{{ op.pk }}" tabindex="-1" aria-labelledby="modalLabel{{ op.pk }}" aria-hidden="true">
@@ -482,6 +631,8 @@
             <p class="text-secondary small">Não há ordens de produção programadas para a data de hoje neste turno.</p>
         </div>
     {% endif %}
-
 </div>
+
+{% include "bladder/includes/modal_mensagem_turno.html" %}
 {% endblock %}
+

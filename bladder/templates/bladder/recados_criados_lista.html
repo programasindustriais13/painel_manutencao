@@ -1,0 +1,385 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Recados Criados &bull; Passagem de Turno Bladder{% endblock %}
+
+{% block extra_css %}
+<style>
+    .animate-pulse {
+        animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+        0% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.05); opacity: 0.85; }
+        100% { transform: scale(1); opacity: 1; }
+    }
+    .touch-btn {
+        min-height: 38px;
+        font-size: 0.88rem;
+    }
+    .nav-pill-custom {
+        background: rgba(255, 255, 255, 0.05);
+        color: #94A3B8;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 0.45rem 0.9rem;
+        text-decoration: none;
+        font-size: 0.85rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .nav-pill-custom:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: #FFFFFF;
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+    .nav-pill-custom.active {
+        background: rgba(245, 158, 11, 0.2);
+        color: #F59E0B;
+        border-color: #F59E0B;
+    }
+    .recado-card {
+        background: rgba(15, 23, 42, 0.75);
+        border-radius: 12px;
+        transition: transform 0.15s ease, border-color 0.2s ease;
+    }
+    .recado-card:hover {
+        transform: translateY(-2px);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho Principal -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge bg-warning text-dark fw-bold fs-6 px-2 py-1">
+                <i class="bi bi-chat-square-text-fill me-1"></i> RECADOS CRIADOS
+            </span>
+            <span class="badge bg-dark border border-secondary text-light">
+                Comunicação Operacional Turma A &bull; Turma B
+            </span>
+            {% if turma_atual %}
+                <span class="badge {% if turma_atual == 'TURMA_A' %}bg-primary{% else %}bg-info text-dark{% endif %}">
+                    Turno de Hoje: {{ turma_atual_display }} ({{ hoje|date:"d/m/Y" }})
+                </span>
+            {% endif %}
+            {% if prox_turma %}
+                <span class="badge bg-dark border border-warning text-warning">
+                    <i class="bi bi-arrow-right"></i> Destino Padrão: {{ prox_turma_display }} ({{ prox_data|date:"d/m/Y" }})
+                </span>
+            {% endif %}
+        </div>
+        <h1 class="h3 fw-bold text-light mb-0">Quadro de Recados e Passagem de Turno</h1>
+        <p class="text-secondary small mb-0">Acompanhe as mensagens transmitidas para o próximo turno e verifique a confirmação de leitura da equipe seguinte.</p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <button type="button" class="btn btn-warning fw-bold d-flex align-items-center gap-2 touch-btn" onclick="abrirModalRecadoGeral()">
+            <i class="bi bi-plus-circle-fill"></i> + NOVO RECADO
+        </button>
+        <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary d-flex align-items-center gap-1 touch-btn">
+            <i class="bi bi-tablet"></i> Chão de Fábrica
+        </a>
+    </div>
+</div>
+
+<!-- Métricas e Resumo -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3 col-xl">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Criados Hoje</span>
+            <span class="fs-4 fw-bold text-warning font-monospace">{{ recados_hoje_count }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-xl">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Acompanhamentos Abertos</span>
+            <span class="fs-4 fw-bold text-primary font-monospace">{{ abertos_count }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-xl">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Resolvidos</span>
+            <span class="fs-4 fw-bold text-success font-monospace">{{ resolvidos_count }}</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-3 col-xl">
+        <div class="glass-card p-3 text-center h-100 border-danger border-opacity-40">
+            <span class="text-muted small d-block mb-1">Urgentes</span>
+            <span class="fs-4 fw-bold text-danger font-monospace">{{ urgentes_count }}</span>
+        </div>
+    </div>
+    <div class="col-12 col-md-12 col-xl">
+        <div class="glass-card p-3 text-center h-100">
+            <span class="text-muted small d-block mb-1">Total no Histórico</span>
+            <span class="fs-4 fw-bold text-light font-monospace">{{ total_criados }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Barra de Navegação Rápida (Abas/Visão) -->
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <a href="?visao=meu_turno" class="nav-pill-custom {% if visao == 'meu_turno' %}active{% endif %}">
+            <i class="bi bi-clock-history"></i> Recados do Turno de Hoje ({{ recados_hoje_count }})
+        </a>
+        <a href="?visao=todos" class="nav-pill-custom {% if visao == 'todos' %}active{% endif %}">
+            <i class="bi bi-collection"></i> Todos os Recados ({{ total_criados }})
+        </a>
+        <a href="?visao=meus" class="nav-pill-custom {% if visao == 'meus' %}active{% endif %}">
+            <i class="bi bi-person-check"></i> Criados por Mim
+        </a>
+        <a href="?visao=abertas" class="nav-pill-custom {% if visao == 'abertas' %}active{% endif %}">
+            <i class="bi bi-exclamation-circle text-warning"></i> Acompanhamentos em Aberto ({{ abertos_count }})
+        </a>
+        <a href="?visao=resolvidas" class="nav-pill-custom {% if visao == 'resolvidas' %}active{% endif %}">
+            <i class="bi bi-check2-all text-success"></i> Resolvidos ({{ resolvidos_count }})
+        </a>
+    </div>
+    <div>
+        <button class="btn btn-sm btn-outline-secondary text-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFiltros" aria-expanded="false" aria-controls="collapseFiltros">
+            <i class="bi bi-funnel"></i> Filtros Detalhados
+        </button>
+    </div>
+</div>
+
+<!-- Filtros Detalhados (Colapsável) -->
+<div class="collapse {% if tipo_filtro or prioridade_filtro or categoria_filtro or status_filtro or turma_origem_filtro or data_inicio or data_fim or q %}show{% endif %} mb-4" id="collapseFiltros">
+    <div class="glass-card p-3 border-secondary border-opacity-25">
+        <form method="GET" class="row g-2 align-items-end">
+            <input type="hidden" name="visao" value="{{ visao }}">
+            <div class="col-6 col-sm-4 col-md-2">
+                <label class="form-label text-secondary small fw-bold mb-1">Data Início</label>
+                <input type="date" name="data_inicio" value="{{ data_inicio }}" class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-6 col-sm-4 col-md-2">
+                <label class="form-label text-secondary small fw-bold mb-1">Data Fim</label>
+                <input type="date" name="data_fim" value="{{ data_fim }}" class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-6 col-sm-4 col-md-2">
+                <label class="form-label text-secondary small fw-bold mb-1">Tipo</label>
+                <select name="tipo" class="form-select form-select-sm bg-dark text-light border-secondary">
+                    <option value="">Todos</option>
+                    <option value="INFORMATIVO" {% if tipo_filtro == 'INFORMATIVO' %}selected{% endif %}>Informativo</option>
+                    <option value="ACOMPANHAMENTO" {% if tipo_filtro == 'ACOMPANHAMENTO' %}selected{% endif %}>Acompanhamento</option>
+                </select>
+            </div>
+            <div class="col-6 col-sm-4 col-md-2">
+                <label class="form-label text-secondary small fw-bold mb-1">Prioridade</label>
+                <select name="prioridade" class="form-select form-select-sm bg-dark text-light border-secondary">
+                    <option value="">Todas</option>
+                    <option value="URGENTE" {% if prioridade_filtro == 'URGENTE' %}selected{% endif %}>Urgente</option>
+                    <option value="IMPORTANTE" {% if prioridade_filtro == 'IMPORTANTE' %}selected{% endif %}>Importante</option>
+                    <option value="NORMAL" {% if prioridade_filtro == 'NORMAL' %}selected{% endif %}>Normal</option>
+                </select>
+            </div>
+            <div class="col-6 col-sm-4 col-md-2">
+                <label class="form-label text-secondary small fw-bold mb-1">Categoria</label>
+                <select name="categoria" class="form-select form-select-sm bg-dark text-light border-secondary">
+                    <option value="">Todas</option>
+                    {% for code, label in categorias_choices %}
+                        <option value="{{ code }}" {% if categoria_filtro == code %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-6 col-sm-4 col-md-2">
+                <label class="form-label text-secondary small fw-bold mb-1">Turma Origem</label>
+                <select name="turma_origem" class="form-select form-select-sm bg-dark text-light border-secondary">
+                    <option value="">Todas</option>
+                    <option value="TURMA_A" {% if turma_origem_filtro == 'TURMA_A' %}selected{% endif %}>Turma A</option>
+                    <option value="TURMA_B" {% if turma_origem_filtro == 'TURMA_B' %}selected{% endif %}>Turma B</option>
+                </select>
+            </div>
+            <div class="col-12 col-md-8">
+                <label class="form-label text-secondary small fw-bold mb-1">Busca Textual</label>
+                <input type="text" name="q" value="{{ q }}" placeholder="Buscar por texto da mensagem, autor ou número de OP..." class="form-control form-control-sm bg-dark text-light border-secondary">
+            </div>
+            <div class="col-12 col-md-4 d-flex gap-2">
+                <button type="submit" class="btn btn-warning btn-sm fw-bold flex-grow-1">
+                    <i class="bi bi-search"></i> Filtrar
+                </button>
+                <a href="{% url 'bladder:recados_criados' %}?visao={{ visao }}" class="btn btn-outline-secondary btn-sm" title="Limpar filtros">
+                    <i class="bi bi-x-circle"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Listagem dos Recados -->
+<div class="row g-3">
+    {% for recado in mensagens %}
+        <div class="col-12 col-xl-6">
+            <div class="recado-card p-3 border {% if recado.prioridade == 'URGENTE' %}border-danger border-opacity-75 shadow-sm{% elif recado.prioridade == 'IMPORTANTE' %}border-warning border-opacity-50{% else %}border-secondary border-opacity-30{% endif %} h-100 d-flex flex-column justify-content-between">
+                <div>
+                    <!-- Topo do Card: Badges e Status -->
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2 pb-2 border-bottom border-secondary border-opacity-20">
+                        <div class="d-flex flex-wrap align-items-center gap-1">
+                            {% if recado.prioridade == 'URGENTE' %}
+                                <span class="badge bg-danger animate-pulse">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i> URGENTE
+                                </span>
+                            {% elif recado.prioridade == 'IMPORTANTE' %}
+                                <span class="badge bg-warning text-dark">
+                                    <i class="bi bi-exclamation-circle-fill me-1"></i> IMPORTANTE
+                                </span>
+                            {% else %}
+                                <span class="badge bg-secondary">
+                                    <i class="bi bi-info-circle me-1"></i> NORMAL
+                                </span>
+                            {% endif %}
+
+                            <span class="badge bg-dark border border-warning border-opacity-40 text-warning">
+                                {{ recado.get_categoria_display }}
+                            </span>
+
+                            <span class="badge {% if recado.tipo == 'INFORMATIVO' %}bg-info text-dark{% else %}bg-primary{% endif %}">
+                                {{ recado.get_tipo_display }}
+                            </span>
+
+                            {% if recado.status == 'ABERTA' %}
+                                <span class="badge bg-warning text-dark border border-warning">
+                                    <i class="bi bi-hourglass-split"></i> ABERTA
+                                </span>
+                            {% elif recado.status == 'RESOLVIDA' %}
+                                <span class="badge bg-success border border-success">
+                                    <i class="bi bi-check-circle-fill"></i> RESOLVIDA
+                                </span>
+                            {% elif recado.status == 'REPASSADA' %}
+                                <span class="badge bg-secondary border border-secondary text-warning">
+                                    <i class="bi bi-arrow-repeat"></i> REPASSADA
+                                </span>
+                            {% endif %}
+                        </div>
+
+                        <!-- Contexto de OP / Máquina -->
+                        {% if recado.ordem_producao or recado.recurso %}
+                            <div class="d-flex align-items-center gap-1">
+                                {% if recado.recurso %}
+                                    <span class="badge bg-dark border border-secondary text-light">
+                                        <i class="bi bi-gear-fill me-1"></i> {{ recado.recurso.nome }}
+                                    </span>
+                                {% endif %}
+                                {% if recado.ordem_producao %}
+                                    <span class="badge bg-dark border border-info text-info font-monospace">
+                                        OP #{{ recado.ordem_producao.numero_ordem_curto }}
+                                        {% if recado.ordem_producao.produto %}
+                                            ({{ recado.ordem_producao.produto.codigo }})
+                                        {% endif %}
+                                    </span>
+                                {% endif %}
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Origem e Destino -->
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2 small text-secondary">
+                        <div>
+                            <i class="bi bi-person-fill text-warning"></i>
+                            <strong class="text-light">{{ recado.autor.get_full_name|default:recado.autor.username }}</strong>
+                            &bull; <span class="badge bg-dark border border-secondary text-light">{{ recado.get_turma_origem_display }} ({{ recado.data_turno_origem|date:"d/m" }})</span>
+                            &bull; <span class="text-muted">{{ recado.created_at|date:"d/m/Y H:i" }}</span>
+                        </div>
+                        <div>
+                            <i class="bi bi-arrow-right text-warning"></i>
+                            <span>Destino:</span>
+                            <span class="badge bg-dark border border-warning text-warning fw-bold">
+                                {{ recado.get_turma_destino_display }} ({{ recado.data_turno_destino|date:"d/m" }})
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Texto do Recado -->
+                    <div class="p-3 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 mb-3 text-light" style="font-size: 0.95rem; line-height: 1.5; white-space: pre-wrap;">{{ recado.mensagem }}</div>
+                </div>
+
+                <!-- Rodapé de Auditoria e Acompanhamento -->
+                <div>
+                    <!-- Rastreabilidade de Leitura / Ações do Próximo Turno -->
+                    <div class="p-2 rounded bg-dark bg-opacity-50 border border-secondary border-opacity-20 mb-2">
+                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+                            <!-- Ciências registradas -->
+                            <div class="d-flex flex-wrap align-items-center gap-1">
+                                <span class="small text-secondary fw-semibold">Leitura da Equipe:</span>
+                                {% with ciencias=recado.acoes.all %}
+                                    {% if ciencias %}
+                                        {% for ac in ciencias %}
+                                            {% if ac.acao == 'CIENTE' %}
+                                                <span class="badge bg-success bg-opacity-20 text-success border border-success border-opacity-40 small">
+                                                    <i class="bi bi-check2"></i> {{ ac.usuario.first_name|default:ac.usuario.username }} ({{ ac.created_at|date:"d/m H:i" }})
+                                                </span>
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="badge bg-secondary bg-opacity-40 text-light small">
+                                            <i class="bi bi-hourglass-split"></i> Aguardando ciência da equipe destinatária
+                                        </span>
+                                    {% endif %}
+                                {% endwith %}
+                            </div>
+
+                            <!-- Se Resolvido ou Repassado -->
+                            {% if recado.status == 'RESOLVIDA' %}
+                                <div class="small text-success">
+                                    <i class="bi bi-check-circle-fill"></i>
+                                    <strong>Resolvido por {{ recado.resolvido_por.first_name|default:recado.resolvido_por.username }}</strong>
+                                    em {{ recado.resolvido_em|date:"d/m/Y H:i" }}
+                                    {% if recado.observacao_resolucao %}
+                                        <div class="text-muted small mt-1 italic">"{{ recado.observacao_resolucao }}"</div>
+                                    {% endif %}
+                                </div>
+                            {% elif recado.status == 'REPASSADA' %}
+                                <div class="small text-warning">
+                                    <i class="bi bi-arrow-repeat"></i>
+                                    <strong>Repassado por {{ recado.repassado_por.first_name|default:recado.repassado_por.username }}</strong>
+                                    em {{ recado.repassado_em|date:"d/m/Y H:i" }}
+                                    {% if recado.observacao_repasse %}
+                                        <div class="text-muted small mt-1 italic">"{{ recado.observacao_repasse }}"</div>
+                                    {% endif %}
+                                </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Indicador de Cadeia de Repasse Anterior se houver -->
+                        {% if recado.mensagem_origem %}
+                            <div class="mt-2 pt-2 border-top border-secondary border-opacity-20 small text-muted">
+                                <i class="bi bi-link-45deg text-warning"></i>
+                                <span>Continuidade de recado anterior originado por: <strong>{{ recado.mensagem_origem.autor.first_name|default:recado.mensagem_origem.autor.username }}</strong> ({{ recado.mensagem_origem.get_turma_origem_display }} - {{ recado.mensagem_origem.data_turno_origem|date:"d/m" }}).</span>
+                            </div>
+                        {% endif %}
+                    </div>
+
+                    <!-- Botões de Ação Direta para Acompanhamentos em Aberto -->
+                    {% if recado.status == 'ABERTA' and recado.tipo == 'ACOMPANHAMENTO' %}
+                        <div class="d-flex justify-content-end gap-2 pt-1">
+                            <button type="button" class="btn btn-outline-success btn-sm fw-bold touch-btn" onclick="abrirModalResolver({{ recado.id }}, '{{ recado.get_categoria_display|escapejs }}', '{{ recado.mensagem|truncatechars:60|escapejs }}')">
+                                <i class="bi bi-check-circle"></i> RESOLVER
+                            </button>
+                            <button type="button" class="btn btn-outline-warning btn-sm fw-bold touch-btn" onclick="abrirModalRepassar({{ recado.id }}, '{{ recado.get_categoria_display|escapejs }}', '{{ recado.mensagem|truncatechars:60|escapejs }}')">
+                                <i class="bi bi-arrow-repeat"></i> REPASSAR AO PRÓXIMO TURNO
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    {% empty %}
+        <div class="col-12">
+            <div class="glass-card p-5 text-center border-secondary border-opacity-25">
+                <i class="bi bi-inbox text-secondary" style="font-size: 3rem;"></i>
+                <h4 class="text-light fw-bold mt-3 mb-1">Nenhum recado encontrado</h4>
+                <p class="text-muted small mb-3">Não há recados criados para a visão ou filtros selecionados.</p>
+                <button type="button" class="btn btn-warning fw-bold touch-btn" onclick="abrirModalRecadoGeral()">
+                    <i class="bi bi-plus-circle-fill"></i> Deixar Primeiro Recado
+                </button>
+            </div>
+        </div>
+    {% endfor %}
+</div>
+
+<!-- Inclusão dos Modais de Passagem de Turno -->
+{% include "bladder/includes/modal_mensagem_turno.html" %}
+{% endblock %}

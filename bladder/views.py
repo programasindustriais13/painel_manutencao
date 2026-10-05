@@ -1,7 +1,7 @@
 import calendar
 import datetime
 from django.db import transaction
-from django.db.models import Sum, Count, Q
+from django.db.models import Sum, Count, Q, Case, When, Value, IntegerField
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponse
@@ -23,6 +23,8 @@ from .models import (
     CategoriaDesvioBladder,
     HistoricoApontamentoBladder,
     HistoricoProgramacaoBladder,
+    MensagemPassagemTurnoBladder,
+    AcaoMensagemTurnoBladder,
 )
 from .forms import (
     OrdemProducaoBladderForm,
@@ -30,6 +32,7 @@ from .forms import (
     CancelarOrdemForm,
     ApontamentoTurnoForm,
     CorrecaoApontamentoForm,
+    MensagemPassagemTurnoForm,
 )
 from .decorators import (
     lider_bladder_required,
@@ -48,6 +51,12 @@ from .services import (
     corrigir_apontamento_operador_ou_lider,
     obter_saldos_pendentes_produto,
     executar_fechamento_turno,
+    calcular_proximo_turno_operacional,
+    criar_mensagem_passagem_turno,
+    registrar_ciencia_mensagem_turno,
+    resolver_mensagem_acompanhamento,
+    repassar_mensagem_acompanhamento,
+    obter_mensagens_recebidas_turno,
 )
 
 
@@ -352,6 +361,13 @@ def operador_turno(request):
         status='CONCLUIDO'
     ).select_related('operador').first()
 
+    # Mensagens de passagem de turno recebidas para o turno de hoje
+    recados_recebidos = obter_mensagens_recebidas_turno(data_turno=hoje, turma=turma_hoje, usuario=request.user)
+    total_recados = len(recados_recebidos)
+    recados_pendentes_ciencia = sum(1 for r in recados_recebidos if not getattr(r, 'usuario_ciente', False))
+    recados_urgentes = sum(1 for r in recados_recebidos if r.prioridade == 'URGENTE')
+    form_recado = MensagemPassagemTurnoForm()
+
     context = {
         'hoje': hoje,
         'turma_hoje': turma_hoje,
@@ -361,6 +377,11 @@ def operador_turno(request):
         'apoio_obj': apoio_obj,
         'ordens': ordens,
         'fechamento_hoje': fechamento_hoje,
+        'recados_recebidos': recados_recebidos,
+        'total_recados': total_recados,
+        'recados_pendentes_ciencia': recados_pendentes_ciencia,
+        'recados_urgentes': recados_urgentes,
+        'form_recado': form_recado,
         'is_lider': user_is_lider_bladder(request.user),
     }
     return render(request, 'bladder/operador_turno.html', context)
@@ -376,6 +397,7 @@ def fechamento_turno(request):
     - Motivo se não cumpriu a meta (obrigatório se saldo > 0)
     - Descrição se motivo for Outro
     - Observação opcional
+    Inclui seção informativa de Passagem para o Próximo Turno.
     """
     hoje = timezone.localdate()
     turma_hoje, _, _ = calcular_turma_do_dia(hoje)
@@ -446,6 +468,19 @@ def fechamento_turno(request):
 
     categorias_desvio = CategoriaDesvioBladder.objects.filter(ativo=True).order_by('ordem', 'nome')
 
+    # Passagem para o próximo turno (seção informativa e acompanhamentos pendentes)
+    recados_criados_turno = MensagemPassagemTurnoBladder.objects.filter(
+        data_turno_origem=hoje,
+        turma_origem=turma_hoje
+    ).select_related('autor', 'ordem_producao', 'processo', 'maquina', 'produto').order_by('-created_at')
+
+    acompanhamentos_abertos = MensagemPassagemTurnoBladder.objects.filter(
+        Q(data_turno_destino=hoje, turma_destino=turma_hoje) |
+        Q(data_turno_destino__lt=hoje, turma_destino=turma_hoje),
+        tipo='ACOMPANHAMENTO',
+        status='ABERTA'
+    ).select_related('autor', 'ordem_producao', 'processo', 'maquina', 'produto').order_by('-prioridade', '-created_at')
+
     context = {
         'hoje': hoje,
         'turma_hoje': turma_hoje,
@@ -454,6 +489,9 @@ def fechamento_turno(request):
         'fechamento_existente': fechamento_existente,
         'motivo_choices': ItemFechamentoTurnoBladder.MOTIVO_CHOICES,
         'categorias_desvio': categorias_desvio,
+        'recados_criados_turno': recados_criados_turno,
+        'acompanhamentos_abertos': acompanhamentos_abertos,
+        'form_recado': MensagemPassagemTurnoForm(),
     }
     return render(request, 'bladder/fechamento_turno.html', context)
 
@@ -1613,3 +1651,359 @@ def relatorios_exportar_excel(request):
     response['Content-Disposition'] = f'attachment; filename="Fechamento_Bladder_{mes:02d}_{ano}.xlsx"'
     wb.save(response)
     return response
+
+
+# ==============================================================================
+# PASSAGEM DE TURNO — COMUNICAÇÃO OPERACIONAL ENTRE TURMAS A/B
+# ==============================================================================
+
+@login_required
+@operador_ou_lider_bladder_required
+def passagem_turno_criar(request):
+    """
+    Criação de mensagem de passagem de turno pelo operador ou líder.
+    Suporta criação geral ou vinculada a uma OP / Processo.
+    """
+    if request.method != 'POST':
+        return redirect('bladder:operador')
+
+    form = MensagemPassagemTurnoForm(request.POST)
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/operador/'
+
+    if form.is_valid():
+        tipo = form.cleaned_data['tipo']
+        categoria = form.cleaned_data['categoria']
+        prioridade = form.cleaned_data['prioridade']
+        msg_texto = form.cleaned_data['mensagem']
+
+        op_id = form.cleaned_data.get('ordem_producao_id')
+        proc_id = form.cleaned_data.get('processo_id')
+        maq_id = form.cleaned_data.get('maquina_id')
+        prod_id = form.cleaned_data.get('produto_id')
+
+        op = OrdemProducaoBladder.objects.filter(pk=op_id).first() if op_id else None
+        proc = ProcessoBladder.objects.filter(pk=proc_id).first() if proc_id else None
+        from maintenance.models import Machine
+        maq = Machine.objects.filter(pk=maq_id).first() if maq_id else None
+        prod = ProdutoBladder.objects.filter(pk=prod_id).first() if prod_id else None
+
+        try:
+            msg = criar_mensagem_passagem_turno(
+                autor=request.user,
+                mensagem=msg_texto,
+                tipo=tipo,
+                categoria=categoria,
+                prioridade=prioridade,
+                ordem_producao=op,
+                processo=proc,
+                maquina=maq,
+                produto=prod,
+            )
+            messages.success(
+                request,
+                f"Recado registrado com sucesso para o próximo turno ({msg.get_turma_destino_display()} - {msg.data_turno_destino.strftime('%d/%m')})!"
+            )
+        except (ValueError, PermissionError) as e:
+            messages.error(request, f"Erro ao registrar recado: {str(e)}")
+    else:
+        for err_field, err_msgs in form.errors.items():
+            for m in err_msgs:
+                messages.error(request, f"{m}")
+
+    return redirect(next_url)
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def passagem_turno_acao(request, pk):
+    """
+    Executa ações sobre uma mensagem de passagem de turno:
+    - CIENTE (leitura confirmada pelo usuário)
+    - RESOLVIDO (para mensagens de acompanhamento)
+    - REPASSAR (cria nova mensagem de acompanhamento para o próximo turno)
+    """
+    if request.method != 'POST':
+        return redirect('bladder:operador')
+
+    msg = get_object_or_404(MensagemPassagemTurnoBladder, pk=pk)
+    acao = request.POST.get('acao', '').strip().upper()
+    observacao = request.POST.get('observacao', '').strip()
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/operador/'
+
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
+
+    try:
+        if acao == 'CIENTE':
+            acao_obj, created = registrar_ciencia_mensagem_turno(msg, request.user)
+            if created:
+                msg_txt = "Ciência registrada com sucesso!"
+            else:
+                msg_txt = "Você já havia registrado ciência nesta mensagem."
+            if is_ajax:
+                return JsonResponse({'success': True, 'acao': 'CIENTE', 'message': msg_txt})
+            messages.success(request, msg_txt)
+
+        elif acao == 'RESOLVIDO':
+            resolver_mensagem_acompanhamento(msg, request.user, observacao)
+            msg_txt = "Acompanhamento marcado como RESOLVIDO com sucesso!"
+            if is_ajax:
+                return JsonResponse({'success': True, 'acao': 'RESOLVIDO', 'message': msg_txt})
+            messages.success(request, msg_txt)
+
+        elif acao == 'REPASSAR':
+            nova_msg = repassar_mensagem_acompanhamento(msg, request.user, observacao)
+            msg_txt = (
+                f"Recado repassado com sucesso para a "
+                f"{nova_msg.get_turma_destino_display()} ({nova_msg.data_turno_destino.strftime('%d/%m')})!"
+            )
+            if is_ajax:
+                return JsonResponse({'success': True, 'acao': 'REPASSAR', 'message': msg_txt, 'nova_id': nova_msg.id})
+            messages.success(request, msg_txt)
+
+        else:
+            if is_ajax:
+                return JsonResponse({'success': False, 'error': 'Ação inválida.'}, status=400)
+            messages.error(request, "Ação inválida solicitada.")
+
+    except (ValueError, PermissionError) as e:
+        if is_ajax:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        messages.error(request, f"Erro: {str(e)}")
+
+    return redirect(next_url)
+
+
+@login_required
+@lider_bladder_required
+def passagem_turno_lista(request):
+    """
+    Painel de Gestão e Histórico de Passagens de Turno para o Líder Bladder.
+    Permite busca, filtros avançados por período, tipo, prioridade, status, categoria
+    e inspeção da cadeia completa de repasses.
+    """
+    tipo_filtro = request.GET.get('tipo', '').strip()
+    categoria_filtro = request.GET.get('categoria', '').strip()
+    prioridade_filtro = request.GET.get('prioridade', '').strip()
+    status_filtro = request.GET.get('status', '').strip()
+    turma_origem_filtro = request.GET.get('turma_origem', '').strip()
+    turma_destino_filtro = request.GET.get('turma_destino', '').strip()
+    dt_inicio_str = request.GET.get('data_inicio', '').strip()
+    dt_fim_str = request.GET.get('data_fim', '').strip()
+    q = request.GET.get('q', '').strip()
+
+    qs = MensagemPassagemTurnoBladder.objects.all().select_related(
+        'autor', 'ordem_producao', 'processo', 'maquina', 'produto',
+        'resolvido_por', 'repassado_por', 'mensagem_origem'
+    ).prefetch_related(
+        'acoes__usuario'
+    )
+
+    if tipo_filtro:
+        qs = qs.filter(tipo=tipo_filtro)
+    if categoria_filtro:
+        qs = qs.filter(categoria=categoria_filtro)
+    if prioridade_filtro:
+        qs = qs.filter(prioridade=prioridade_filtro)
+    if status_filtro:
+        qs = qs.filter(status=status_filtro)
+    if turma_origem_filtro:
+        qs = qs.filter(turma_origem=turma_origem_filtro)
+    if turma_destino_filtro:
+        qs = qs.filter(turma_destino=turma_destino_filtro)
+
+    if dt_inicio_str:
+        try:
+            dt_inicio = datetime.datetime.strptime(dt_inicio_str, '%Y-%m-%d').date()
+            qs = qs.filter(data_turno_origem__gte=dt_inicio)
+        except ValueError:
+            pass
+
+    if dt_fim_str:
+        try:
+            dt_fim = datetime.datetime.strptime(dt_fim_str, '%Y-%m-%d').date()
+            qs = qs.filter(data_turno_origem__lte=dt_fim)
+        except ValueError:
+            pass
+
+    if q:
+        qs = qs.filter(
+            Q(mensagem__icontains=q) |
+            Q(autor__first_name__icontains=q) |
+            Q(autor__username__icontains=q) |
+            Q(ordem_producao__numero_ordem__icontains=q)
+        )
+
+    # Ordenação por prioridade e data
+    qs = qs.annotate(
+        peso_prioridade=Case(
+            When(prioridade='URGENTE', then=Value(1)),
+            When(prioridade='IMPORTANTE', then=Value(2)),
+            default=Value(3),
+            output_field=IntegerField()
+        )
+    ).order_by('peso_prioridade', '-created_at')
+
+    # Métricas agregadas
+    total_geral = qs.count()
+    total_informativos = qs.filter(tipo='INFORMATIVO').count()
+    total_acompanhamentos = qs.filter(tipo='ACOMPANHAMENTO').count()
+    total_abertas = qs.filter(status='ABERTA').count()
+    total_resolvidas = qs.filter(status='RESOLVIDA').count()
+    total_repassadas = qs.filter(status='REPASSADA').count()
+    total_urgentes = qs.filter(prioridade='URGENTE').count()
+
+    context = {
+        'mensagens': qs,
+        'total_geral': total_geral,
+        'total_informativos': total_informativos,
+        'total_acompanhamentos': total_acompanhamentos,
+        'total_abertas': total_abertas,
+        'total_resolvidas': total_resolvidas,
+        'total_repassadas': total_repassadas,
+        'total_urgentes': total_urgentes,
+        'tipo_filtro': tipo_filtro,
+        'categoria_filtro': categoria_filtro,
+        'prioridade_filtro': prioridade_filtro,
+        'status_filtro': status_filtro,
+        'turma_origem_filtro': turma_origem_filtro,
+        'turma_destino_filtro': turma_destino_filtro,
+        'data_inicio': dt_inicio_str,
+        'data_fim': dt_fim_str,
+        'q': q,
+        'tipos_choices': MensagemPassagemTurnoBladder.TIPO_CHOICES,
+        'categorias_choices': MensagemPassagemTurnoBladder.CATEGORIA_CHOICES,
+        'prioridades_choices': MensagemPassagemTurnoBladder.PRIORIDADE_CHOICES,
+        'status_choices': MensagemPassagemTurnoBladder.STATUS_CHOICES,
+        'turma_choices': MensagemPassagemTurnoBladder.TURMA_CHOICES,
+    }
+    return render(request, 'bladder/passagem_turno_lista.html', context)
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def recados_criados_lista(request):
+    """
+    Tela de Listagem e Acompanhamento de Recados Criados para o Próximo Turno.
+    Acessível por Operadores, Apoio e Liderança do Setor de Bladder.
+    Permite:
+    - Visualizar todos os recados deixados pela equipe (ou histórico geral);
+    - Acompanhar confirmações de leitura (ciência) dos operadores do próximo turno;
+    - Consultar ocorrências resolvidas ou repassadas;
+    - Criar novos recados para o próximo turno diretamente pela tela.
+    """
+    hoje = timezone.localdate()
+    turma_atual, _, _ = calcular_turma_do_dia(hoje)
+    prox_data, prox_turma, _, _ = calcular_proximo_turno_operacional(hoje)
+
+    visao = request.GET.get('visao', 'meu_turno').strip()
+    tipo_filtro = request.GET.get('tipo', '').strip()
+    categoria_filtro = request.GET.get('categoria', '').strip()
+    prioridade_filtro = request.GET.get('prioridade', '').strip()
+    status_filtro = request.GET.get('status', '').strip()
+    turma_origem_filtro = request.GET.get('turma_origem', '').strip()
+    dt_inicio_str = request.GET.get('data_inicio', '').strip()
+    dt_fim_str = request.GET.get('data_fim', '').strip()
+    q = request.GET.get('q', '').strip()
+
+    qs = MensagemPassagemTurnoBladder.objects.all().select_related(
+        'autor', 'ordem_producao', 'ordem_producao__produto', 'processo', 'maquina', 'produto',
+        'resolvido_por', 'repassado_por', 'mensagem_origem'
+    ).prefetch_related(
+        'acoes__usuario'
+    )
+
+    if visao == 'meu_turno':
+        qs = qs.filter(data_turno_origem=hoje)
+        if turma_atual:
+            qs = qs.filter(turma_origem=turma_atual)
+    elif visao == 'meus':
+        qs = qs.filter(autor=request.user)
+    elif visao == 'abertas':
+        qs = qs.filter(status='ABERTA', tipo='ACOMPANHAMENTO')
+    elif visao == 'resolvidas':
+        qs = qs.filter(status='RESOLVIDA')
+
+    if tipo_filtro:
+        qs = qs.filter(tipo=tipo_filtro)
+    if categoria_filtro:
+        qs = qs.filter(categoria=categoria_filtro)
+    if prioridade_filtro:
+        qs = qs.filter(prioridade=prioridade_filtro)
+    if status_filtro:
+        qs = qs.filter(status=status_filtro)
+    if turma_origem_filtro:
+        qs = qs.filter(turma_origem=turma_origem_filtro)
+
+    if dt_inicio_str:
+        try:
+            dt_inicio = datetime.datetime.strptime(dt_inicio_str, '%Y-%m-%d').date()
+            qs = qs.filter(data_turno_origem__gte=dt_inicio)
+        except ValueError:
+            pass
+
+    if dt_fim_str:
+        try:
+            dt_fim = datetime.datetime.strptime(dt_fim_str, '%Y-%m-%d').date()
+            qs = qs.filter(data_turno_origem__lte=dt_fim)
+        except ValueError:
+            pass
+
+    if q:
+        qs = qs.filter(
+            Q(mensagem__icontains=q) |
+            Q(autor__first_name__icontains=q) |
+            Q(autor__last_name__icontains=q) |
+            Q(autor__username__icontains=q) |
+            Q(ordem_producao__numero_ordem__icontains=q)
+        )
+
+    qs = qs.annotate(
+        peso_prioridade=Case(
+            When(prioridade='URGENTE', then=Value(1)),
+            When(prioridade='IMPORTANTE', then=Value(2)),
+            default=Value(3),
+            output_field=IntegerField()
+        )
+    ).order_by('peso_prioridade', '-created_at')
+
+    # Contadores para os cards informativos
+    recados_hoje_count = MensagemPassagemTurnoBladder.objects.filter(data_turno_origem=hoje).count()
+    abertos_count = MensagemPassagemTurnoBladder.objects.filter(status='ABERTA', tipo='ACOMPANHAMENTO').count()
+    resolvidos_count = MensagemPassagemTurnoBladder.objects.filter(status='RESOLVIDA').count()
+    urgentes_count = MensagemPassagemTurnoBladder.objects.filter(prioridade='URGENTE').count()
+    total_criados = MensagemPassagemTurnoBladder.objects.count()
+
+    turma_dict = dict(MensagemPassagemTurnoBladder.TURMA_CHOICES)
+
+    context = {
+        'mensagens': qs,
+        'hoje': hoje,
+        'turma_atual': turma_atual,
+        'turma_atual_display': turma_dict.get(turma_atual, turma_atual) if turma_atual else 'Sem Escala',
+        'prox_data': prox_data,
+        'prox_turma': prox_turma,
+        'prox_turma_display': turma_dict.get(prox_turma, prox_turma) if prox_turma else '',
+        'visao': visao,
+        'tipo_filtro': tipo_filtro,
+        'categoria_filtro': categoria_filtro,
+        'prioridade_filtro': prioridade_filtro,
+        'status_filtro': status_filtro,
+        'turma_origem_filtro': turma_origem_filtro,
+        'data_inicio': dt_inicio_str,
+        'data_fim': dt_fim_str,
+        'q': q,
+        'recados_hoje_count': recados_hoje_count,
+        'abertos_count': abertos_count,
+        'resolvidos_count': resolvidos_count,
+        'urgentes_count': urgentes_count,
+        'total_criados': total_criados,
+        'tipos_choices': MensagemPassagemTurnoBladder.TIPO_CHOICES,
+        'categorias_choices': MensagemPassagemTurnoBladder.CATEGORIA_CHOICES,
+        'prioridades_choices': MensagemPassagemTurnoBladder.PRIORIDADE_CHOICES,
+        'status_choices': MensagemPassagemTurnoBladder.STATUS_CHOICES,
+        'turma_choices': MensagemPassagemTurnoBladder.TURMA_CHOICES,
+        'form_mensagem': MensagemPassagemTurnoForm(),
+    }
+    return render(request, 'bladder/recados_criados_lista.html', context)
+
+

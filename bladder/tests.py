@@ -22,6 +22,8 @@ from bladder.models import (
     CategoriaDesvioBladder,
     HistoricoApontamentoBladder,
     HistoricoProgramacaoBladder,
+    MensagemPassagemTurnoBladder,
+    AcaoMensagemTurnoBladder,
 )
 from bladder.services import (
     calcular_turma_do_dia,
@@ -35,9 +37,15 @@ from bladder.services import (
     corrigir_apontamento_operador_ou_lider,
     obter_saldos_pendentes_produto,
     executar_fechamento_turno,
+    calcular_proximo_turno_operacional,
+    criar_mensagem_passagem_turno,
+    registrar_ciencia_mensagem_turno,
+    resolver_mensagem_acompanhamento,
+    repassar_mensagem_acompanhamento,
+    obter_mensagens_recebidas_turno,
 )
 from maintenance.views import _user_can_access_bladder, _user_get_accessible_modules
-from bladder.forms import OrdemProducaoBladderForm
+from bladder.forms import OrdemProducaoBladderForm, MensagemPassagemTurnoForm
 
 
 class BladderBaseTestCase(TestCase):
@@ -4377,6 +4385,676 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
         saldos_dict = {s.produto.codigo: s.quantidade for s in saldos_ledger}
         self.assertEqual(saldos_dict["BLA006"], 3)
         self.assertEqual(saldos_dict["BLA009"], 10)
+
+
+# ==============================================================================
+# PASSAGEM DE TURNO ENTRE AS EQUIPES DO SETOR DE BLADDER (TESTES FORMAIS)
+# ==============================================================================
+
+class PassagemTurnoBladderTestCase(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.grupo_lider, _ = Group.objects.get_or_create(name="Liderança Bladder")
+        self.grupo_op, _ = Group.objects.get_or_create(name="Operadores Bladder")
+
+        # Escala ativa base: Dia 05/10/2026 é Turma A
+        self.data_base = datetime.date(2026, 10, 5)
+        ConfiguracaoEscalaBladder.objects.all().delete()
+        self.config_escala = ConfiguracaoEscalaBladder.objects.create(
+            data_referencia=self.data_base,
+            turma_referencia="TURMA_A",
+            hora_inicio=datetime.time(6, 0),
+            hora_fim=datetime.time(18, 0),
+            ativo=True
+        )
+
+        # Usuários
+        # Líder
+        self.lider = User.objects.create_user(username="lider_teste", password="password123", first_name="Líder")
+        self.lider.groups.add(self.grupo_lider)
+
+        # Operadores Turma A
+        self.joao = User.objects.create_user(username="joao_op", password="password123", first_name="João")
+        self.joao.groups.add(self.grupo_op)
+        PerfilOperacionalBladder.objects.create(usuario=self.joao, turma="TURMA_A", ativo=True)
+
+        self.jose = User.objects.create_user(username="jose_op", password="password123", first_name="José")
+        self.jose.groups.add(self.grupo_op)
+        PerfilOperacionalBladder.objects.create(usuario=self.jose, turma="TURMA_A", ativo=True)
+
+        # Operadores Turma B
+        self.maria = User.objects.create_user(username="maria_op", password="password123", first_name="Maria")
+        self.maria.groups.add(self.grupo_op)
+        PerfilOperacionalBladder.objects.create(usuario=self.maria, turma="TURMA_B", ativo=True)
+
+        self.carlos = User.objects.create_user(username="carlos_op", password="password123", first_name="Carlos")
+        self.carlos.groups.add(self.grupo_op)
+        PerfilOperacionalBladder.objects.create(usuario=self.carlos, turma="TURMA_B", ativo=True)
+
+        # Apoio Operacional
+        self.apoio = User.objects.create_user(username="apoio_teste", password="password123", first_name="Apoio")
+        self.apoio_obj = FuncionarioApoioBladder.objects.create(
+            usuario=self.apoio,
+            papel="Apoio Operacional",
+            tipo_escala="DIAS_SEMANA",
+            dias_semana="0,1,2,3,4,5,6",
+            ativo=True
+        )
+
+        # Superuser
+        self.admin = User.objects.create_superuser(username="admin_super", password="password123", email="admin@test.com")
+
+        # Usuário de outro módulo (Manutenção sem perfil Bladder)
+        self.grupo_manutencao, _ = Group.objects.get_or_create(name="Técnicos Manutenção")
+        self.user_manutencao = User.objects.create_user(username="tec_manutencao", password="password123")
+        self.user_manutencao.groups.add(self.grupo_manutencao)
+
+        # Staff genérico (sem grupo Bladder)
+        self.staff_generico = User.objects.create_user(username="staff_gen", password="password123", is_staff=True)
+
+        # Máquina e Processo
+        self.setor_bladders, _ = Sector.objects.get_or_create(nome="BLADDERS")
+        self.maquina_prensa = Machine.objects.create(nome="Prensa 01", setor=self.setor_bladders)
+        self.processo_prensa = ProcessoBladder.objects.create(
+            codigo="PREN01", nome="Vulcanização Prensa 01", tipo="PRENSA", maquina=self.maquina_prensa, ordem_exibicao=1, ativo=True
+        )
+
+        # Produtos
+        self.prod_bla006 = ProdutoBladder.objects.create(
+            codigo="BLA006", descricao="Bladder BLA006 18x8", peso_tarugo_kg=Decimal("4.500"), ativo=True
+        )
+        self.prod_bla007 = ProdutoBladder.objects.create(
+            codigo="BLA007", descricao="Bladder BLA007 20x8", peso_tarugo_kg=Decimal("5.100"), ativo=True
+        )
+
+        # OP de teste
+        self.op1 = OrdemProducaoBladder.objects.create(
+            numero_ordem="OP-BLA-20261005-0001",
+            processo=self.processo_prensa,
+            produto=self.prod_bla006,
+            data_programada=self.data_base,
+            turma_prevista="TURMA_A",
+            quantidade_nova=30,
+            quantidade_planejada=30,
+            quantidade_realizada=0,
+            status="PENDENTE",
+            criado_por=self.lider
+        )
+
+    # 1. Turma A cria mensagem e destino calculado é próximo turno correto (Turma B / Dia 2)
+    def test_01_turma_a_cria_mensagem_destino_automatico_proximo_turno_turma_b(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Tarugo separado ao lado da extrusora.",
+            tipo="INFORMATIVO",
+            categoria="MATERIAL",
+            prioridade="NORMAL",
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg.turma_origem, "TURMA_A")
+        self.assertEqual(msg.data_turno_origem, self.data_base)
+        self.assertEqual(msg.turma_destino, "TURMA_B")
+        self.assertEqual(msg.data_turno_destino, self.data_base + datetime.timedelta(days=1))
+
+    # 2. Turma B recebe automaticamente ao abrir Chão de Fábrica
+    def test_02_turma_b_recebe_automaticamente_no_chao_de_fabrica(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Atenção à temperatura de prensagem no primeiro ciclo.",
+            tipo="INFORMATIVO",
+            categoria="EQUIPAMENTO",
+            prioridade="IMPORTANTE",
+            data_turno_origem=self.data_base
+        )
+        dia_seguinte = self.data_base + datetime.timedelta(days=1)
+        self.client.login(username="maria_op", password="password123")
+        response = self.client.get(reverse("bladder:operador") + f"?data={dia_seguinte.isoformat()}")
+        self.assertEqual(response.status_code, 200)
+        recados = response.context["recados_recebidos"]
+        self.assertEqual(len(recados), 1)
+        self.assertEqual(recados[0].id, msg.id)
+        self.assertContains(response, "Atenção à temperatura de prensagem no primeiro ciclo.")
+
+    # 3. Ajuste excepcional de escala é respeitado (inclusive FOLGA)
+    def test_03_ajuste_excepcional_escala_respeitado(self):
+        dia_seguinte = self.data_base + datetime.timedelta(days=1)  # 06/10
+        dia_pos = self.data_base + datetime.timedelta(days=2)       # 07/10
+
+        # Dia 06/10 é configurado como FOLGA (Parada Geral)
+        AjusteEscalaExcepcionalBladder.objects.create(
+            data=dia_seguinte,
+            turma_designada="FOLGA",
+            motivo="Manutenção Preventiva Geral",
+            criado_por=self.lider
+        )
+
+        prox_data, prox_turma, is_ajuste, motivo = calcular_proximo_turno_operacional(self.data_base)
+        self.assertEqual(prox_data, dia_pos)
+        self.assertEqual(prox_turma, "TURMA_A")  # Na alternância regular, após folga do dia 06 (Turma B), dia 07 é Turma A
+
+    # 4. Operador não escolhe destinatário manual
+    def test_04_operador_nao_escolhe_destinatario_manual(self):
+        form = MensagemPassagemTurnoForm()
+        self.assertNotIn("turma_destino", form.fields)
+        self.assertNotIn("data_turno_destino", form.fields)
+        self.assertNotIn("destinatario", form.fields)
+
+    # 5. Autor é registrado automaticamente
+    def test_05_autor_registrado_automaticamente(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Verificar pressão hidráulica.",
+            tipo="INFORMATIVO",
+            categoria="EQUIPAMENTO",
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg.autor, self.joao)
+
+    # 6. Informativa permite CIENTE
+    def test_06_informativa_permite_ciente(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Material novo no pallet.",
+            tipo="INFORMATIVO",
+            data_turno_origem=self.data_base
+        )
+        acao, created = registrar_ciencia_mensagem_turno(msg, self.maria)
+        self.assertTrue(created)
+        self.assertEqual(acao.acao, "CIENTE")
+        self.assertEqual(acao.usuario, self.maria)
+        self.assertTrue(msg.usuario_deu_ciencia(self.maria))
+
+    # 7. Ciência de João não marca Maria como ciente
+    def test_07_ciencia_de_joao_nao_marca_maria_como_ciente(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.carlos,
+            mensagem="Aviso importante.",
+            tipo="INFORMATIVO",
+            data_turno_origem=self.data_base
+        )
+        registrar_ciencia_mensagem_turno(msg, self.joao)
+        self.assertTrue(msg.usuario_deu_ciencia(self.joao))
+        self.assertFalse(msg.usuario_deu_ciencia(self.maria))
+
+    # 8. Mesmo usuário não duplica ciência
+    def test_08_mesmo_usuario_nao_duplica_ciencia(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Teste idempotência.",
+            tipo="INFORMATIVO",
+            data_turno_origem=self.data_base
+        )
+        acao1, created1 = registrar_ciencia_mensagem_turno(msg, self.maria)
+        acao2, created2 = registrar_ciencia_mensagem_turno(msg, self.maria)
+        self.assertTrue(created1)
+        self.assertFalse(created2)
+        self.assertEqual(AcaoMensagemTurnoBladder.objects.filter(mensagem=msg, usuario=self.maria, acao="CIENTE").count(), 1)
+
+    # 9. Acompanhamento permite RESOLVIDO
+    def test_09_acompanhamento_permite_resolvido(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Prensa 01 com ruído.",
+            tipo="ACOMPANHAMENTO",
+            categoria="EQUIPAMENTO",
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg.status, "ABERTA")
+        resolver_mensagem_acompanhamento(msg, self.maria, observacao="Aperto de parafuso realizado.")
+        msg.refresh_from_db()
+        self.assertEqual(msg.status, "RESOLVIDA")
+
+    # 10. Resolução registra usuário e data/hora
+    def test_10_resolucao_registra_usuario_e_data(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Verificar válvula.",
+            tipo="ACOMPANHAMENTO",
+            data_turno_origem=self.data_base
+        )
+        resolver_mensagem_acompanhamento(msg, self.maria, observacao="Válvula calibrada.")
+        msg.refresh_from_db()
+        self.assertEqual(msg.resolvido_por, self.maria)
+        self.assertIsNotNone(msg.resolvido_em)
+        self.assertEqual(msg.observacao_resolucao, "Válvula calibrada.")
+        self.assertTrue(AcaoMensagemTurnoBladder.objects.filter(mensagem=msg, usuario=self.maria, acao="RESOLVIDO").exists())
+
+    # 11. Acompanhamento permite REPASSAR
+    def test_11_acompanhamento_permite_repassar(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Vazamento ainda sob monitoramento.",
+            tipo="ACOMPANHAMENTO",
+            data_turno_origem=self.data_base
+        )
+        nova_msg = repassar_mensagem_acompanhamento(msg, self.maria, observacao="Ainda requer observação.")
+        msg.refresh_from_db()
+        self.assertEqual(msg.status, "REPASSADA")
+        self.assertEqual(nova_msg.status, "ABERTA")
+
+    # 12. Repasse cria continuidade preservando origem
+    def test_12_repasse_cria_continuidade_preservando_origem(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Problema crônico no termopar.",
+            tipo="ACOMPANHAMENTO",
+            data_turno_origem=self.data_base
+        )
+        nova_msg = repassar_mensagem_acompanhamento(msg, self.maria, observacao="Troca de turno B para A.")
+        self.assertEqual(nova_msg.mensagem_origem, msg)
+        self.assertIn(msg, nova_msg.cadeia_historica)
+
+    # 13. Repasse calcula corretamente o próximo turno
+    def test_13_repasse_calcula_corretamente_proximo_turno(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Verificar no início do dia.",
+            tipo="ACOMPANHAMENTO",
+            data_turno_origem=self.data_base
+        )
+        # msg vai para Turma B / Dia 06
+        self.assertEqual(msg.data_turno_destino, self.data_base + datetime.timedelta(days=1))
+        self.assertEqual(msg.turma_destino, "TURMA_B")
+
+        # Maria (Turma B no Dia 06) repassa para a próxima equipe
+        nova = repassar_mensagem_acompanhamento(msg, self.maria)
+        self.assertEqual(nova.turma_origem, "TURMA_B")
+        self.assertEqual(nova.data_turno_origem, self.data_base + datetime.timedelta(days=1))
+        self.assertEqual(nova.turma_destino, "TURMA_A")
+        self.assertEqual(nova.data_turno_destino, self.data_base + datetime.timedelta(days=2))
+
+    # 14. Mensagem original não é alterada destrutivamente
+    def test_14_mensagem_original_nao_e_alterada_destrutivamente(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Texto original intacto.",
+            tipo="ACOMPANHAMENTO",
+            data_turno_origem=self.data_base
+        )
+        repassar_mensagem_acompanhamento(msg, self.maria)
+        msg.refresh_from_db()
+        self.assertEqual(msg.mensagem, "Texto original intacto.")
+        self.assertEqual(msg.autor, self.joao)
+        self.assertEqual(msg.turma_origem, "TURMA_A")
+
+    # 15. OP opcional fica vinculada
+    def test_15_op_opcional_fica_vinculada(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Recado sobre a OP.",
+            tipo="INFORMATIVO",
+            ordem_producao=self.op1,
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg.ordem_producao, self.op1)
+
+    # 16. Produto e contexto correto são derivados da OP
+    def test_16_produto_e_contexto_derivados(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Contexto derivado.",
+            tipo="INFORMATIVO",
+            ordem_producao=self.op1,
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg.produto, self.prod_bla006)
+        self.assertEqual(msg.processo, self.processo_prensa)
+        self.assertEqual(msg.maquina, self.maquina_prensa)
+
+    # 17. Mensagem não altera OP
+    def test_17_mensagem_nao_altera_op(self):
+        status_antigo = self.op1.status
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Recado.",
+            ordem_producao=self.op1,
+            data_turno_origem=self.data_base
+        )
+        self.op1.refresh_from_db()
+        self.assertEqual(self.op1.status, status_antigo)
+
+    # 18. Mensagem não altera Meta
+    def test_18_mensagem_nao_altera_meta(self):
+        meta_antiga = self.op1.quantidade_planejada
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Recado.",
+            ordem_producao=self.op1,
+            data_turno_origem=self.data_base
+        )
+        self.op1.refresh_from_db()
+        self.assertEqual(self.op1.quantidade_planejada, meta_antiga)
+
+    # 19. Mensagem não altera Realizado
+    def test_19_mensagem_nao_altera_realizado(self):
+        real_antigo = self.op1.quantidade_realizada
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Recado.",
+            ordem_producao=self.op1,
+            data_turno_origem=self.data_base
+        )
+        self.op1.refresh_from_db()
+        self.assertEqual(self.op1.quantidade_realizada, real_antigo)
+
+    # 20. Mensagem não cria SaldoPendenteBladder
+    def test_20_mensagem_nao_cria_saldopendentebladder(self):
+        cont_antigo = SaldoPendenteBladder.objects.count()
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Recado.",
+            ordem_producao=self.op1,
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(SaldoPendenteBladder.objects.count(), cont_antigo)
+
+    # 21. Funcionário de Apoio autorizado visualiza e atua
+    def test_21_funcionario_apoio_autorizado_visualiza_e_atua(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Apoio deve checar anéis de acabamento.",
+            tipo="ACOMPANHAMENTO",
+            data_turno_origem=self.data_base
+        )
+        self.client.login(username="apoio_teste", password="password123")
+        dia_seguinte = self.data_base + datetime.timedelta(days=1)
+        response = self.client.get(reverse("bladder:operador") + f"?data={dia_seguinte.isoformat()}")
+        self.assertEqual(response.status_code, 200)
+
+        # Apoio registra ciência
+        acao, created = registrar_ciencia_mensagem_turno(msg, self.apoio)
+        self.assertTrue(created)
+        self.assertTrue(msg.usuario_deu_ciencia(self.apoio))
+
+    # 22. Apoio não é transformado em Turma A/B
+    def test_22_apoio_nao_e_transformado_em_turma_a_b(self):
+        msg = criar_mensagem_passagem_turno(
+            autor=self.apoio,
+            mensagem="Recado registrado pelo apoio.",
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg.turma_origem, "TURMA_A")  # Turma titular oficial do dia 05/10
+        self.assertEqual(msg.autor, self.apoio)
+        self.assertFalse(hasattr(self.apoio, "perfil_operacional_bladder"))
+
+    # 23. Líder visualiza histórico e filtros
+    def test_23_lider_visualiza_historico_e_filtros(self):
+        criar_mensagem_passagem_turno(autor=self.joao, mensagem="Recado 1", prioridade="URGENTE", data_turno_origem=self.data_base)
+        criar_mensagem_passagem_turno(autor=self.maria, mensagem="Recado 2", prioridade="NORMAL", data_turno_origem=self.data_base)
+
+        self.client.login(username="lider_teste", password="password123")
+        response = self.client.get(reverse("bladder:passagem_turno_lista"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["total_geral"], 2)
+
+        # Filtro por prioridade
+        resp_urgente = self.client.get(reverse("bladder:passagem_turno_lista") + "?prioridade=URGENTE")
+        self.assertEqual(resp_urgente.status_code, 200)
+        self.assertEqual(len(resp_urgente.context["mensagens"]), 1)
+
+    # 24. Operador de outro módulo não acessa
+    def test_24_operador_de_outro_modulo_nao_acessa(self):
+        self.client.login(username="tec_manutencao", password="password123")
+        response = self.client.get(reverse("bladder:operador"))
+        self.assertRedirects(response, reverse("portal_select"), fetch_redirect_response=False)
+
+        resp_post = self.client.post(reverse("bladder:passagem_turno_criar"), data={"mensagem": "Hack"})
+        self.assertRedirects(resp_post, reverse("portal_select"), fetch_redirect_response=False)
+
+    # 25. Staff genérico não acessa
+    def test_25_staff_generico_nao_acessa(self):
+        self.client.login(username="staff_gen", password="password123")
+        response = self.client.get(reverse("bladder:operador"))
+        self.assertRedirects(response, reverse("portal_select"), fetch_redirect_response=False)
+
+    # 26. Superuser acessa tudo
+    def test_26_superuser_acessa(self):
+        self.client.login(username="admin_super", password="password123")
+        response = self.client.get(reverse("bladder:operador"))
+        self.assertEqual(response.status_code, 200)
+        response_lider = self.client.get(reverse("bladder:passagem_turno_lista"))
+        self.assertEqual(response_lider.status_code, 200)
+
+    # 27. URL direta protegida no backend
+    def test_27_url_direta_protegida_backend(self):
+        msg = criar_mensagem_passagem_turno(autor=self.joao, mensagem="Msg teste.", data_turno_origem=self.data_base)
+        client_anonimo = Client()
+        resp = client_anonimo.post(reverse("bladder:passagem_turno_acao", kwargs={"pk": msg.id}), data={"acao": "CIENTE"})
+        self.assertEqual(resp.status_code, 302)  # Redireciona para login
+
+    # 28. Mensagem resolvida permanece no histórico
+    def test_28_mensagem_resolvida_permanece_no_historico(self):
+        msg = criar_mensagem_passagem_turno(autor=self.joao, mensagem="Resolvida persistente.", tipo="ACOMPANHAMENTO", data_turno_origem=self.data_base)
+        resolver_mensagem_acompanhamento(msg, self.maria)
+        self.assertTrue(MensagemPassagemTurnoBladder.objects.filter(pk=msg.id, status="RESOLVIDA").exists())
+
+    # 29. Filtro por período funciona
+    def test_29_filtro_por_periodo_funciona(self):
+        dia1 = self.data_base
+        dia2 = self.data_base + datetime.timedelta(days=1)
+        criar_mensagem_passagem_turno(autor=self.joao, mensagem="Dia 1", data_turno_origem=dia1)
+        criar_mensagem_passagem_turno(autor=self.maria, mensagem="Dia 2", data_turno_origem=dia2)
+
+        self.client.login(username="lider_teste", password="password123")
+        url = reverse("bladder:passagem_turno_lista") + f"?data_inicio={dia2.isoformat()}&data_fim={dia2.isoformat()}"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["mensagens"]), 1)
+        self.assertEqual(response.context["mensagens"][0].mensagem, "Dia 2")
+
+    # 30. Prioridade Urgente aparece antes da Normal
+    def test_30_prioridade_urgente_aparece_antes_da_normal(self):
+        msg_normal = criar_mensagem_passagem_turno(autor=self.joao, mensagem="Normal", prioridade="NORMAL", data_turno_origem=self.data_base)
+        msg_urgente = criar_mensagem_passagem_turno(autor=self.joao, mensagem="Urgente", prioridade="URGENTE", data_turno_origem=self.data_base)
+
+        lista = obter_mensagens_recebidas_turno(
+            data_turno=self.data_base + datetime.timedelta(days=1),
+            turma="TURMA_B"
+        )
+        self.assertEqual(lista[0].id, msg_urgente.id)
+        self.assertEqual(lista[1].id, msg_normal.id)
+
+    # 31. Teste Integrado Canônico (Seção 33): Dia 1 Turma A -> Dia 2 Turma B repassa -> Dia 3 Turma A resolve
+    def test_31_cenario_integrado_completo_dia1_a_dia2_b_dia3_a(self):
+        # DIA 1 — TURMA A: João cria ACOMPANHAMENTO
+        dia1 = self.data_base
+        msg1 = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            tipo="ACOMPANHAMENTO",
+            categoria="EQUIPAMENTO",
+            prioridade="IMPORTANTE",
+            mensagem="Pequeno vazamento observado próximo ao final do turno. Verificar antes de iniciar a atividade.",
+            ordem_producao=self.op1,
+            data_turno_origem=dia1
+        )
+        self.assertEqual(msg1.turma_origem, "TURMA_A")
+        self.assertEqual(msg1.turma_destino, "TURMA_B")
+        self.assertEqual(msg1.data_turno_destino, dia1 + datetime.timedelta(days=1))
+
+        # DIA 2 — TURMA B: Maria abre Chão de Fábrica, dá ciência e repassa
+        dia2 = dia1 + datetime.timedelta(days=1)
+        self.client.login(username="maria_op", password="password123")
+        resp_dia2 = self.client.get(reverse("bladder:operador") + f"?data={dia2.isoformat()}")
+        self.assertEqual(resp_dia2.status_code, 200)
+        self.assertContains(resp_dia2, "Pequeno vazamento observado próximo ao final do turno.")
+
+        # Maria marca CIENTE
+        registrar_ciencia_mensagem_turno(msg1, self.maria)
+        self.assertTrue(msg1.usuario_deu_ciencia(self.maria))
+        self.assertFalse(msg1.usuario_deu_ciencia(self.carlos))  # Outro operador da Turma B não está ciente
+
+        # Maria seleciona REPASSAR AO PRÓXIMO TURNO
+        msg2 = repassar_mensagem_acompanhamento(msg1, self.maria, observacao="Vazamento persiste na partida.")
+        self.assertEqual(msg1.status, "REPASSADA")
+        self.assertEqual(msg2.turma_origem, "TURMA_B")
+        self.assertEqual(msg2.turma_destino, "TURMA_A")
+        self.assertEqual(msg2.data_turno_destino, dia1 + datetime.timedelta(days=2))
+        self.assertEqual(msg2.mensagem_origem, msg1)
+
+        # DIA 3 — TURMA A: José recebe e marca RESOLVIDO
+        dia3 = dia1 + datetime.timedelta(days=2)
+        self.client.login(username="jose_op", password="password123")
+        resp_dia3 = self.client.get(reverse("bladder:operador") + f"?data={dia3.isoformat()}")
+        self.assertEqual(resp_dia3.status_code, 200)
+
+        resolver_mensagem_acompanhamento(msg2, self.jose, observacao="Troca de retentor concluída.")
+        msg2.refresh_from_db()
+        self.assertEqual(msg2.status, "RESOLVIDA")
+        self.assertEqual(msg2.resolvido_por, self.jose)
+
+        # Verificação da Cadeia Completa
+        self.assertEqual(msg2.cadeia_historica, [msg1])
+        # Nenhuma OP ou saldo de produção foi alterado
+        self.op1.refresh_from_db()
+        self.assertEqual(self.op1.quantidade_realizada, 0)
+        self.assertEqual(SaldoPendenteBladder.objects.count(), 0)
+
+    # 32. Teste Informativo Canônico (Seção 34): Turma A envia INFORMATIVO, Turma B recebe e dá CIENTE
+    def test_32_cenario_informativo_sem_resolver_ou_repassar(self):
+        msg_info = criar_mensagem_passagem_turno(
+            autor=self.joao,
+            tipo="INFORMATIVO",
+            categoria="PRODUCAO",
+            mensagem="Material do BLA007 ficou separado ao lado da extrusora.",
+            data_turno_origem=self.data_base
+        )
+        self.assertEqual(msg_info.tipo, "INFORMATIVO")
+
+        # Turma B recebe e dá ciência
+        acao, created = registrar_ciencia_mensagem_turno(msg_info, self.maria)
+        self.assertTrue(created)
+
+        # Tentativa de resolver ou repassar mensagem informativa deve falhar
+        with self.assertRaises(ValueError):
+            resolver_mensagem_acompanhamento(msg_info, self.maria)
+        with self.assertRaises(ValueError):
+            repassar_mensagem_acompanhamento(msg_info, self.maria)
+
+    # 33. Integração com Fechamento do Turno e Independência da Produção
+    def test_33_fechamento_turno_integracao_e_independencia_producao(self):
+        self.client.login(username="joao_op", password="password123")
+        response = self.client.get(reverse("bladder:fechamento_turno"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "PASSAGEM PARA O PRÓXIMO TURNO")
+
+        # Fechamento pode ocorrer normalmente mesmo sem recados criados
+        post_data = {
+            f"qtd_realizada_{self.op1.id}": "30",
+            f"categorias_{self.op1.id}": [],
+            f"descricao_desvio_{self.op1.id}": "",
+            "observacoes_gerais": "Turno normal sem recados adicionais."
+        }
+        resp_post = self.client.post(reverse("bladder:fechamento_turno"), data=post_data)
+        self.assertRedirects(resp_post, reverse("bladder:operador"))
+        self.op1.refresh_from_db()
+        self.assertEqual(self.op1.status, "CONCLUIDA")
+
+    # 34. Layout touch-friendly e responsividade para Tablet
+    def test_34_responsividade_e_tablet_touch_friendly(self):
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Layout tablet test.",
+            prioridade="URGENTE",
+            data_turno_origem=self.data_base
+        )
+        dia_seguinte = self.data_base + datetime.timedelta(days=1)
+        self.client.login(username="maria_op", password="password123")
+        response = self.client.get(reverse("bladder:operador") + f"?data={dia_seguinte.isoformat()}")
+        self.assertEqual(response.status_code, 200)
+        # Verifica a presença dos botões touch com classe touch-btn
+        self.assertContains(response, "touch-btn")
+        self.assertContains(response, "PASSAGEM DO TURNO ANTERIOR")
+        self.assertContains(response, "collapseRecadosTurno")
+
+    # 35. Operador titular acessa a tela de Recados Criados
+    def test_35_operador_acessa_tela_recados_criados(self):
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Recado criado para a turma seguinte.",
+            data_turno_origem=self.data_base
+        )
+        self.client.login(username="joao_op", password="password123")
+        response = self.client.get(reverse("bladder:recados_criados"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Quadro de Recados e Passagem de Turno")
+        self.assertContains(response, "Recado criado para a turma seguinte.")
+
+    # 36. Funcionário de Apoio e Líder acessam a tela de Recados Criados
+    def test_36_apoio_e_lider_acessam_recados_criados(self):
+        # Apoio acessa
+        self.client.login(username="apoio_teste", password="password123")
+        resp_apoio = self.client.get(reverse("bladder:recados_criados"))
+        self.assertEqual(resp_apoio.status_code, 200)
+
+        # Líder acessa
+        self.client.login(username="lider_teste", password="password123")
+        resp_lider = self.client.get(reverse("bladder:recados_criados"))
+        self.assertEqual(resp_lider.status_code, 200)
+
+    # 37. Operador de outro módulo e staff genérico são bloqueados na tela de Recados Criados
+    def test_37_usuario_externo_bloqueado_em_recados_criados(self):
+        self.client.login(username="tec_manutencao", password="password123")
+        resp_tec = self.client.get(reverse("bladder:recados_criados"))
+        self.assertRedirects(resp_tec, reverse("portal_select"), fetch_redirect_response=False)
+
+        self.client.login(username="staff_gen", password="password123")
+        resp_staff = self.client.get(reverse("bladder:recados_criados"))
+        self.assertRedirects(resp_staff, reverse("portal_select"), fetch_redirect_response=False)
+
+    # 38. Filtros por visão na tela de Recados Criados (meu_turno, todos, meus, abertas, resolvidas)
+    def test_38_filtros_visao_recados_criados(self):
+        msg1 = criar_mensagem_passagem_turno(autor=self.joao, mensagem="Msg Joao 1", tipo="ACOMPANHAMENTO", data_turno_origem=self.data_base)
+        msg2 = criar_mensagem_passagem_turno(autor=self.maria, mensagem="Msg Maria 2", tipo="INFORMATIVO", data_turno_origem=self.data_base)
+        resolver_mensagem_acompanhamento(msg1, self.maria)
+
+        self.client.login(username="joao_op", password="password123")
+
+        # Visão: todos
+        resp_todos = self.client.get(reverse("bladder:recados_criados") + "?visao=todos")
+        self.assertEqual(resp_todos.status_code, 200)
+        self.assertEqual(len(resp_todos.context["mensagens"]), 2)
+
+        # Visão: meus
+        resp_meus = self.client.get(reverse("bladder:recados_criados") + "?visao=meus")
+        self.assertEqual(resp_meus.status_code, 200)
+        self.assertEqual(len(resp_meus.context["mensagens"]), 1)
+        self.assertEqual(resp_meus.context["mensagens"][0].autor, self.joao)
+
+        # Visão: resolvidas
+        resp_resolvidas = self.client.get(reverse("bladder:recados_criados") + "?visao=resolvidas")
+        self.assertEqual(resp_resolvidas.status_code, 200)
+        self.assertEqual(len(resp_resolvidas.context["mensagens"]), 1)
+        self.assertEqual(resp_resolvidas.context["mensagens"][0].status, "RESOLVIDA")
+
+    # 39. Filtros por categoria, prioridade e busca textual em Recados Criados
+    def test_39_filtros_categoria_e_busca_recados_criados(self):
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Vazamento crítico de óleo na Prensa 01.",
+            categoria="EQUIPAMENTO",
+            prioridade="URGENTE",
+            data_turno_origem=self.data_base
+        )
+        criar_mensagem_passagem_turno(
+            autor=self.joao,
+            mensagem="Pallet de composto pronto.",
+            categoria="MATERIAL",
+            prioridade="NORMAL",
+            data_turno_origem=self.data_base
+        )
+
+        self.client.login(username="joao_op", password="password123")
+
+        # Filtro categoria EQUIPAMENTO
+        resp_cat = self.client.get(reverse("bladder:recados_criados") + "?visao=todos&categoria=EQUIPAMENTO")
+        self.assertEqual(len(resp_cat.context["mensagens"]), 1)
+        self.assertContains(resp_cat, "Vazamento crítico")
+
+        # Busca textual
+        resp_busca = self.client.get(reverse("bladder:recados_criados") + "?visao=todos&q=óleo")
+        self.assertEqual(len(resp_busca.context["mensagens"]), 1)
+
+
 
 
 

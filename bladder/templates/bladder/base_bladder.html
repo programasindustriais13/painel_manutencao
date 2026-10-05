@@ -201,6 +201,9 @@
                 <a href="{% url 'bladder:operador' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'operador' %}active{% endif %}">
                     <i class="bi bi-person-workspace text-warning"></i> Chão de Fábrica
                 </a>
+                <a href="{% url 'bladder:recados_criados' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'recados_criados' %}active{% endif %}">
+                    <i class="bi bi-chat-square-text-fill text-warning"></i> Recados Criados
+                </a>
                 {% if is_lider_bladder %}
                     <a href="{% url 'bladder:cronograma' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'cronograma' %}active{% endif %}">
                         <i class="bi bi-calendar3"></i> Calendário
@@ -213,6 +216,9 @@
                     </a>
                     <a href="{% url 'bladder:relatorios' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'relatorios' %}active{% endif %}">
                         <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
+                    </a>
+                    <a href="{% url 'bladder:passagem_turno_lista' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'passagem_turno_lista' %}active{% endif %}">
+                        <i class="bi bi-arrow-left-right text-info"></i> Passagem de Turno
                     </a>
                 {% endif %}
             </div>

@@ -1,0 +1,252 @@
+<!-- Modal de Criação de Recado de Passagem de Turno -->
+<div class="modal fade" id="modalNovoRecado" tabindex="-1" aria-labelledby="modalNovoRecadoLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-warning border-opacity-50 shadow-lg">
+            <form method="POST" action="{% url 'bladder:passagem_turno_criar' %}" id="form-novo-recado">
+                {% csrf_token %}
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+                <input type="hidden" name="ordem_producao_id" id="recado_ordem_producao_id" value="">
+                <input type="hidden" name="processo_id" id="recado_processo_id" value="">
+                <input type="hidden" name="maquina_id" id="recado_maquina_id" value="">
+                <input type="hidden" name="produto_id" id="recado_produto_id" value="">
+
+                <div class="modal-header border-secondary border-opacity-50">
+                    <div>
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            <span class="badge bg-warning text-dark fw-bold">PASSAGEM DE TURNO</span>
+                            <span class="badge bg-secondary" id="badge-tipo-recado-origem">Novo Recado</span>
+                        </div>
+                        <h5 class="modal-title fw-bold text-light mb-0" id="modalNovoRecadoLabel">
+                            Deixar Recado para o Próximo Turno
+                        </h5>
+                    </div>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+
+                <div class="modal-body p-3">
+                    <!-- Destino Automático Calculado -->
+                    <div class="p-2 mb-3 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 small">
+                        <div class="d-flex align-items-center gap-2 text-warning mb-1">
+                            <i class="bi bi-calendar-check-fill"></i>
+                            <span class="fw-bold">Destino Automático:</span>
+                            <span class="text-light">Próxima equipe operacional segundo a escala oficial 12x36</span>
+                        </div>
+                        <span class="text-muted d-block" style="font-size: 0.8rem;">
+                            O sistema deriva a turma de destino sem necessidade de preenchimento manual.
+                        </span>
+                    </div>
+
+                    <!-- Contexto Operacional Dinâmico -->
+                    <div id="box-contexto-op" class="p-2 mb-3 rounded bg-warning bg-opacity-10 border border-warning border-opacity-30 d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="badge bg-warning text-dark fw-bold">
+                                <i class="bi bi-link-45deg"></i> Vinculado à Atividade
+                            </span>
+                            <button type="button" class="btn btn-sm btn-link text-muted p-0 text-decoration-none" onclick="limparContextoRecado()" title="Remover vínculo e tornar recado geral">
+                                <i class="bi bi-x-circle"></i> Desvincular
+                            </button>
+                        </div>
+                        <div class="text-light small fw-bold" id="txt-contexto-op">-</div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label text-secondary small fw-bold mb-1">Tipo de Recado</label>
+                            <select name="tipo" class="form-select bg-dark text-light border-secondary" id="select-recado-tipo" required>
+                                <option value="INFORMATIVO" selected>Informativo (Ciente)</option>
+                                <option value="ACOMPANHAMENTO">Acompanhamento (Requer Ação)</option>
+                            </select>
+                            <span class="text-muted d-block mt-1" style="font-size: 0.75rem;" id="help-recado-tipo">
+                                Para avisos e situações que apenas precisam ser conhecidas.
+                            </span>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label text-secondary small fw-bold mb-1">Prioridade</label>
+                            <select name="prioridade" class="form-select bg-dark text-light border-secondary" required>
+                                <option value="NORMAL" selected>Normal</option>
+                                <option value="IMPORTANTE">Importante</option>
+                                <option value="URGENTE">Urgente</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-secondary small fw-bold mb-1">Categoria</label>
+                        <select name="categoria" class="form-select bg-dark text-light border-secondary" required>
+                            <option value="PRODUCAO">Produção</option>
+                            <option value="EQUIPAMENTO">Equipamento</option>
+                            <option value="QUALIDADE">Qualidade</option>
+                            <option value="MATERIAL">Material</option>
+                            <option value="SEGURANCA">Segurança</option>
+                            <option value="OUTRO">Outro</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label text-secondary small fw-bold mb-1">
+                            O que o próximo turno precisa saber? <span class="text-danger">*</span>
+                        </label>
+                        <textarea name="mensagem" class="form-control bg-dark text-light border-secondary" rows="3" placeholder="Descreva de forma clara e objetiva para a equipe seguinte..." required></textarea>
+                    </div>
+                </div>
+
+                <div class="modal-footer border-secondary border-opacity-50">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning fw-bold px-4 touch-btn">
+                        <i class="bi bi-send-fill me-1"></i> Gravar Recado
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para Ação: RESOLVER ACOMPANHAMENTO -->
+<div class="modal fade" id="modalResolverRecado" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-success border-opacity-50 shadow-lg">
+            <form method="POST" id="form-resolver-recado" action="">
+                {% csrf_token %}
+                <input type="hidden" name="acao" value="RESOLVIDO">
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+
+                <div class="modal-header border-secondary border-opacity-50">
+                    <h5 class="modal-title fw-bold text-success d-flex align-items-center gap-2">
+                        <i class="bi bi-check-circle-fill"></i> Resolver Acompanhamento
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+
+                <div class="modal-body p-3">
+                    <p class="text-light small mb-2" id="txt-resolver-mensagem"></p>
+                    <div class="mb-2">
+                        <label class="form-label text-secondary small fw-bold mb-1">
+                            Observação da Resolução (Opcional):
+                        </label>
+                        <textarea name="observacao" class="form-control bg-dark text-light border-secondary" rows="2" placeholder="Descreva o que foi corrigido, ajustado ou conferido..."></textarea>
+                    </div>
+                </div>
+
+                <div class="modal-footer border-secondary border-opacity-50">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success fw-bold px-4 touch-btn">
+                        <i class="bi bi-check-lg me-1"></i> Confirmar Resolução
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para Ação: REPASSAR ACOMPANHAMENTO -->
+<div class="modal fade" id="modalRepassarRecado" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-info border-opacity-50 shadow-lg">
+            <form method="POST" id="form-repassar-recado" action="">
+                {% csrf_token %}
+                <input type="hidden" name="acao" value="REPASSAR">
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+
+                <div class="modal-header border-secondary border-opacity-50">
+                    <h5 class="modal-title fw-bold text-info d-flex align-items-center gap-2">
+                        <i class="bi bi-arrow-repeat"></i> Repassar ao Próximo Turno
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+
+                <div class="modal-body p-3">
+                    <div class="p-2 mb-3 rounded bg-info bg-opacity-10 border border-info border-opacity-25 small text-light">
+                        <i class="bi bi-info-circle text-info me-1"></i>
+                        Esta ação criará uma nova mensagem de continuidade apontando para a escala seguinte, mantendo vínculo com a mensagem original e todo o histórico da cadeia.
+                    </div>
+                    <p class="text-light small mb-2" id="txt-repassar-mensagem"></p>
+                    <div class="mb-2">
+                        <label class="form-label text-secondary small fw-bold mb-1">
+                            Observação do Repasse (Opcional):
+                        </label>
+                        <textarea name="observacao" class="form-control bg-dark text-light border-secondary" rows="2" placeholder="Ex: Situação ainda requer atenção; testar no primeiro lote..."></textarea>
+                    </div>
+                </div>
+
+                <div class="modal-footer border-secondary border-opacity-50">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-info fw-bold px-4 touch-btn">
+                        <i class="bi bi-arrow-repeat me-1"></i> Repassar ao Próximo Turno
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    function abrirModalRecadoGeral() {
+        document.getElementById('recado_ordem_producao_id').value = '';
+        document.getElementById('recado_processo_id').value = '';
+        document.getElementById('recado_maquina_id').value = '';
+        document.getElementById('recado_produto_id').value = '';
+        document.getElementById('box-contexto-op').classList.add('d-none');
+        document.getElementById('badge-tipo-recado-origem').innerText = 'Recado Geral';
+        var modal = new bootstrap.Modal(document.getElementById('modalNovoRecado'));
+        modal.show();
+    }
+
+    function abrirModalRecadoContextual(opId, procId, maqId, prodId, opCurto, prodDesc, procNome, maqNome) {
+        document.getElementById('recado_ordem_producao_id').value = opId || '';
+        document.getElementById('recado_processo_id').value = procId || '';
+        document.getElementById('recado_maquina_id').value = maqId || '';
+        document.getElementById('recado_produto_id').value = prodId || '';
+
+        const partes = [];
+        if (maqNome) partes.push(maqNome);
+        if (procNome) partes.push(procNome);
+        if (prodDesc) partes.push(prodDesc);
+        if (opCurto) partes.push(opCurto);
+
+        document.getElementById('txt-contexto-op').innerText = partes.join(' • ');
+        document.getElementById('box-contexto-op').classList.remove('d-none');
+        document.getElementById('badge-tipo-recado-origem').innerText = opCurto || 'Atividade';
+
+        var modal = new bootstrap.Modal(document.getElementById('modalNovoRecado'));
+        modal.show();
+    }
+
+    function limparContextoRecado() {
+        document.getElementById('recado_ordem_producao_id').value = '';
+        document.getElementById('recado_processo_id').value = '';
+        document.getElementById('recado_maquina_id').value = '';
+        document.getElementById('recado_produto_id').value = '';
+        document.getElementById('box-contexto-op').classList.add('d-none');
+        document.getElementById('badge-tipo-recado-origem').innerText = 'Recado Geral';
+    }
+
+    function abrirModalResolverRecado(recadoId, textoResumo) {
+        const form = document.getElementById('form-resolver-recado');
+        form.action = `/bladder/passagem-turno/${recadoId}/acao/`;
+        document.getElementById('txt-resolver-mensagem').innerText = `"${textoResumo}"`;
+        var modal = new bootstrap.Modal(document.getElementById('modalResolverRecado'));
+        modal.show();
+    }
+
+    function abrirModalRepassarRecado(recadoId, textoResumo) {
+        const form = document.getElementById('form-repassar-recado');
+        form.action = `/bladder/passagem-turno/${recadoId}/acao/`;
+        document.getElementById('txt-repassar-mensagem').innerText = `"${textoResumo}"`;
+        var modal = new bootstrap.Modal(document.getElementById('modalRepassarRecado'));
+        modal.show();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const selectTipo = document.getElementById('select-recado-tipo');
+        const helpTipo = document.getElementById('help-recado-tipo');
+        if (selectTipo && helpTipo) {
+            selectTipo.addEventListener('change', function() {
+                if (this.value === 'ACOMPANHAMENTO') {
+                    helpTipo.innerText = 'Gera pendência com opções de marcar Ciente, Resolver ou Repassar.';
+                } else {
+                    helpTipo.innerText = 'Para avisos e situações que apenas precisam ser conhecidas (Ciente).';
+                }
+            });
+        }
+    });
+</script>

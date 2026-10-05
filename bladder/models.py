@@ -965,3 +965,295 @@ class HistoricoProgramacaoBladder(models.Model):
 
     def __str__(self):
         return f"{self.ordem.numero_ordem} - {self.get_tipo_evento_display()} em {self.created_at.strftime('%d/%m/%Y %H:%M')}"
+
+
+class MensagemPassagemTurnoBladder(models.Model):
+    """
+    Registro formal e auditável de passagem de turno entre as equipes do Setor de Bladder.
+    A mensagem é criada pelo turno atual (origem) e destinada automaticamente ao próximo
+    turno operacional (destino), calculada pela escala 12x36 e eventuais ajustes excepcionais.
+    """
+    TURMA_CHOICES = [
+        ('TURMA_A', 'Turma A'),
+        ('TURMA_B', 'Turma B'),
+    ]
+
+    TIPO_CHOICES = [
+        ('INFORMATIVO', 'Informativo'),
+        ('ACOMPANHAMENTO', 'Acompanhamento'),
+    ]
+
+    CATEGORIA_CHOICES = [
+        ('PRODUCAO', 'Produção'),
+        ('EQUIPAMENTO', 'Equipamento'),
+        ('QUALIDADE', 'Qualidade'),
+        ('MATERIAL', 'Material'),
+        ('SEGURANCA', 'Segurança'),
+        ('OUTRO', 'Outro'),
+    ]
+
+    PRIORIDADE_CHOICES = [
+        ('NORMAL', 'Normal'),
+        ('IMPORTANTE', 'Importante'),
+        ('URGENTE', 'Urgente'),
+    ]
+
+    STATUS_CHOICES = [
+        ('ABERTA', 'Aberta'),
+        ('RESOLVIDA', 'Resolvida'),
+        ('REPASSADA', 'Repassada'),
+    ]
+
+    autor = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='mensagens_turno_bladder_criadas',
+        verbose_name="Autor da Mensagem"
+    )
+    data_turno_origem = models.DateField(
+        db_index=True,
+        verbose_name="Data do Turno de Origem"
+    )
+    turma_origem = models.CharField(
+        max_length=10,
+        choices=TURMA_CHOICES,
+        verbose_name="Turma de Origem"
+    )
+    data_turno_destino = models.DateField(
+        db_index=True,
+        verbose_name="Data do Turno de Destino"
+    )
+    turma_destino = models.CharField(
+        max_length=10,
+        choices=TURMA_CHOICES,
+        db_index=True,
+        verbose_name="Turma de Destino"
+    )
+    tipo = models.CharField(
+        max_length=20,
+        choices=TIPO_CHOICES,
+        default='INFORMATIVO',
+        db_index=True,
+        verbose_name="Tipo de Mensagem"
+    )
+    categoria = models.CharField(
+        max_length=20,
+        choices=CATEGORIA_CHOICES,
+        default='PRODUCAO',
+        db_index=True,
+        verbose_name="Categoria"
+    )
+    prioridade = models.CharField(
+        max_length=15,
+        choices=PRIORIDADE_CHOICES,
+        default='NORMAL',
+        db_index=True,
+        verbose_name="Prioridade"
+    )
+    mensagem = models.TextField(
+        verbose_name="Mensagem / Recado Operacional"
+    )
+
+    # Contexto operacional opcional
+    ordem_producao = models.ForeignKey(
+        'OrdemProducaoBladder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno',
+        verbose_name="Ordem de Produção (Opcional)"
+    )
+    processo = models.ForeignKey(
+        'ProcessoBladder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno',
+        verbose_name="Processo / Linha (Opcional)"
+    )
+    maquina = models.ForeignKey(
+        'maintenance.Machine',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno_bladder',
+        verbose_name="Máquina / Equipamento (Opcional)"
+    )
+    produto = models.ForeignKey(
+        'ProdutoBladder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno',
+        verbose_name="Produto / Modelo (Opcional)"
+    )
+
+    status = models.CharField(
+        max_length=15,
+        choices=STATUS_CHOICES,
+        default='ABERTA',
+        db_index=True,
+        verbose_name="Status"
+    )
+
+    # Cadeia de Repasse (auto-relacionamento para rastreabilidade A -> B -> A)
+    mensagem_origem = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='repasses',
+        verbose_name="Mensagem de Origem deste Repasse"
+    )
+
+    # Resolução
+    resolvido_por = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno_bladder_resolvidas',
+        verbose_name="Resolvido por"
+    )
+    resolvido_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora da Resolução"
+    )
+    observacao_resolucao = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Observação da Resolução"
+    )
+
+    # Repasse
+    repassado_por = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno_bladder_repassadas',
+        verbose_name="Repassado por"
+    )
+    repassado_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora do Repasse"
+    )
+    observacao_repasse = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Observação do Repasse"
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        db_index=True,
+        verbose_name="Criado em"
+    )
+    updated_at = models.DateTimeField(
+        auto_now=True,
+        verbose_name="Atualizado em"
+    )
+
+    class Meta:
+        verbose_name = "Passagem de Turno Bladder"
+        verbose_name_plural = "Passagens de Turno Bladder"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        origem = f"{self.get_turma_origem_display()} ({self.data_turno_origem.strftime('%d/%m')})"
+        destino = f"{self.get_turma_destino_display()} ({self.data_turno_destino.strftime('%d/%m')})"
+        return f"[{self.get_prioridade_display()}] {self.get_categoria_display()} - {origem} -> {destino} ({self.get_status_display()})"
+
+    @property
+    def prioridade_peso(self):
+        """Retorna peso numérico para ordenação (1: Urgente, 2: Importante, 3: Normal)."""
+        pesos = {'URGENTE': 1, 'IMPORTANTE': 2, 'NORMAL': 3}
+        return pesos.get(self.prioridade, 3)
+
+    @property
+    def is_aberta(self):
+        return self.status == 'ABERTA'
+
+    @property
+    def is_resolvida(self):
+        return self.status == 'RESOLVIDA'
+
+    @property
+    def is_repassada(self):
+        return self.status == 'REPASSADA'
+
+    def usuario_deu_ciencia(self, user):
+        """Verifica se um usuário específico já registrou ciência nesta mensagem."""
+        if not user or not user.is_authenticated:
+            return False
+        return self.acoes.filter(usuario=user, acao='CIENTE').exists()
+
+    @property
+    def cadeia_historica(self):
+        """Retorna a cadeia de mensagens anteriores até a raiz original."""
+        cadeia = []
+        atual = self.mensagem_origem
+        while atual:
+            cadeia.append(atual)
+            atual = atual.mensagem_origem
+        return list(reversed(cadeia))
+
+
+class AcaoMensagemTurnoBladder(models.Model):
+    """
+    Registro individual e auditável de ações sobre uma mensagem de passagem de turno:
+    - CIENTE (leitura confirmada pelo usuário)
+    - RESOLVIDO (solução da pendência de acompanhamento)
+    - REPASSADO (continuidade ao próximo turno)
+    """
+    ACAO_CHOICES = [
+        ('CIENTE', 'Ciente'),
+        ('RESOLVIDO', 'Resolvido'),
+        ('REPASSADO', 'Repassado'),
+    ]
+
+    mensagem = models.ForeignKey(
+        MensagemPassagemTurnoBladder,
+        on_delete=models.CASCADE,
+        related_name='acoes',
+        verbose_name="Mensagem de Turno"
+    )
+    usuario = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='acoes_mensagens_turno_bladder',
+        verbose_name="Usuário"
+    )
+    acao = models.CharField(
+        max_length=15,
+        choices=ACAO_CHOICES,
+        db_index=True,
+        verbose_name="Ação"
+    )
+    observacao = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Observação"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Data/Hora da Ação"
+    )
+
+    class Meta:
+        verbose_name = "Ação em Mensagem de Turno"
+        verbose_name_plural = "Ações em Mensagens de Turno"
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['mensagem', 'usuario', 'acao'],
+                name='unique_acao_usuario_mensagem_turno'
+            )
+        ]
+
+    def __str__(self):
+        nome = self.usuario.get_full_name() or self.usuario.username
+        return f"{self.get_acao_display()} por {nome} em {self.created_at.strftime('%d/%m/%Y %H:%M')}"
+

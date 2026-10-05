@@ -15,6 +15,8 @@ from .models import (
     CategoriaDesvioBladder,
     HistoricoApontamentoBladder,
     HistoricoProgramacaoBladder,
+    MensagemPassagemTurnoBladder,
+    AcaoMensagemTurnoBladder,
 )
 
 
@@ -137,4 +139,34 @@ class FechamentoTurnoBladderAdmin(admin.ModelAdmin):
     search_fields = ('operador__username', 'operador__first_name', 'observacoes')
     date_hierarchy = 'data_turno'
     inlines = [ItemFechamentoTurnoInline]
+
+
+class AcaoMensagemTurnoInline(admin.TabularInline):
+    model = AcaoMensagemTurnoBladder
+    extra = 0
+    readonly_fields = ('usuario', 'acao', 'observacao', 'created_at')
+
+
+@admin.register(MensagemPassagemTurnoBladder)
+class MensagemPassagemTurnoBladderAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'prioridade', 'tipo', 'categoria',
+        'data_turno_origem', 'turma_origem',
+        'data_turno_destino', 'turma_destino',
+        'autor', 'status', 'created_at'
+    )
+    list_filter = ('tipo', 'categoria', 'prioridade', 'status', 'turma_origem', 'turma_destino')
+    search_fields = ('mensagem', 'autor__username', 'autor__first_name', 'ordem_producao__numero_ordem')
+    date_hierarchy = 'data_turno_origem'
+    raw_id_fields = ('autor', 'ordem_producao', 'processo', 'maquina', 'produto', 'mensagem_origem', 'resolvido_por', 'repassado_por')
+    inlines = [AcaoMensagemTurnoInline]
+
+
+@admin.register(AcaoMensagemTurnoBladder)
+class AcaoMensagemTurnoBladderAdmin(admin.ModelAdmin):
+    list_display = ('mensagem', 'usuario', 'acao', 'observacao', 'created_at')
+    list_filter = ('acao', 'created_at')
+    search_fields = ('mensagem__mensagem', 'usuario__username', 'usuario__first_name', 'observacao')
+    raw_id_fields = ('mensagem', 'usuario')
+
 
