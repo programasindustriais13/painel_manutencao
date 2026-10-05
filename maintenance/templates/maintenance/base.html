@@ -452,7 +452,7 @@
 </head>
 <body>
 
-    {% if user.is_authenticated %}
+    {% if user.is_authenticated and request.resolver_match.url_name != 'login' %}
     <div class="app-layout">
 
         <!-- ══════════════════════════════════════════════════════════

@@ -1,0 +1,270 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Setor de Bladder &bull; Pneus Freedom{% endblock %}</title>
+
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+
+    <style>
+        :root {
+            --bladder-accent: #F59E0B;
+            --bladder-accent-dark: #D97706;
+            --bladder-accent-light: #FBBF24;
+            --bladder-accent-bg: rgba(245, 158, 11, 0.12);
+            --bladder-accent-border: rgba(245, 158, 11, 0.3);
+            --dark-bg: #0B0F17;
+            --dark-card: #131B2A;
+            --dark-card-border: rgba(255, 255, 255, 0.08);
+            --dark-surface: #1E293B;
+            --text-main: #F8FAFC;
+            --text-secondary: #CBD5E1;
+            --text-muted: #94A3B8;
+
+            --bs-body-color: #F8FAFC;
+            --bs-body-bg: #0B0F17;
+            --bs-secondary-color: #94A3B8;
+            --bs-secondary-rgb: 148, 163, 184;
+            --bs-tertiary-color: #94A3B8;
+            --bs-heading-color: #F8FAFC;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--dark-bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .text-muted { color: #94A3B8 !important; }
+        .text-secondary { color: #CBD5E1 !important; }
+
+        .form-label {
+            color: #E2E8F0;
+            font-weight: 600;
+            font-size: 0.92rem;
+            margin-bottom: 0.35rem;
+        }
+
+        .form-control, .form-select {
+            background-color: #0F172A;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #F8FAFC;
+            border-radius: 8px;
+        }
+
+        .form-control:focus, .form-select:focus {
+            background-color: #0F172A;
+            border-color: var(--bladder-accent);
+            color: #FFFFFF;
+            box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
+        }
+
+        .form-select option {
+            background-color: #1E293B;
+            color: #F8FAFC;
+        }
+
+        /* Top Navbar */
+        .bladder-navbar {
+            background-color: #080C14;
+            border-bottom: 1px solid rgba(245, 158, 11, 0.25);
+            padding: 0.75rem 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 1030;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .bladder-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            text-decoration: none;
+            color: #FFFFFF;
+        }
+
+        .bladder-brand-badge {
+            background: linear-gradient(135deg, #F59E0B, #D97706);
+            color: #FFFFFF;
+            font-size: 0.75rem;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .nav-link-custom {
+            color: #CBD5E1;
+            font-weight: 500;
+            font-size: 0.92rem;
+            padding: 0.45rem 0.85rem;
+            border-radius: 8px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .nav-link-custom:hover {
+            color: #FFFFFF;
+            background-color: rgba(255, 255, 255, 0.06);
+        }
+
+        .nav-link-custom.active {
+            color: #FFFFFF;
+            background-color: var(--bladder-accent-bg);
+            border: 1px solid var(--bladder-accent-border);
+            font-weight: 600;
+        }
+
+        .btn-portal-switcher {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #E2E8F0;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 0.35rem 0.75rem;
+            border-radius: 8px;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-portal-switcher:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #FFFFFF;
+            border-color: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Glassmorphic Cards */
+        .glass-card {
+            background: rgba(19, 27, 42, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--dark-card-border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .glass-card:hover {
+            border-color: rgba(245, 158, 11, 0.25);
+        }
+
+        .footer {
+            background-color: #080C14;
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 1rem 1.5rem;
+            margin-top: auto;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Top Navbar -->
+    <nav class="bladder-navbar">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 container-fluid">
+            <!-- Brand -->
+            <a href="{% if is_lider_bladder %}{% url 'bladder:dashboard' %}{% else %}{% url 'bladder:operador' %}{% endif %}" class="bladder-brand">
+                <i class="bi bi-disc-fill text-warning fs-4"></i>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="fs-5 fw-bold tracking-tight">SETOR DE BLADDER</span>
+                    <span class="bladder-brand-badge">{% if is_lider_bladder %}PCP &bull; Operação{% else %}Chão de Fábrica{% endif %}</span>
+                </div>
+            </a>
+
+            <!-- Nav Links -->
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                {% if is_lider_bladder %}
+                    <a href="{% url 'bladder:dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+                        <i class="bi bi-speedometer2"></i> Dashboard
+                    </a>
+                {% endif %}
+                <a href="{% url 'bladder:operador' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'operador' %}active{% endif %}">
+                    <i class="bi bi-person-workspace text-warning"></i> Chão de Fábrica
+                </a>
+                {% if is_lider_bladder %}
+                    <a href="{% url 'bladder:cronograma' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'cronograma' %}active{% endif %}">
+                        <i class="bi bi-calendar3"></i> Calendário
+                    </a>
+                    <a href="{% url 'bladder:ordens_lista' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'ordens_lista' %}active{% endif %}">
+                        <i class="bi bi-list-check"></i> Ordens de Produção
+                    </a>
+                    <a href="{% url 'bladder:ordem_nova' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'ordem_nova' %}active{% endif %}">
+                        <i class="bi bi-plus-circle-fill text-warning"></i> Nova OP
+                    </a>
+                    <a href="{% url 'bladder:relatorios' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'relatorios' %}active{% endif %}">
+                        <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
+                    </a>
+                {% endif %}
+            </div>
+
+            <!-- User Info & Hub Switcher -->
+            <div class="d-flex align-items-center gap-2">
+                <a href="{% url 'portal_select' %}" class="btn-portal-switcher" title="Mudar de Módulo (Hub)">
+                    <i class="bi bi-grid-fill text-warning"></i> Módulos
+                </a>
+                <div class="d-none d-md-flex align-items-center gap-2 px-2 py-1 rounded bg-dark border border-secondary border-opacity-25">
+                    <i class="bi bi-person-circle text-secondary"></i>
+                    <span class="small fw-semibold text-light">{{ request.user.first_name|default:request.user.username }}</span>
+                </div>
+                <a href="{% url 'logout' %}" class="btn btn-outline-danger btn-sm" title="Sair do Sistema">
+                    <i class="bi bi-box-arrow-right"></i>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <main class="container-fluid px-4 py-4 flex-grow-1">
+        <!-- Messages -->
+        {% if messages %}
+            <div class="mb-4">
+                {% for message in messages %}
+                    <div class="alert alert-{% if message.tags == 'error' %}danger{% elif message.tags == 'warning' %}warning{% elif message.tags == 'info' %}info{% else %}success{% endif %} alert-dismissible fade show border-0 shadow-sm" role="alert">
+                        <i class="bi {% if message.tags == 'error' %}bi-exclamation-triangle-fill{% elif message.tags == 'warning' %}bi-exclamation-circle-fill{% elif message.tags == 'info' %}bi-info-circle-fill{% else %}bi-check-circle-fill{% endif %} me-2"></i>
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 container-fluid">
+            <div>Pneus Freedom &bull; Setor de Fabricação de Bladders &bull; PCP &amp; Controle Operacional</div>
+            <div>{% include "components/developer_footer.html" with is_dark=True %}</div>
+        </div>
+    </footer>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Inatividade de Sessão Humana Compartilhada -->
+    {% include "components/session_inactivity.html" %}
+
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

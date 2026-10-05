@@ -1,0 +1,296 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Dashboard &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1 text-light">Dashboard Operacional do Setor de Bladder</h1>
+        <p class="text-secondary small mb-0">
+            Acompanhamento em tempo real das programações, execução das turmas e saldos de produção.
+        </p>
+    </div>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <div class="px-3 py-2 rounded glass-card d-flex align-items-center gap-3">
+            <div>
+                <span class="small text-muted d-block">Data Atual</span>
+                <span class="fw-bold text-light">{{ hoje|date:"d/m/Y (l)" }}</span>
+            </div>
+            <div class="border-start border-secondary border-opacity-25 ps-3">
+                <span class="small text-muted d-block">Turma do Dia</span>
+                <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-2 py-1">
+                    {{ turma_hoje_display }}
+                </span>
+                {% if is_ajuste %}
+                    <span class="badge bg-warning text-dark small" title="{{ motivo_ajuste }}">Ajuste Excepcional</span>
+                {% endif %}
+            </div>
+        </div>
+        {% if is_lider %}
+            <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning fw-bold d-flex align-items-center gap-2">
+                <i class="bi bi-plus-circle-fill"></i> Nova Programação
+            </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Cards de Indicadores Principais do Chão de Fábrica -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Programadas Hoje</span>
+            <div class="fs-3 fw-bold text-light font-monospace">{{ total_ops_dia }} <span class="fs-6 text-muted">OPs</span></div>
+            <span class="badge bg-dark mt-1">Meta: {{ planejado_dia }} un</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Realizado Hoje</span>
+            <div class="fs-3 fw-bold text-success font-monospace">{{ realizado_dia }} <span class="fs-6 text-muted">un</span></div>
+            <div class="d-flex justify-content-center align-items-center gap-1 flex-wrap mt-1">
+                <span class="text-secondary small">
+                    {% if planejado_dia > 0 %}
+                        {{ percentual_cumprimento_dia }}% da meta
+                    {% else %}-{% endif %}
+                </span>
+                {% if excedente_dia > 0 %}
+                    <span class="badge bg-success text-white small" title="Produção acima da meta programada">+{{ excedente_dia }} un</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Concluídas</span>
+            <div class="fs-3 fw-bold text-success font-monospace">{{ concluidas_dia }}</div>
+            <span class="text-secondary small">100% cumpridas</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Parciais</span>
+            <div class="fs-3 fw-bold text-warning font-monospace">{{ parciais_dia }}</div>
+            <span class="text-secondary small">Com saldo gerado</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Pendências (Ledger)</span>
+            <div class="fs-3 fw-bold text-info font-monospace">{{ total_saldos_pendentes_un }} <span class="fs-6 text-muted">un</span></div>
+            <span class="text-secondary small">{{ total_saldos_pendentes_ops }} saldo(s) aberto(s)</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3 border-danger border-opacity-50">
+            <span class="text-danger small d-block mb-1">Atrasadas (&gt;{{ hora_fim_config|time:"H:i" }})</span>
+            <div class="fs-3 fw-bold text-danger font-monospace">{{ total_atrasadas }}</div>
+            <span class="text-danger small opacity-75">Sem fechamento</span>
+        </div>
+    </div>
+</div>
+
+<!-- Motivos das Pendências & Saldos Pendentes por Modelo -->
+<div class="row g-3 mb-4">
+    <!-- Seção: Motivos das Pendências -->
+    <div class="col-12 col-lg-5">
+        <div class="glass-card h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3 border-bottom border-secondary border-opacity-25 pb-2">
+                <h5 class="fw-bold mb-0 text-light d-flex align-items-center gap-2">
+                    <i class="bi bi-pie-chart-fill text-warning"></i> Motivos das Pendências
+                </h5>
+                <span class="badge bg-warning text-dark">{{ total_pecas_pendentes_motivos }} un pendentes</span>
+            </div>
+            <p class="text-secondary small mb-3">
+                Distribuição quantitativa dos saldos pendentes acumulados no setor por causa-raiz informada nos fechamentos de turno.
+            </p>
+            {% if total_pecas_pendentes_motivos > 0 %}
+                <div class="d-flex flex-column gap-2">
+                    {% for m in motivos_pendencias %}
+                        <div class="p-2 rounded bg-dark bg-opacity-50 border border-secondary border-opacity-25 d-flex align-items-center justify-content-between gap-3">
+                            <div class="d-flex align-items-center gap-2" style="min-width: 175px;">
+                                <i class="bi {{ m.icone }} text-{{ m.cor }}"></i>
+                                <span class="small text-light">{{ m.nome }}</span>
+                            </div>
+                            <div class="flex-grow-1 mx-2">
+                                <div class="progress bg-black bg-opacity-50" style="height: 6px;">
+                                    <div class="progress-bar bg-{{ m.cor }}" style="width: {{ m.percentual }}%;"></div>
+                                </div>
+                            </div>
+                            <div class="text-end font-monospace" style="min-width: 90px;">
+                                <span class="fw-bold text-light small">{{ m.quantidade_pecas }} un</span>
+                                <span class="text-muted small">({{ m.quantidade_ops }} OP{% if m.quantidade_ops != 1 %}s{% endif %})</span>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="text-center py-4 text-secondary">
+                    <i class="bi bi-check-circle text-success fs-2 d-block mb-2"></i>
+                    Nenhuma pendência acumulada no setor. Todas as atividades cumpridas!
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Saldos Pendentes no Ledger por Modelo -->
+    <div class="col-12 col-lg-7">
+        <div class="glass-card h-100">
+            <div class="d-flex align-items-center justify-content-between mb-3 border-bottom border-secondary border-opacity-25 pb-2">
+                <h5 class="fw-bold mb-0 text-light d-flex align-items-center gap-2">
+                    <i class="bi bi-layers-half text-info"></i> Saldos Pendentes por Modelo (Ledger)
+                </h5>
+                <span class="badge bg-info text-dark">Decisão do Líder</span>
+            </div>
+            {% if saldos_pendentes %}
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0 small">
+                        <thead>
+                            <tr class="text-muted">
+                                <th>Modelo / Código</th>
+                                <th>Descrição</th>
+                                <th class="text-center">OPs de Origem</th>
+                                <th class="text-end">Saldo Pendente</th>
+                                <th class="text-end">Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in saldos_pendentes %}
+                                <tr>
+                                    <td class="fw-bold text-warning font-monospace">{{ s.produto__codigo }}</td>
+                                    <td class="text-light">{{ s.produto__descricao }}</td>
+                                    <td class="text-center"><span class="badge bg-dark">{{ s.qtd_ops }}</span></td>
+                                    <td class="text-end fw-bold text-info font-monospace fs-6">{{ s.total_saldo }} un</td>
+                                    <td class="text-end">
+                                        <a href="{% url 'bladder:ordem_nova' %}?produto={{ s.produto__id }}" class="btn btn-sm btn-outline-warning py-0 px-2" title="Programar OP para este modelo">
+                                            <i class="bi bi-calendar-plus"></i> Programar
+                                        </a>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-4 text-secondary">
+                    <i class="bi bi-check-circle text-success fs-2 d-block mb-2"></i>
+                    Nenhum saldo pendente acumulado no setor. Todas as metas anteriores foram cumpridas!
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Programação do Dia -->
+<div class="glass-card">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3 border-bottom border-secondary border-opacity-25 pb-2">
+        <h5 class="fw-bold mb-0 text-light d-flex align-items-center gap-2">
+            <i class="bi bi-list-task text-warning"></i> Ordens Programadas para Hoje
+        </h5>
+        <div class="d-flex gap-2">
+            <a href="{% url 'bladder:operador' %}" class="btn btn-sm btn-outline-warning">
+                <i class="bi bi-person-workspace"></i> Modo Chão de Fábrica
+            </a>
+            <a href="{% url 'bladder:ordens_lista' %}" class="btn btn-sm btn-outline-light">
+                Ver Todas as OPs <i class="bi bi-arrow-right"></i>
+            </a>
+        </div>
+    </div>
+
+    {% if ordens_dia %}
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+                <thead>
+                    <tr class="text-muted small">
+                        <th>Número OP</th>
+                        <th>Processo / Equipamento</th>
+                        <th>Produto / Modelo</th>
+                        <th class="text-center">Prioridade</th>
+                        <th class="text-center">Progresso</th>
+                        <th class="text-center">Realizado / Meta</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-end">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for op in ordens_dia %}
+                        <tr>
+                            <td class="font-monospace fw-bold text-light">
+                                <a href="{% url 'bladder:ordem_detalhe' op.pk %}" class="text-warning text-decoration-none">
+                                    {{ op.numero_ordem }}
+                                </a>
+                            </td>
+                            <td>
+                                <span class="d-block fw-semibold text-light">{{ op.processo.nome }}</span>
+                                {% if op.processo.maquina %}
+                                    <span class="small text-muted">{{ op.processo.maquina.nome }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="fw-bold text-light font-monospace">{{ op.produto.codigo_com_medida }}</span>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge {% if op.prioridade == 'URGENTE' %}bg-danger{% elif op.prioridade == 'ALTA' %}bg-warning text-dark{% elif op.prioridade == 'BAIXA' %}bg-secondary{% else %}bg-info text-dark{% endif %}">
+                                    {{ op.get_prioridade_display }}
+                                </span>
+                            </td>
+                            <td class="text-center" style="width: 140px;">
+                                <div class="progress bg-dark" style="height: 10px;">
+                                    <div class="progress-bar {% if op.percentual_conclusao >= 100 %}bg-success{% elif op.status == 'PARCIAL' %}bg-warning{% else %}bg-info{% endif %}" role="progressbar" style="width: {% if op.percentual_conclusao > 100 %}100{% else %}{{ op.percentual_conclusao }}{% endif %}%;"></div>
+                                </div>
+                                <span class="small text-muted">{{ op.percentual_conclusao }}%</span>
+                            </td>
+                            <td class="text-center font-monospace">
+                                <span class="fw-bold text-success">{{ op.quantidade_realizada }}</span>
+                                <span class="text-muted">/</span>
+                                <span class="fw-bold text-light">{{ op.quantidade_planejada }}</span>
+                                {% if op.excedente > 0 %}
+                                    <span class="badge bg-success small ms-1" title="Excedente: +{{ op.excedente }} un">+{{ op.excedente }} un</span>
+                                {% endif %}
+                                {% if op.saldo_anterior_incorporado > 0 %}
+                                    <span class="badge bg-dark text-info small ms-1" title="Inclui {{ op.saldo_anterior_incorporado }} un de saldo anterior">
+                                        +{{ op.saldo_anterior_incorporado }}
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if op.status == 'CONCLUIDA' %}
+                                    <span class="badge bg-success">Concluída</span>
+                                {% elif op.status == 'EM_EXECUCAO' %}
+                                    <span class="badge bg-info text-dark">Em Execução</span>
+                                {% elif op.status == 'PARCIAL' %}
+                                    <span class="badge bg-warning text-dark">Parcial</span>
+                                {% elif op.status == 'CANCELADA' %}
+                                    <span class="badge bg-secondary">Cancelada</span>
+                                {% else %}
+                                    {% if op.esta_atrasada %}
+                                        <span class="badge bg-danger">Atrasada</span>
+                                    {% else %}
+                                        <span class="badge bg-secondary">Programada</span>
+                                    {% endif %}
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <a href="{% url 'bladder:ordem_detalhe' op.pk %}" class="btn btn-sm btn-outline-light">
+                                    <i class="bi bi-eye"></i> Detalhes
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="text-center py-5 text-secondary">
+            <i class="bi bi-calendar-x text-muted fs-1 d-block mb-3"></i>
+            Nenhuma Ordem de Produção programada para o dia de hoje.
+            {% if is_lider %}
+                <div class="mt-3">
+                    <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning">
+                        <i class="bi bi-plus-circle-fill"></i> Criar Programação Agora
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

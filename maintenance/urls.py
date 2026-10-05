@@ -12,7 +12,7 @@ urlpatterns = [
     path('portal/', views.portal_select, name='portal_select'),
     
     # Authentication views
-    path('login/', auth_views.LoginView.as_view(template_name='maintenance/login.html'), name='login'),
+    path('login/', views.CustomLoginView.as_view(), name='login'),
     path('logout/', auth_views.LogoutView.as_view(next_page='login'), name='logout'),
     
     # Core Dashboards

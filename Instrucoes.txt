@@ -3699,3 +3699,470 @@ Arquivos Criados/Modificados:
        python manage.py test maintenance.tests.SessionConcurrencyAndExpiryTestCase (12 testes OK)
        python manage.py test maintenance production matrizaria (410 testes OK em 188s)
      * Migrações: Nenhuma migration gerada ou necessária (makemigrations --dry-run: No changes detected).
+
+13. Implementação do Módulo Dedicado: Setor de Bladder (App 'bladder') (29/09/2026):
+   - Domínio Funcional e Arquitetura:
+     * App dedicado 'bladder' devidamente autorizado na Constituição sob governança de SPEC formal.
+     * Banco transacional: alias 'default' exclusivamente (zero escritas ou migrações no alias 'scada').
+     * Escala 12x36 alternada em dias consecutivos (06:00 às 18:00) entre Turma A e Turma B (sem turno noturno).
+     * Referência de escala e apoio operacional configuráveis dinamicamente via Django Admin.
+     * Gestão de Saldo via Ledger auditável (SaldoPendenteBladder): OPs não atravessam turnos intencionalmente; encerram como PARCIAL e o saldo remanescente é incorporado atomicamente (FIFO) na próxima OP do mesmo modelo.
+     * Atraso como estado dinâmico calculado quando o turno de programação (18:00) expira.
+     * Reprogramação na mesma OP com motivo obrigatório e data anterior imutável no histórico.
+     * Cancelamento puramente lógico (soft-delete) exclusivo do líder com motivo obrigatório.
+     * Correção auditada de apontamentos pelo operador durante o turno aberto e pelo líder após o fechamento.
+     * Dimensionamento e previsão teórica de matéria-prima (1 Tarugo = 1 Bladder) com rótulo 'Consumo Teórico Calculado'.
+   - Novos Modelos Criados (bladder/models.py):
+     * ProcessoBladder (01 a 06 com vínculo opcional a maintenance.Machine: 408, 409, 419)
+     * ConfiguracaoEscalaBladder (data de referência, turma titular, horários 06:00-18:00)
+     * AjusteEscalaExcepcionalBladder (ajuste pontual de turma sobrepondo o cálculo automático)
+     * FuncionarioApoioBladder (colaboradores em escala flexível fora do ciclo A/B)
+     * ProdutoBladder (catálogo completo dos 9 modelos BLA001 a BLA009 com peso de tarugo e especificações ET.029)
+     * RecursoBladder (matrizes, compostos, ferramentas e matéria-prima)
+     * OrdemProducaoBladder (OP com campos de demanda nova, saldo incorporado e total programado)
+     * SaldoPendenteBladder (Ledger de rastreabilidade FIFO de saldos pendentes)
+     * ApontamentoTurnoBladder (registro de execução, quantidades e ocorrências de chão de fábrica)
+     * HistoricoApontamentoBladder (auditoria imutável de correções de apontamentos)
+     * HistoricoProgramacaoBladder (trilha imutável de reprogramações, cancelamentos e encerramentos)
+   - Rotas Registradas (bladder/urls.py):
+     * /bladder/ — Dashboard operacional e indicadores em tempo real.
+     * /bladder/operador/ — Interface de chão de fábrica com botões grandes e modais touch.
+     * /bladder/operador/iniciar/<id>/ — Início de OP pelo operador.
+     * /bladder/operador/apontar/<id>/ — Apontamento de quantidade e ocorrências.
+     * /bladder/operador/corrigir/<id>/ — Correção de apontamento próprio dentro do turno.
+     * /bladder/cronograma/ — Calendário mensal de planejamento do líder com alternância A/B.
+     * /bladder/ordens/ — Listagem geral de OPs com filtros avançados.
+     * /bladder/ordens/nova/ — Criação de OP com detecção automática de saldo pendente.
+     * /bladder/ordens/<id>/ — Ficha detalhada, especificações ET.029, recursos e auditoria.
+     * /bladder/ordens/<id>/reprogramar/ — Reprogramação com justificativa obrigatória.
+     * /bladder/ordens/<id>/cancelar/ — Cancelamento lógico da OP.
+     * /bladder/ordens/<id>/encerrar-parcial/ — Encerramento de turno gerando saldo no Ledger.
+     * /bladder/api/saldo-produto/<id>/ — Endpoint JSON de consulta de saldo pendente do produto.
+     * /bladder/relatorios/ — Fechamento mensal de indicadores e comparativo de turmas.
+     * /bladder/relatorios/exportar-excel/ — Exportação sanitizada em Excel (.xlsx) via openpyxl.
+   - Integração com Módulos e Portal:
+     * maintenance_project/settings.py: 'bladder' em INSTALLED_APPS.
+     * maintenance_project/urls.py: rota 'bladder/' registrada com namespace 'bladder'.
+     * maintenance/views.py: helper _user_can_access_bladder, _user_get_accessible_modules, home_redirect e portal_select.
+     * maintenance/context_processors.py: can_access_bladder adicionado ao contexto global.
+     * maintenance/templates/maintenance/portal_select.html: Card 5 (Setor de Bladder) adicionado com design industrial âmbar/ouro.
+     * production/routers.py: allow_relation explicitamente configurado para o app 'bladder'.
+   - Comandos de Gerenciamento Criados:
+     * python manage.py popular_processos_bladder (carrega os 6 processos padrão, escala 12x36 e recursos)
+     * python manage.py import_produtos_bladder (importa BLA001 a BLA009 e pesos de tarugo da ET.029)
+     * python manage.py setup_grupos_bladder (configura permissões de Liderança Bladder e Operadores Bladder)
+   - Validação e Testes:
+     * Migração: bladder.0001_initial aplicada com sucesso no banco default.
+     * python manage.py check: 0 erros.
+     * python manage.py makemigrations --check: No changes detected.
+     * python manage.py test bladder: 21 testes aprovados (100% OK em 30s).
+     * python manage.py test maintenance.tests.SessionConcurrencyAndExpiryTestCase: 12 testes OK.
+     * python manage.py test matrizaria: 61 testes aprovados (100% OK em 26s).
+
+
+================================================================================
+FASE COMPLEMENTAR — PERFIS OPERACIONAIS E CONTROLE DE ACESSO (MODULO BLADDER)
+================================================================================
+Data: 29/09/2026
+Status: GREEN (100% Aprovado em Check, Migrações e Suíte de 43 Testes)
+
+1. REGRAS DE NEGÓCIO E CONTROLE DE ACESSO IMPLEMENTADOS:
+   - Acesso exclusivo ao Setor de Bladder restrito a:
+     1. Líder do setor de Bladder (membro do grupo 'Liderança Bladder');
+     2. Operadores de máquina regulares (grupo 'Operadores Bladder' com PerfilOperacionalBladder ativo e turma A/B);
+     3. Funcionários de apoio devidamente cadastrados e ativos (FuncionarioApoioBladder);
+     4. Superusuário apenas como exceção administrativa.
+   - Restrições Críticas Garantidas no Backend:
+     * Usuários staff genéricos NÃO obtêm acesso ao Bladder apenas por serem staff.
+     * Usuários de outros módulos (Manutenção, Produção/SCADA, Matrizaria) NÃO possuem acesso ao Bladder sem grupo/perfil específico.
+     * Operador regular inativo (ativo=False) tem acesso operacional bloqueado imediatamente.
+     * Operador tentando acessar rotas gerenciais (/bladder/, /bladder/ordens/nova/, /bladder/relatorios/, reprogramação, cancelamento) é bloqueado no backend e redirecionado com segurança para /bladder/operador/.
+     * Usuários não autorizados tentando acessar qualquer rota do Bladder são redirecionados para o portal (/portal/).
+
+2. MODELAGEM CRIADA:
+   - PerfilOperacionalBladder (bladder/models.py):
+     * usuario: OneToOneField(User, related_name='perfil_operacional_bladder')
+     * turma: CharField ('TURMA_A' / 'TURMA_B')
+     * ativo: BooleanField (default=True)
+     * created_at / updated_at: DateTimeField
+   - Reutilização de FuncionarioApoioBladder:
+     * Apoio flexível fora da escala 12x36 normal;
+     * Não exige vínculo à Turma A ou B;
+     * Não altera a titularidade da turma que opera no dia.
+
+3. ARQUITETURA DE AUTORIZAÇÃO E SEGURANÇA:
+   - bladder/decorators.py:
+     * user_is_lider_bladder: validação estrita sem bypass de staff.
+     * user_is_operador_regular_bladder: valida grupo 'Operadores Bladder' + perfil ativo com turma A/B.
+     * user_is_apoio_bladder: valida cadastro ativo em FuncionarioApoioBladder.
+     * user_is_operador_bladder: unifica as permissões operacionais permitidas.
+     * @lider_bladder_required: protege /bladder/, ordens, criação, detalhes, reprogramação, cancelamento e relatórios.
+     * @operador_ou_lider_bladder_required: protege tela de chão de fábrica (/bladder/operador/), apontamentos e APIs.
+   - maintenance/views.py:
+     * _user_can_access_bladder: delega para validação estrita sem brecha de staff.
+     * home_redirect: se tiver apenas Bladder, líder vai para /bladder/ e operador para /bladder/operador/. Usuários com múltiplos módulos vão para /portal/.
+     * portal_select: direcionamento dinâmico do card de Bladder (bladder_url) respeitando o perfil.
+   - maintenance/templates/maintenance/portal_select.html:
+     * Link dinâmico {% url bladder_url|default:'bladder:dashboard' %}.
+
+4. DJANGO ADMIN APRIMORADO:
+   - PerfilOperacionalBladderAdmin registrado com:
+     * list_display: usuário, nome completo, turma, ativo, status no grupo 'Operadores Bladder', data de atualização.
+     * list_filter: turma, ativo.
+     * search_fields: username, first_name, last_name, email.
+     * raw_id_fields: usuario.
+     * Helper visual: alerta se o usuário ainda não foi adicionado ao grupo 'Operadores Bladder'.
+   - FuncionarioApoioBladderAdmin:
+     * Aprimorado com busca completa e raw_id_fields.
+
+5. MIGRATIONS APLICADAS:
+   - bladder.0002_perfiloperacionalbladder (aplicada com sucesso no banco default).
+   - Zero escrita no banco SCADA.
+
+6. BATERIA DE TESTES E VALIDAÇÕES:
+   - python manage.py check: 0 erros.
+   - python manage.py makemigrations --check: No changes detected.
+   - python manage.py test bladder: 43 testes aprovados (100% OK em 93s).
+   - Regressão:
+     * python manage.py test maintenance.tests.SessionConcurrencyAndExpiryTestCase: 12 testes OK.
+     * python manage.py test matrizaria: 61 testes OK.
+================================================================================
+RODADA DE HOMOLOGAÇÃO FUNCIONAL — MÓDULO BLADDER (ETAPAS 1 A 8)
+Data: 29/09/2026
+Status: GREEN (Todas as etapas concluídas e validadas)
+
+1. MUDANÇA NA FILOSOFIA OPERACIONAL CANÔNICA:
+   - ANTES:
+     * Apontamento contínuo/individual durante a execução de cada OP no tablet;
+     * Saldo pendente consumido automaticamente via FIFO na próxima OP do mesmo modelo;
+     * Operador precisava iniciar e concluir cada atividade individualmente.
+   - AGORA:
+     * Chão de Fábrica (/bladder/operador/) funciona como Quadro Operacional de Consulta no Turno;
+     * Operador não realiza apontamentos intermediários contínuos durante o turno;
+     * Ao final do turno, o operador realiza um FECHAMENTO ÚNICO de todas as OPs do turno;
+     * Para cada OP: quantidade realizada, situação (Concluída, Parcial, Não Realizada), motivo se incompleta e observação;
+     * Saldo não realizado vira PENDÊNCIA registrada no ledger (SaldoPendenteBladder);
+     * Em futuras programações do mesmo modelo, o sistema avisa o Líder com cartões explícitos:
+       [ INCORPORAR PENDÊNCIA ] ou [ IGNORAR POR ENQUANTO ];
+     * A decisão de incorporar saldo é SEMPRE e EXCLUSIVAMENTE do Líder (nunca automática);
+     * Saldo ignorado permanece PENDENTE e disponível para futuras decisões.
+
+2. ETAPAS IMPLEMENTADAS E ENTREGUES:
+   - ETAPA 1 (Ordens de Produção):
+     * Listagem enriquecida com meta do turno, quantidade realizada, saldo e situação;
+     * Destaca motivo, turma responsável e data de fechamento para OPs parciais/não realizadas;
+     * Mantém saldos vinculados à OP de origem sem gerar OPs fantasmas automáticas.
+   - ETAPA 2 (Nova Programação + Pendências):
+     * Remoção do consumo automático FIFO;
+     * Aviso destacado de pendências existentes na tela de nova OP;
+     * Cartões individuais com dados de origem (OP, data, turma, programado, realizado, saldo, motivo);
+     * Decisão explícita via botões/formulário com transaction.atomic e proteção contra consumo duplo;
+     * Incorporação rastreável ligando OP de origem -> saldo -> OP de destino.
+   - ETAPA 3 (Chão de Fábrica / Tablet):
+     * Redesenho para ~2 cards por linha no tablet, responsivo e compacto;
+     * Remoção de "Iniciar Produção", "Meus Apontamentos" e apontamento contínuo;
+     * Exibição clara de número da OP, processo/equipamento, modelo, meta e prioridade;
+     * Modal de Detalhes Técnicos com especificações reais do cadastro (ET.029, tarugo, matriz, etc.).
+   - ETAPA 4 (Fechamento do Turno):
+     * Modelos FechamentoTurnoBladder e ItemFechamentoTurnoBladder criados com migration 0003;
+     * Tela dedicada /bladder/operador/fechar-turno/ acessada por botão no quadro operacional;
+     * Validação contra quantidade negativa, proteção contra sobreprodução e motivo obrigatório para saldos;
+     * Idempotência estrita, proteção contra duplo clique/duplo fechamento e auditoria completa.
+   - ETAPA 5 (Dashboard do Líder):
+     * Simplificação com foco em cumprimento: Programadas, Concluídas, Parciais, Pendentes e Atrasadas;
+     * Remoção de tabelas teóricas de consumo de composto/tarugo da visão principal;
+     * Nova seção 'Motivos das Pendências' agrupando peças e OPs por motivo canônico;
+     * Cálculo dinâmico de atraso baseado no horário de término configurado (ConfiguracaoEscalaBladder);
+     * OPs fechadas não são tratadas como atrasadas.
+   - ETAPA 6 (Relatórios):
+     * Fechamento do turno é a fonte única da verdade para a produção realizada;
+     * Fórmulas matemáticas rigorosas: realizado / programado * 100 com 2 casas decimais (ex: 52,21%);
+     * Proteção contra divisão por zero e dupla contagem de saldos incorporados;
+     * Quebras completas por Turma (Turma A, Turma B, Total) e por Modelo;
+     * Exportação Excel espelhada com proteção contra injeção de fórmulas.
+   - ETAPA 7 (Calendário / Cronograma):
+     * Cronograma mensal /bladder/cronograma/ integrado ao novo fluxo;
+     * Badge visual discreto (+X) em OPs com saldo incorporado;
+     * Bloqueio estrito de acesso para operadores.
+   - ETAPA 8 (Fluxo Completo de Homologação):
+     * Testes de integração cobrindo Cenários A a F (tudo cumprido, parcial, ignorar pendência, incorporar pendência, parcial novamente, atraso dinâmico).
+
+3. MIGRATION ADITIVA:
+   - bladder.0003_fechamentoturnobladder_and_more (banco default, não destrutiva).
+   - Zero gravação no banco SCADA.
+
+4. BATERIA DE TESTES E REGRESSÃO:
+   - python manage.py check: 0 erros.
+   - python manage.py makemigrations --check: No changes detected.
+   - python manage.py test bladder: 88 testes (100% OK em 158.8s).
+   - python manage.py test matrizaria: 61 testes OK.
+   - python manage.py test maintenance: 73 testes OK.
+================================================================================
+ATUALIZAÇÃO DE ESPECIFICAÇÕES TÉCNICAS — PLANILHA ET.029 ATUALIZADA (1)
+Data: 30/09/2026
+Status: GREEN (Catálogo atualizado com sucesso com 10 modelos)
+
+1. ARQUIVO IMPORTADO:
+   - "ET.029 - ESPECIFICAÇÃO TÉCNICA - BLA - TESTE (1).xlsx"
+   - Comando executado: python manage.py import_produtos_bladder
+   - Suporte inteligente: detecta automaticamente a nova versão na raiz do projeto;
+   - Suporta arquivos com aba única (BLA - EXTRUSÃO) preservando dados históricos de vulcanização;
+   - Mapeia o cabeçalho 'Medida' na coluna 1 (B200/16 a B160/16);
+   - Cadastra automaticamente matrizes em RecursoBladder (MAT01 a MAT06).
+
+2. MODELOS INTEGRADOS AO CATÁLOGO:
+   - 10 Modelos no total (BLA001 a BLA010):
+     * BLA001: B200/16, Tarugo 2,500 kg, Matriz MAT01, Extrusão 170 cm, Chanfro 166,5 cm, Diâmetro 40 mm.
+     * BLA002: B140/15, Tarugo 2,000 kg, Matriz MAT01, Extrusão 160 cm, Chanfro 156,5 cm, Diâmetro 38 mm.
+     * BLA003: B240/15, Tarugo 3,100 kg, Matriz MAT03, Extrusão 160 cm, Chanfro 156,5 cm, Diâmetro 42 mm.
+     * BLA004: B250/12, Tarugo 3,100 kg, Matriz MAT03, Extrusão 130 cm, Chanfro 125,0 cm, Diâmetro 42 mm.
+     * BLA005: B160/12, Tarugo 1,500 kg, Matriz MAT01, Extrusão 130 cm, Chanfro 125,0 cm, Diâmetro 38 mm.
+     * BLA006: B266/06, Tarugo 1,500 kg, Matriz MAT03, Extrusão 90 cm, Chanfro 80,5 cm, Diâmetro 43 mm.
+     * BLA007: B193/06, Tarugo 1,200 kg, Matriz MAT02, Extrusão 80 cm, Chanfro 76,0 cm, Diâmetro 40 mm.
+     * BLA008: B360/10, Tarugo 2,600 kg, Matriz MAT04, Extrusão 115 cm, Chanfro 110,0 cm, Diâmetro 52 mm.
+     * BLA009: B428/09, Tarugo 2,850 kg, Matriz MAT05, Extrusão 115 cm, Chanfro 110,0 cm, Diâmetro 56 mm.
+     * BLA010 [NOVO]: B160/16, Tarugo 2,300 kg, Matriz MAT01, Extrusão 170 cm, Chanfro 175,0 cm, Diâmetro 38 mm.
+
+3. VALIDAÇÃO E TESTES:
+   - python manage.py check: 0 erros.
+   - python manage.py makemigrations --check: No changes detected.
+   - python manage.py test bladder: 88 testes (100% OK em 158.8s).
+================================================================================
+RODADA DE AJUSTES FINAIS DE HOMOLOGAÇÃO — MÓDULO BLADDER (SOLICITAÇÃO DO CLIENTE)
+Data: 30/09/2026
+Status Global: GREEN (100% Homologado e Testado Localmente)
+
+Esta rodada corresponde à homologação final solicitada pelo cliente/responsável
+pelo Setor de Bladder após testes locais, focando estritamente em três blocos:
+
+1. BLOCO 1 — CHÃO DE FÁBRICA:
+   - Status visual: Durante o turno aberto, atividades programadas são exibidas
+     estritamente como "PROGRAMADA" (nunca "Pendente"). A palavra "PENDÊNCIA" só
+     surge se após o fechamento do turno restar saldo não cumprido.
+   - Fechamento do turno: Mantido apenas UM botão principal "FECHAR TURNO" no topo,
+     com fácil acesso em tablet, eliminando duplicidade inferior. Fechamento continua
+     único para todo o turno (não permite fechar cada OP individualmente).
+   - Menu do Operador: Navegação simplificada na barra superior para o perfil
+     Operador Bladder (exibe apenas Chão de Fábrica, dados da escala, data, turma
+     e fechar turno). Menus administrativos (Dashboard, Calendário, Ordens, Nova OP,
+     Relatórios) são ocultos no frontend e bloqueados com segurança no backend.
+   - Cards de atividades: Mantido layout compacto de ~2 cards por linha em tablet,
+     com parâmetros essenciais da ET.029 e modal "Ver Detalhes Técnicos".
+
+2. BLOCO 2 — RELATÓRIOS (FECHAMENTO MENSAL):
+   - Filtros do período no topo: Mês, Ano, Turno (Todos, Turma A, Turma B) e
+     Modelo de Bladder (Todos, modelos cadastrados).
+   - Resumo do mês: Programado, Realizado, Saldo e Cumprimento da Meta com precisão
+     decimal (ex: 59/113 = 52,21%) e divisão segura por zero.
+   - Produção por Turno: Quebra para Turma A, Turma B e Total Consolidado com dados
+     originados estritamente dos fechamentos de turno.
+   - Produção por Dia: Tabela diária com Data, Turma A, Turma B, Total Diário e
+     linha final de Acumulado do Período.
+   - Pendências do Período: Seção listando pendências fechadas com Data Fechamento,
+     Turno, OP, Modelo, Programado, Realizado, Saldo e Motivo da pendência.
+   - Prevenção contra dupla contagem: Incorporar saldo não duplica realização no acumulado.
+   - Exportação Excel alinhada em 5 abas com sanitização contra formula injection.
+
+3. BLOCO 3 — ORDENS DE PRODUÇÃO (RASTREABILIDADE DE PENDÊNCIAS):
+   - Nomenclaturas atualizadas: Qtd. Nova, Pendência Incorporada, Meta Total,
+     Realizado, Saldo Gerado e Status.
+   - Meta Total = Qtd. Nova + Pendência Incorporada.
+   - Saldo Gerado = Meta Total - Realizado (pós-fechamento do turno).
+   - Rastreabilidade na ficha da OP (ordem_detalhe): Tabela estruturada com OP origem,
+     data origem, turma origem, modelo, programado original, realizado original e
+     saldo incorporado, inclusive com múltiplas origens rastreáveis individualmente.
+   - Status visual padronizado: PROGRAMADA antes do fechamento, CONCLUÍDA,
+     PARCIAL / PENDÊNCIA e NÃO REALIZADA / PENDÊNCIA.
+
+4. BATERIA DE TESTES E REGRESSÃO:
+   - python manage.py check: 0 issues.
+   - python manage.py makemigrations --check: No changes detected.
+   - python manage.py test bladder: 109 testes (100% OK em 169s).
+   - python manage.py test matrizaria: 61 testes (100% OK).
+   - Zero migrations criadas / Zero escritas no banco SCADA.
+================================================================================
+================================================================================
+CORREÇÃO DO FLUXO DE EXPIRAÇÃO DE SESSÃO POR INATIVIDADE NA TELA DE LOGIN
+Data: 30/09/2026
+Status: RESOLVIDO (100% Validado com Testes de Regressão)
+
+1. DIAGNÓSTICO DO PROBLEMA:
+   - Ao expirar uma sessão humana por inatividade (tempo > 300s), o middleware
+     redirecionava o usuário para `/login/?next=...`.
+   - Na requisição GET subsequente para `/login/`, a rota `/login/` constava na lista
+     `auth_exempt_paths`, fazendo com que o middleware pulasse a validação de sessão.
+   - O `AuthenticationMiddleware` do Django reatribuía o usuário logado a partir do cookie
+     de sessão (`_auth_user_id`), deixando `request.user.is_authenticated = True`.
+   - Como o template `login.html` estende `base.html`, e `base.html` renderizava a barra lateral
+     (sidebar) fixa e o rodapé sempre que `user.is_authenticated` era verdadeiro, a barra lateral
+     era exibida com o nome do usuário.
+   - O formulário de login ficava dentro do bloco `{% block content_guest %}`, que não era
+     avaliado na ramificação de usuário autenticado, deixando a área central escura e vazia,
+     apenas com o toast "Sua sessão foi encerrada por inatividade.".
+   - Qualquer clique nos menus da barra lateral disparava nova requisição que caía na checagem
+     de `_session_expired = True`, redirecionando em loop de volta para `/login/` e prendendo o
+     usuário até que este clicasse no botão manual "Sair".
+
+2. SOLUÇÃO IMPLEMENTADA (DEFESA EM CAMADAS):
+   - `maintenance/middleware.py`:
+     * No `SessionExpiryByProfileMiddleware`, quando uma requisição chega à rota `/login/`
+       com sessão expirada (`_session_expired = True` ou `elapsed > timeout`), as chaves de
+       autenticação (`SESSION_KEY`, `BACKEND_SESSION_KEY`, `HASH_SESSION_KEY`, etc.) são
+       removidas da sessão e `request.user` é redefinido para `AnonymousUser()`.
+     * Preserva o registro físico em `django_session` (evitando `SessionInterrupted` em requisições
+       concorrentes em trânsito de outras abas ou polling).
+   - `maintenance/views.py`:
+     * Criada a classe `CustomLoginView(auth_views.LoginView)` com `redirect_authenticated_user = False`.
+     * No método `dispatch()`, verifica e garante desautenticação idempotente de `request.user` caso
+       `_session_expired` esteja presente na sessão.
+   - `maintenance/urls.py`:
+     * Rota `path('login/', views.CustomLoginView.as_view(), name='login')`.
+   - `maintenance/templates/maintenance/base.html`:
+     * Ajustada a condição da barra lateral para `{% if user.is_authenticated and request.resolver_match.url_name != 'login' %}`,
+       garantindo que a barra lateral e os menus nunca sejam renderizados na rota de login.
+   - `maintenance/templates/maintenance/login.html`:
+     * Defesa em profundidade adicionando o bloco `{% block content %}` com o formulário de login,
+       além de `{% block content_guest %}`, impedindo tela em branco sob qualquer condição de contexto.
+   - `maintenance/tests.py`:
+     * Adicionado `test_13_login_page_renders_clean_login_form_after_session_expired` cobrindo o fluxo
+       completo de expiração, desautenticação limpa, ausência de sidebar e presença do formulário e alerta.
+
+3. VALIDAÇÃO E SUÍTE DE TESTES:
+   - python manage.py check: 0 erros.
+   - python manage.py test maintenance: 74 testes aprovados (100% OK).
+   - python manage.py test bladder: 109 testes aprovados (100% OK).
+   - python manage.py test matrizaria: 61 testes aprovados (100% OK).
+   - python manage.py test production: 276 testes aprovados (100% OK).
+   - Total de 520 testes executados e aprovados sem nenhuma falha ou regressão.
+================================================================================
+================================================================================
+HOMOLOGAÇÃO — SIMPLIFICAÇÃO FINAL DO CHÃO DE FÁBRICA E FICHA TÉCNICA
+Data: 30/09/2026
+Status: 100% HOMOLOGADO E APROVADO (GREEN)
+
+1. OBJETIVO DA DEMANDA:
+   - Simplificar visualmente a experiência do Chão de Fábrica (/bladder/operador/).
+   - Otimizar a interface para tablets industriais (paisagem e retrato) e desktops.
+   - Migrar especificações técnicas dos cards principais para uma Ficha Técnica estruturada.
+   - Implementar identificação visual curta da OP no card (ex: OP #002) sem alterar o identificador oficial do banco (OP-BLA-YYYYMMDD-XXXX).
+   - Preservar o fechamento único do turno com botão destacado no topo.
+   - Validar integralmente a distinção entre saldo operacional da programação e pendência formal no Ledger.
+
+2. ALTERAÇÕES IMPLEMENTADAS:
+   - `bladder/models.py`:
+     * Adicionada a property `numero_ordem_curto` no model `OrdemProducaoBladder`.
+     * Deriva dinamicamente formatos curtos (ex: 'OP #002', 'OP #025') a partir do sufixo numérico de `numero_ordem`.
+     * Zero migrations geradas e zero alteração de colunas ou banco.
+   - `bladder/templates/bladder/operador_turno.html`:
+     * Card Operacional Simplificado:
+       - Maior destaque visual: Código do Bladder (BLA00X) e Meta do Turno (un).
+       - Destaque secundário: Modelo/Descrição e Processo Operacional / Equipamento.
+       - Menor destaque: Identificação curta da OP (OP #002) e badges de Prioridade e Situação.
+       - Removidas dos cards todas as especificações técnicas (peso de tarugo, diâmetro, comprimento chanfrado, matriz de extrusão, tempo de vulcanização, observações extensas).
+       - Botão touch [ FICHA TÉCNICA ] com área de toque mínima de 44px (touch-btn).
+     * Ficha Técnica (Modal modalDetalhes):
+       - Consulta exclusivamente técnica (somente leitura, sem inputs de quantidade nem formulários de fechamento/apontamento).
+       - Organizada nos 5 grupos canônicos:
+         1. Identificação Geral (Código, Descrição, Nomenclatura Antiga, OP Oficial Completa, Processo, Máquina, Turma, Data, Meta, Consumo Teórico).
+         2. Tarugo (Peso, Diâmetro, Comprimento, Composto).
+         3. Parâmetros de Extrusão (Matriz, Comprimento Extrusão, Comprimento Chanfrado, Velocidade, Temperaturas).
+         4. Parâmetros de Vulcanização (Tempo, Peso Vulcanizado, Circunferência no Centro, Altura, Temperatura de Cura, Pressão/Vácuo, Cavidades).
+         5. Instruções Especiais e Ferramental (Recursos/Ferramentas alocados, Instruções e Observações Gerais).
+       - Identificação discreta de campos ainda não cadastrados na ET.029 ("Não cadastrado"), sem inventar dados fictícios.
+     * Botão Único FECHAR TURNO:
+       - Localizado no topo do cabeçalho, com touch target ampliado (touch-header-btn).
+       - Elimina qualquer duplicidade de botões na interface.
+   - `bladder/tests.py`:
+     * Adicionada a classe `HomologacaoChaoDeFabricaFichaTecnicaTestCase` com 12 testes cobrindo todos os requisitos:
+       - Acesso do operador e bloqueio estrito em rotas gerenciais;
+       - OP aberta como PROGRAMADA (nunca pendência antes do fechamento);
+       - Identificação curta x oficial preservada;
+       - Remoção de parâmetros do card e estrutura da Ficha Técnica;
+       - Fechamento único e distinção entre saldo operacional e pendência formal;
+       - Cenário Funcional Controlado Turma A (BLA004 meta 20 real 20 CONCLUÍDA; BLA006 meta 30 real 27 PARCIAL saldo 3 motivo Problema no equipamento; BLA007 meta 15 real 15 CONCLUÍDA; Total 62/65 = 95,38%);
+       - Teste de incorporação da pendência de 3 do BLA006 com rastreabilidade origem-destino no ledger e integridade da OP original.
+
+3. RESULTADOS DE TESTES E REGRESSÃO:
+   - python manage.py check: 0 erros (0 silenced).
+   - python manage.py makemigrations --check: No changes detected (Zero migrations).
+   - python manage.py test bladder: 121 testes aprovados (100% OK em 185s).
+   - python manage.py test matrizaria: 61 testes aprovados (100% OK).
+   - python manage.py test maintenance: 74 testes aprovados (100% OK).
+   - Nenhuma escrita no banco SCADA. Zero alterações em models/banco de dados.
+================================================================================
+15. NOVA RODADA DE HOMOLOGAÇÃO FUNCIONAL (01/10/2026): REGRAS CANÔNICAS DE NEGÓCIO DO SETOR DE BLADDER
+================================================================================
+
+1. PRINCÍPIO DE NEGÓCIO CANÔNICO:
+   "O RESPONSÁVEL PELO SETOR PLANEJA. O SISTEMA ORGANIZA E REGISTRA. O OPERADOR EXECUTA."
+   O sistema não toma decisões de planejamento no lugar do responsável humano.
+
+2. DECISÕES DE NEGÓCIO HOMOLOGADAS:
+   a) Planejamento pelo Dia, Não pela Turma:
+      - O Líder informa conceitualmente: Data, Processo/Máquina, Bladder e Quantidade.
+      - A seleção manual de Turma A/B foi removida do formulário de criação de OP.
+      - A turma é derivada dinamicamente pelo backend a partir de `ConfiguracaoEscalaBladder` e eventuais ajustes excepcionais.
+      - Endpoint `/bladder/api/escala-dia/` fornece feedback reativo em tempo real na troca de data.
+      - Em reprogramações de data, a turma prevista é recalculada automaticamente e registrada no histórico.
+   b) Seleção do Bladder Simplificada: Código + Medida:
+      - O seletor de produtos exibe estritamente: `CÓDIGO — MEDIDA` (ex: `BLA001 — B200/16`, `BLA004 — B250/12`).
+      - Derivado de `ProdutoBladder.medida` (extraído canonicamente do cadastro/ET.029) e `ProdutoBladder.codigo_com_medida`.
+      - Dropdown limpo sem matrizes, pesos, compostos ou parâmetros técnicos (preservados na Ficha Técnica).
+   c) Quantidade Programada é Meta, Não Limite:
+      - A quantidade programada é decisão operacional humana; o sistema não reduz nem altera.
+      - Prensas e extrusoras permitem múltiplos modelos no dia conforme programação do líder.
+      - A prioridade padrão NORMAL representa a ausência de urgência sem impor sequenciamento rígido.
+   d) Produção Acima da Meta (Sobreprodução Válida):
+      - `realizado` PODE ser maior que `meta_total` (ex: Meta 20 / Realizado 22 -> Concluída, Excedente = 2, Saldo = 0).
+      - Removido qualquer bloqueio de sobreprodução.
+      - Sem pendência gerada, sem erro e sem exigir justificativa para excedente.
+      - Cumprimento matemático uncapped (`realizado / programado * 100`, ex: 22/20 = 110%).
+   e) Produção Abaixo da Meta (Déficit / Ocorrência):
+      - Exige obrigatoriamente DUAS informações no Fechamento do Turno:
+        1. Categoria(s) do desvio estruturada(s) (`CategoriaDesvioBladder`);
+        2. Descrição livre obrigatória ("O que aconteceu?").
+      - Suporte a múltiplas categorias simultâneas para o mesmo item de fechamento.
+   f) Cálculo Independente de Pendências e Excedente (Regra Crítica):
+      - Pendência é calculada estritamente POR OP: `sum(max(meta - realizado, 0))`.
+      - O excedente de um modelo NUNCA compensa o déficit de outro modelo.
+      - Pendência total e excedente total são métricas distintas e independentes.
+   g) Ledger de Pendências e Zero Automação Indevida:
+      - Pendência formal nasce unicamente no Fechamento Único de Turno.
+      - Nenhuma OP é gerada automaticamente pelo sistema.
+      - O líder decide explicitamente quando incorporar o saldo em programações futuras.
+
+3. ARQUITETURA E ARQUIVOS MODIFICADOS:
+   - `bladder/models.py`:
+     * Model `CategoriaDesvioBladder` (código, nome, ordem, ativo).
+     * Properties `medida` e `codigo_com_medida` em `ProdutoBladder`.
+     * Properties `excedente` e `diferenca` em `OrdemProducaoBladder` e `ItemFechamentoTurnoBladder`.
+     * Campo ManyToMany `categorias` e `descricao_desvio` em `ItemFechamentoTurnoBladder`.
+     * Property `percentual_conclusao` sem teto de 100%.
+   - `bladder/admin.py`:
+     * Registro do model `CategoriaDesvioBladder`.
+   - `bladder/migrations/0004_categoriadesviobladder_and_more.py`:
+     * Migration aditiva com seeding de categorias padrão (compatível com SQLite e MySQL).
+   - `bladder/forms.py`:
+     * Remoção da seleção manual de turma; `label_from_instance` utilizando `codigo_com_medida`; prioridade opcional.
+   - `bladder/urls.py` & `bladder/views.py`:
+     * Rota `api/escala-dia/` para retorno JSON da escala do dia selecionado.
+     * `executar_fechamento_turno`: suporte a excedente e validação estrita de categorias + "O que aconteceu?".
+     * `dashboard`: agregação por motivos, indicadores de excedente e cumprimento uncapped.
+     * `relatorios`: KPIs separados de Programado, Realizado, Pendência Total, Excedente Total e Diferença Líquida; exportação Excel 5 abas atualizada.
+   - `bladder/templates/bladder/`:
+     * `ordem_form.html`: badge dinâmico da escala e seletor Código + Medida.
+     * `fechamento_turno.html`: remoção do atributo max, chips de múltiplas categorias e textarea obrigatória "O que aconteceu?".
+     * `dashboard.html` e `relatorios.html`: suporte visual a excedente e descrições dos desvios.
+   - `bladder/tests.py`:
+     * Adicionada classe `BladderHomologacaoNovasRegrasNegocioTestCase` cobrindo os 35 testes obrigatórios e o Cenário Integrado Canônico da Turma A (Seção 28).
+
+4. RESULTADOS DE TESTES E REGRESSÃO:
+   - python manage.py check: 0 erros (0 silenced).
+   - python manage.py makemigrations --check: No changes detected (schema 100% sincronizado).
+   - python manage.py test bladder: 134 testes aprovados (100% OK em 207s).
+   - python manage.py test matrizaria: 61 testes aprovados (100% OK em 26s).
+   - python manage.py test maintenance: 74 testes aprovados (100% OK em 59s).
+   - Total Integrado: 269 testes aprovados (100% GREEN).
+   - Zero operações no banco SCADA. Zero commit, zero push, zero deploy.
+================================================================================
+

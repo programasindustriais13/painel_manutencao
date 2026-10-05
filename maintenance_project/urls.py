@@ -23,6 +23,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("producao/", include("production.urls", namespace="production")),
     path("matrizaria/", include("matrizaria.urls", namespace="matrizaria")),
+    path("bladder/", include("bladder.urls", namespace="bladder")),
     path("", include("maintenance.urls")),
 ]
 

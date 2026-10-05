@@ -106,9 +106,8 @@ class SessionExpiryByProfileMiddleware:
                     request.session["_session_expiry_checked"] = True
                     request.session["_is_tv_session"] = True
             else:
-                # Não interceptar requisições para rotas de autenticação (login, logout)
-                auth_exempt_paths = ["/login/", "/logout/"]
-                if any(request.path.startswith(p) for p in auth_exempt_paths):
+                # Não interceptar requisições para logout
+                if request.path.startswith("/logout/"):
                     return self.get_response(request)
 
                 # Sessão humana: validação de inatividade no servidor
@@ -124,6 +123,22 @@ class SessionExpiryByProfileMiddleware:
                         is_expired = True
 
                 if is_expired:
+                    # Se o usuário com sessão expirada já está na tela de login,
+                    # limpa as chaves de autenticação da sessão e desautentica request.user
+                    if request.path.startswith("/login/"):
+                        was_already_marked = bool(request.session.get("_session_expired"))
+                        from django.contrib.auth import SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY
+                        for key in [SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY, "_session_expired", "_last_human_activity"]:
+                            request.session.pop(key, None)
+                        request.session.modified = True
+                        request.user = AnonymousUser()
+                        if not was_already_marked:
+                            try:
+                                messages.info(request, "Sua sessão foi encerrada por inatividade.")
+                            except Exception:
+                                pass
+                        return self.get_response(request)
+
                     # Marca logicamente na sessão sem deletar a linha de django_session (evita SessionInterrupted)
                     if not request.session.get("_session_expired"):
                         request.session["_session_expired"] = True
@@ -158,6 +173,10 @@ class SessionExpiryByProfileMiddleware:
                     except Exception:
                         pass
                     return redirect(f"{login_url}?next={request.path}")
+
+                # Se for rota de login com sessão VÁLIDA (não expirada), permite passar para CustomLoginView
+                if request.path.startswith("/login/"):
+                    return self.get_response(request)
 
                 # Sessão ativa e válida:
                 if last_activity is None:

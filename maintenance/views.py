@@ -2,7 +2,8 @@ from django.shortcuts import render, redirect, get_object_or_404, resolve_url
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST, require_GET
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, AnonymousUser
+from django.contrib.auth import views as auth_views, SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY
 from django.contrib import messages
 from django.utils import timezone
 from django.http import HttpResponse, FileResponse, Http404, HttpResponseForbidden, JsonResponse
@@ -109,8 +110,31 @@ def _user_can_access_matrizaria(user):
     return False
 
 
+def _user_can_access_bladder(user):
+    """
+    Retorna True estritamente para colaboradores autorizados do Setor de Bladder:
+    1. Superusuário (exceção administrativa);
+    2. Membros do grupo 'Liderança Bladder';
+    3. Operadores de máquina regulares com PerfilOperacionalBladder ativo no grupo 'Operadores Bladder';
+    4. Funcionários de apoio cadastrados e ativos em FuncionarioApoioBladder.
+    Usuários staff genéricos NÃO possuem acesso apenas por serem staff.
+    Usuários de outros módulos (Manutenção, Produção, Matrizaria) NÃO possuem acesso sem pertencer ao Bladder.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    try:
+        from bladder.decorators import user_is_operador_bladder
+        return user_is_operador_bladder(user)
+    except Exception:
+        if user.groups.filter(name="Liderança Bladder").exists():
+            return True
+        return False
+
+
 def _user_get_accessible_modules(user):
-    """Retorna lista dos módulos acessíveis pelo usuário ('maintenance', 'production', 'matrizaria')."""
+    """Retorna lista dos módulos acessíveis pelo usuário ('maintenance', 'production', 'matrizaria', 'bladder')."""
     modules = []
     if _user_can_access_maintenance(user):
         modules.append("maintenance")
@@ -118,6 +142,8 @@ def _user_get_accessible_modules(user):
         modules.append("production")
     if _user_can_access_matrizaria(user):
         modules.append("matrizaria")
+    if _user_can_access_bladder(user):
+        modules.append("bladder")
     return modules
 
 
@@ -218,6 +244,27 @@ def tecnico_or_operador_required(view_func):
     return wrapper
 
 
+class CustomLoginView(auth_views.LoginView):
+    """
+    View customizada de Login do Sistema Industrial.
+    - Se a sessão anterior foi expirada por inatividade, garante a desautenticação
+      limpa da sessão e do request.user sem destruir o registro de sessão (evitando
+      SessionInterrupted em requisições de abas concorrentes).
+    - Exibe sempre o formulário de login limpo, permitindo troca de usuário ou reautenticação.
+    """
+    template_name = 'maintenance/login.html'
+    redirect_authenticated_user = False
+
+    def dispatch(self, request, *args, **kwargs):
+        if request.session.get("_session_expired"):
+            for key in [SESSION_KEY, BACKEND_SESSION_KEY, HASH_SESSION_KEY, "_session_expired", "_last_human_activity"]:
+                request.session.pop(key, None)
+            request.session.modified = True
+            request.user = AnonymousUser()
+
+        return super().dispatch(request, *args, **kwargs)
+
+
 @login_required
 def home_redirect(request):
     user = request.user
@@ -240,6 +287,10 @@ def home_redirect(request):
             return redirect('production:dashboard')
         elif mod == 'matrizaria':
             return redirect('matrizaria:kanban')
+        elif mod == 'bladder':
+            if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
+                return redirect('bladder:dashboard')
+            return redirect('bladder:operador')
         elif mod == 'maintenance':
             if (
                 user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
@@ -267,6 +318,10 @@ def portal_select(request):
             return redirect('production:dashboard')
         if 'matrizaria' in accessible:
             return redirect('matrizaria:kanban')
+        if 'bladder' in accessible:
+            if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
+                return redirect('bladder:dashboard')
+            return redirect('bladder:operador')
         if 'maintenance' in accessible:
             if (
                 user.groups.filter(name__in=['Tecnicos_Lideres', 'Tecnicos']).exists()
@@ -287,11 +342,18 @@ def portal_select(request):
     else:
         maintenance_url = 'technician_management'
 
+    if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
+        bladder_url = 'bladder:dashboard'
+    else:
+        bladder_url = 'bladder:operador'
+
     context = {
         'maintenance_url': maintenance_url,
+        'bladder_url': bladder_url,
         'can_access_maintenance': 'maintenance' in accessible,
         'can_access_production': 'production' in accessible,
         'can_access_matrizaria': 'matrizaria' in accessible,
+        'can_access_bladder': 'bladder' in accessible,
     }
     return render(request, 'maintenance/portal_select.html', context)
 

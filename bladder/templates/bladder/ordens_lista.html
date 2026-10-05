@@ -1,0 +1,184 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Ordens de Produção &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1 text-light">Ordens de Produção (OPs)</h1>
+        <p class="text-secondary small mb-0">
+            Listagem e filtros de todas as programações industriais de fabricação de bladders.
+        </p>
+    </div>
+    {% if is_lider %}
+        <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning fw-bold d-flex align-items-center gap-2">
+            <i class="bi bi-plus-circle-fill"></i> Nova Programação
+        </a>
+    {% endif %}
+</div>
+
+<!-- Filtros -->
+<div class="glass-card mb-4">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-6 col-md-2">
+            <label class="form-label small">Status</label>
+            <select name="status" class="form-select form-select-sm">
+                <option value="">Todos os Status</option>
+                <option value="PENDENTE" {% if status_selecionado == 'PENDENTE' %}selected{% endif %}>Programada</option>
+                <option value="EM_EXECUCAO" {% if status_selecionado == 'EM_EXECUCAO' %}selected{% endif %}>Em Execução</option>
+                <option value="CONCLUIDA" {% if status_selecionado == 'CONCLUIDA' %}selected{% endif %}>Concluída</option>
+                <option value="PARCIAL" {% if status_selecionado == 'PARCIAL' %}selected{% endif %}>Parcial</option>
+                <option value="CANCELADA" {% if status_selecionado == 'CANCELADA' %}selected{% endif %}>Cancelada</option>
+            </select>
+        </div>
+        <div class="col-6 col-md-3">
+            <label class="form-label small">Processo</label>
+            <select name="processo" class="form-select form-select-sm">
+                <option value="">Todos os Processos</option>
+                {% for p in processos %}
+                    <option value="{{ p.id }}" {% if processo_selecionado == p.id %}selected{% endif %}>{{ p.nome }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label small">Produto</label>
+            <select name="produto" class="form-select form-select-sm">
+                <option value="">Todos os Produtos</option>
+                {% for prod in produtos %}
+                    <option value="{{ prod.id }}" {% if produto_selecionado == prod.id %}selected{% endif %}>{{ prod.codigo }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label small">Data De</label>
+            <input type="date" name="data_ini" value="{{ data_ini }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-6 col-md-2">
+            <label class="form-label small">Data Até</label>
+            <input type="date" name="data_fim" value="{{ data_fim }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-6 col-md-1 d-flex gap-1">
+            <button type="submit" class="btn btn-warning btn-sm w-100" title="Filtrar">
+                <i class="bi bi-funnel-fill"></i>
+            </button>
+            <a href="{% url 'bladder:ordens_lista' %}" class="btn btn-outline-secondary btn-sm" title="Limpar Filtros">
+                <i class="bi bi-x-lg"></i>
+            </a>
+        </div>
+    </form>
+</div>
+
+<!-- Tabela de Ordens -->
+<div class="glass-card">
+    <div class="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary border-opacity-25 pb-2">
+        <span class="text-secondary small">Total encontrado: <strong class="text-light">{{ total_registros }}</strong> ordens</span>
+    </div>
+
+    {% if ordens %}
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+                <thead>
+                    <tr class="text-muted small">
+                        <th>Número OP</th>
+                        <th>Data</th>
+                        <th>Turma</th>
+                        <th>Processo / Equipamento</th>
+                        <th>Modelo / Código</th>
+                        <th class="text-center">Qtd. Nova</th>
+                        <th class="text-center">Pendência Incorporada</th>
+                        <th class="text-center">Meta Total</th>
+                        <th class="text-center">Realizado</th>
+                        <th class="text-center">Saldo Gerado</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-end">Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for op in ordens %}
+                        <tr {% if op.status == 'PARCIAL' %}class="border-warning border-opacity-50"{% endif %}>
+                            <td class="font-monospace fw-bold">
+                                <a href="{% url 'bladder:ordem_detalhe' op.pk %}" class="text-warning text-decoration-none">
+                                    {{ op.numero_ordem }}
+                                </a>
+                            </td>
+                            <td class="text-light small">{{ op.data_programada|date:"d/m/Y" }}</td>
+                            <td>
+                                <span class="badge {% if op.turma_prevista == 'TURMA_A' %}bg-primary{% else %}bg-info text-dark{% endif %}" style="font-size: 0.72rem;">
+                                    {{ op.get_turma_prevista_display }}
+                                </span>
+                            </td>
+                            <td class="small text-light">
+                                {{ op.processo.nome }}
+                                {% if op.processo.maquina %}
+                                    <span class="badge bg-dark text-muted border border-secondary d-block mt-1" style="font-size: 0.68rem; max-width: fit-content;">
+                                        {{ op.processo.maquina.nome }}
+                                    </span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="font-monospace fw-semibold text-light">{{ op.produto.codigo }}</span>
+                                {% if op.produto.descricao %}
+                                    <small class="text-muted d-block" style="font-size: 0.72rem;">{{ op.produto.descricao|truncatechars:22 }}</small>
+                                {% endif %}
+                            </td>
+                            <td class="text-center font-monospace">{{ op.quantidade_nova }}</td>
+                            <td class="text-center font-monospace text-info">
+                                {% if op.saldo_anterior_incorporado > 0 %}
+                                    +{{ op.saldo_anterior_incorporado }}
+                                {% else %}<span class="text-muted">-</span>{% endif %}
+                            </td>
+                            <td class="text-center font-monospace fw-bold text-light">{{ op.quantidade_planejada }}</td>
+                            <td class="text-center font-monospace fw-bold text-success">{{ op.quantidade_realizada }}</td>
+                            <td class="text-center font-monospace">
+                                {% if op.saldo_gerado > 0 %}
+                                    <span class="badge bg-warning text-dark font-monospace fw-bold">{{ op.saldo_gerado }} un</span>
+                                {% else %}
+                                    <span class="text-muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if op.status_visual == 'CONCLUÍDA' %}
+                                    <span class="badge bg-success">CONCLUÍDA</span>
+                                {% elif op.status_visual == 'PARCIAL / PENDÊNCIA' %}
+                                    <span class="badge bg-warning text-dark">PARCIAL / PENDÊNCIA</span>
+                                {% elif op.status_visual == 'NÃO REALIZADA / PENDÊNCIA' %}
+                                    <span class="badge bg-danger text-light">NÃO REALIZADA / PENDÊNCIA</span>
+                                {% elif op.status_visual == 'CANCELADA' %}
+                                    <span class="badge bg-secondary">CANCELADA</span>
+                                {% else %}
+                                    <span class="badge bg-primary">PROGRAMADA</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <a href="{% url 'bladder:ordem_detalhe' op.pk %}" class="btn btn-sm btn-outline-light">
+                                    <i class="bi bi-eye"></i> Detalhes
+                                </a>
+                            </td>
+                        </tr>
+                        {% if op.status == 'PARCIAL' or op.saldo_gerado > 0 %}
+                            <tr class="bg-warning bg-opacity-10">
+                                <td colspan="12" class="py-2 px-3 border-start border-warning border-3">
+                                    <div class="d-flex flex-wrap align-items-center gap-3 text-warning small">
+                                        <span class="fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> PENDÊNCIA REGISTRADA:</span>
+                                        <span>Saldo Pendente: <strong>{{ op.saldo_gerado }} un</strong></span>
+                                        <span>Motivo: <em>{{ op.motivo_pendencia }}</em></span>
+                                        <span>Turma Resp.: <strong>{{ op.turma_responsavel_fechamento }}</strong></span>
+                                        {% if op.data_fechamento %}
+                                            <span>Fechamento: {{ op.data_fechamento|date:"d/m/Y H:i" }}</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="text-center py-5 text-secondary">
+            <i class="bi bi-inbox text-muted fs-1 d-block mb-3"></i>
+            Nenhuma Ordem de Produção encontrada com os filtros selecionados.
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

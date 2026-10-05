@@ -1,0 +1,135 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Calendário de Programação &bull; Setor de Bladder{% endblock %}
+
+{% block extra_css %}
+<style>
+    .cal-table {
+        table-layout: fixed;
+        width: 100%;
+    }
+    .cal-cell {
+        height: 140px;
+        vertical-align: top;
+        background-color: #131B2A;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 6px;
+        transition: background-color 0.15s ease;
+    }
+    .cal-cell:hover {
+        background-color: #1A2538;
+    }
+    .cal-cell-other-month {
+        opacity: 0.35;
+        background-color: #0B0F17;
+    }
+    .cal-cell-today {
+        border: 2px solid var(--bladder-accent) !important;
+        background-color: rgba(245, 158, 11, 0.04);
+    }
+    .op-pill {
+        display: block;
+        font-size: 0.76rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-bottom: 3px;
+        text-decoration: none;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .op-pill-pendente { background: #334155; color: #E2E8F0; }
+    .op-pill-execucao { background: #0284C7; color: #FFFFFF; }
+    .op-pill-concluida { background: #16A34A; color: #FFFFFF; }
+    .op-pill-parcial { background: #D97706; color: #FFFFFF; }
+    .op-pill-cancelada { background: #475569; color: #94A3B8; text-decoration: line-through; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1 text-light">Cronograma Mensal de Produção</h1>
+        <p class="text-secondary small mb-0">
+            Escala alternada 12x36 (06:00 às 18:00) entre Turma A e Turma B com visualização e lançamento diário.
+        </p>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <a href="?ano={{ ano_ant }}&mes={{ mes_ant }}" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-chevron-left"></i> Anterior
+        </a>
+        <span class="fs-5 fw-bold text-warning px-3 py-1 bg-dark rounded border border-secondary border-opacity-25 font-monospace">
+            {{ mes_nome }} / {{ ano }}
+        </span>
+        <a href="?ano={{ ano_prox }}&mes={{ mes_prox }}" class="btn btn-outline-light btn-sm">
+            Próximo <i class="bi bi-chevron-right"></i>
+        </a>
+        <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning btn-sm fw-bold ms-2">
+            <i class="bi bi-plus-lg"></i> Nova Programação
+        </a>
+    </div>
+</div>
+
+<div class="glass-card p-2 p-md-3">
+    <div class="table-responsive">
+        <table class="table table-bordered cal-table mb-0">
+            <thead>
+                <tr class="text-center text-muted small bg-black bg-opacity-50">
+                    <th style="width: 14.28%;">Domingo</th>
+                    <th style="width: 14.28%;">Segunda</th>
+                    <th style="width: 14.28%;">Terça</th>
+                    <th style="width: 14.28%;">Quarta</th>
+                    <th style="width: 14.28%;">Quinta</th>
+                    <th style="width: 14.28%;">Sexta</th>
+                    <th style="width: 14.28%;">Sábado</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for semana in calendario_mes %}
+                    <tr>
+                        {% for d in semana %}
+                            <td class="cal-cell {% if not d.no_mes %}cal-cell-other-month{% endif %} {% if d.is_hoje %}cal-cell-today{% endif %}">
+                                <!-- Topo do Dia -->
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="fw-bold {% if d.is_hoje %}text-warning{% elif d.no_mes %}text-light{% else %}text-muted{% endif %}">
+                                        {{ d.data.day }}
+                                    </span>
+                                    <div>
+                                        <span class="badge {% if d.turma == 'TURMA_A' %}bg-primary{% elif d.turma == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %}" style="font-size: 0.68rem;">
+                                            {% if d.turma == 'TURMA_A' %}Turma A{% elif d.turma == 'TURMA_B' %}Turma B{% else %}{{ d.turma }}{% endif %}
+                                        </span>
+                                        {% if d.is_ajuste %}
+                                            <span class="badge bg-warning text-dark" style="font-size: 0.65rem;" title="Ajuste excepcional">*</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <!-- OPs do Dia -->
+                                <div style="max-height: 95px; overflow-y: auto;">
+                                    {% for op in d.ops %}
+                                        <a href="{% url 'bladder:ordem_detalhe' op.pk %}" class="op-pill {% if op.status == 'CONCLUIDA' %}op-pill-concluida{% elif op.status == 'EM_EXECUCAO' %}op-pill-execucao{% elif op.status == 'PARCIAL' %}op-pill-parcial{% elif op.status == 'CANCELADA' %}op-pill-cancelada{% else %}op-pill-pendente{% endif %}" title="{{ op.numero_ordem }} - {{ op.produto.codigo }} ({{ op.quantidade_realizada }}/{{ op.quantidade_planejada }} un){% if op.saldo_anterior_incorporado > 0 %} [Inclui +{{ op.saldo_anterior_incorporado }} un de saldo incorporado]{% endif %}">
+                                            {{ op.produto.codigo }}: {{ op.quantidade_realizada }}/{{ op.quantidade_planejada }}
+                                            {% if op.saldo_anterior_incorporado > 0 %}
+                                                <span class="badge bg-dark text-info p-0 px-1 border border-info border-opacity-25 ms-1" style="font-size: 0.65rem;" title="Saldo incorporado: +{{ op.saldo_anterior_incorporado }} un">+{{ op.saldo_anterior_incorporado }}</span>
+                                            {% endif %}
+                                        </a>
+                                    {% endfor %}
+                                </div>
+
+                                {% if d.no_mes %}
+                                    <div class="text-end mt-1">
+                                        <a href="{% url 'bladder:ordem_nova' %}?data={{ d.data|date:'Y-m-d' }}" class="text-muted text-decoration-none small opacity-50 hover-opacity-100" title="Adicionar programação neste dia">
+                                            <i class="bi bi-plus-circle"></i>
+                                        </a>
+                                    </div>
+                                {% endif %}
+                            </td>
+                        {% endfor %}
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

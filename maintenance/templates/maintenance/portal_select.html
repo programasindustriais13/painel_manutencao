@@ -338,6 +338,41 @@
             box-shadow: 0 6px 20px rgba(139, 92, 246, 0.4);
         }
 
+        /* Bladder Card Styling */
+        .portal-card.card-bladder::before {
+            background: linear-gradient(90deg, #F59E0B, #D97706);
+        }
+
+        .portal-card.card-bladder:hover {
+            transform: translateY(-8px);
+            border-color: rgba(245, 158, 11, 0.6);
+            box-shadow: 0 20px 40px -10px rgba(245, 158, 11, 0.25);
+            background: rgba(24, 32, 48, 0.95);
+        }
+
+        .portal-card.card-bladder .icon-box {
+            background: rgba(245, 158, 11, 0.12);
+            color: #FBBF24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .portal-card.card-bladder:hover .icon-box {
+            background: rgba(245, 158, 11, 0.22);
+            box-shadow: 0 0 25px rgba(245, 158, 11, 0.4);
+            transform: scale(1.05);
+        }
+
+        .portal-card.card-bladder .btn-access {
+            background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+            color: #FFFFFF;
+            font-weight: 700;
+        }
+
+        .portal-card.card-bladder .btn-access:hover {
+            background: linear-gradient(135deg, #FBBF24 0%, #F59E0B 100%);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+        }
+
         /* Icon Box */
         .icon-box {
             width: 72px;
@@ -564,6 +599,31 @@
                 </div>
                 <div class="btn-access">
                     <span>Acessar Matrizaria</span>
+                    <i class="bi bi-arrow-right-short fs-4"></i>
+                </div>
+            </a>
+            {% endif %}
+
+            <!-- Card 5: Setor de Bladder -->
+            {% if can_access_bladder %}
+            <a href="{% url bladder_url|default:'bladder:dashboard' %}" class="portal-card card-bladder" id="card-bladder">
+                <div>
+                    <div class="icon-box">
+                        <i class="bi bi-disc-fill"></i>
+                    </div>
+                    <h2 class="card-title">Setor de Bladder</h2>
+                    <p class="card-desc">
+                        Planejamento e controle de produção de bladders, escala 12x36, gestão de saldo e apontamentos.
+                    </p>
+                    <div class="feature-tags">
+                        <span class="tag-pill"><i class="bi bi-calendar-week text-warning"></i> Programação 12x36</span>
+                        <span class="tag-pill"><i class="bi bi-layers-half text-info"></i> Ledger de Saldo</span>
+                        <span class="tag-pill"><i class="bi bi-person-workspace text-success"></i> Chão de Fábrica</span>
+                        <span class="tag-pill"><i class="bi bi-file-earmark-excel text-primary"></i> Relatórios</span>
+                    </div>
+                </div>
+                <div class="btn-access">
+                    <span>Acessar Bladder</span>
                     <i class="bi bi-arrow-right-short fs-4"></i>
                 </div>
             </a>

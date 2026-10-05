@@ -86,6 +86,10 @@ class ScadaRouter:
         if (app1 == "matrizaria" and app2 == "production") or (app2 == "matrizaria" and app1 == "production"):
             return True
 
+        # Permitir explicitamente relacionamentos locais do app bladder
+        if app1 == "bladder" or app2 == "bladder":
+            return True
+
         return None
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):

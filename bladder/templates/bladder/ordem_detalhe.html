@@ -1,0 +1,464 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Detalhes da OP {{ op.numero_ordem }} &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<!-- Topo com Número e Ações -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <a href="{% url 'bladder:ordens_lista' %}" class="btn btn-outline-secondary btn-sm py-0 px-2">
+                <i class="bi bi-arrow-left"></i>
+            </a>
+            <span class="badge {% if op.status_visual == 'CONCLUÍDA' %}bg-success{% elif op.status_visual == 'PARCIAL / PENDÊNCIA' %}bg-warning text-dark{% elif op.status_visual == 'NÃO REALIZADA / PENDÊNCIA' %}bg-danger text-light{% elif op.status_visual == 'CANCELADA' %}bg-secondary{% else %}bg-primary{% endif %} fs-6 px-2 py-1">
+                {{ op.status_visual }}
+            </span>
+            <span class="badge {% if op.turma_prevista == 'TURMA_A' %}bg-primary{% else %}bg-info text-dark{% endif %} fs-6 px-2 py-1">
+                {{ op.get_turma_prevista_display }}
+            </span>
+            <span class="badge {% if op.prioridade == 'URGENTE' %}bg-danger{% elif op.prioridade == 'ALTA' %}bg-warning text-dark{% else %}bg-dark border border-secondary border-opacity-25{% endif %} fs-6 px-2 py-1">
+                Prioridade: {{ op.get_prioridade_display }}
+            </span>
+        </div>
+        <h1 class="h3 fw-bold text-light mb-0 font-monospace">Ordem de Produção: {{ op.numero_ordem }}</h1>
+    </div>
+
+    <!-- Botões de Ação do Líder -->
+    {% if is_lider and op.status != 'CANCELADA' %}
+        <div class="d-flex flex-wrap gap-2">
+            {% if op.status != 'CONCLUIDA' %}
+                <button type="button" class="btn btn-outline-info btn-sm" data-bs-toggle="modal" data-bs-target="#modalReprogramar">
+                    <i class="bi bi-calendar-event"></i> Reprogramar Data
+                </button>
+                <button type="button" class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#modalEncerrarParcial">
+                    <i class="bi bi-clock-history"></i> Encerrar Turno / Parcial
+                </button>
+            {% endif %}
+            <button type="button" class="btn btn-outline-danger btn-sm" data-bs-toggle="modal" data-bs-target="#modalCancelar">
+                <i class="bi bi-x-circle"></i> Cancelar OP
+            </button>
+        </div>
+    {% endif %}
+</div>
+
+<!-- Grid de Indicadores e Quantidades -->
+<div class="row g-3 mb-4">
+    <div class="col-12 col-md-3">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Qtd. Nova</span>
+            <div class="fs-3 fw-bold text-light font-monospace">{{ op.quantidade_nova }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">Demanda Nova</span>
+        </div>
+    </div>
+    <div class="col-12 col-md-3">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Pendência Incorporada</span>
+            <div class="fs-3 fw-bold text-info font-monospace">
+                {% if op.saldo_anterior_incorporado > 0 %}+{{ op.saldo_anterior_incorporado }}{% else %}0{% endif %} <span class="fs-6 text-muted">un</span>
+            </div>
+            <span class="small text-secondary">Trazido do Ledger</span>
+        </div>
+    </div>
+    <div class="col-12 col-md-3">
+        <div class="glass-card text-center p-3 border-warning border-opacity-50">
+            <span class="text-warning small d-block mb-1">Meta Total</span>
+            <div class="fs-3 fw-bold text-warning font-monospace">{{ op.quantidade_planejada }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">Qtd. Nova + Pendência</span>
+        </div>
+    </div>
+    <div class="col-12 col-md-3">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Realizado / Saldo Gerado</span>
+            <div class="fs-3 fw-bold text-success font-monospace">
+                {{ op.quantidade_realizada }} <span class="fs-6 text-muted">/ {% if op.saldo_gerado > 0 %}{{ op.saldo_gerado }} un{% else %}-{% endif %}</span>
+            </div>
+            <span class="small text-secondary">{{ op.percentual_conclusao }}% cumprido</span>
+        </div>
+    </div>
+</div>
+
+<div class="row g-3 mb-4">
+    <!-- Detalhes do Produto e Especificação Técnica (ET.029) -->
+    <div class="col-12 col-lg-6">
+        <div class="glass-card h-100">
+            <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light d-flex align-items-center gap-2">
+                <i class="bi bi-card-checklist text-warning"></i> Especificação Técnica do Bladder (ET.029)
+            </h5>
+            <div class="table-responsive">
+                <table class="table table-dark table-sm table-borderless mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="text-muted" style="width: 40%;">Código do Bladder:</td>
+                            <td class="fw-bold font-monospace text-warning">{{ op.produto.codigo }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Descrição / Medida:</td>
+                            <td class="text-light">{{ op.produto.descricao }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Nomenclatura Antiga:</td>
+                            <td class="text-secondary">{{ op.produto.nomenclatura_antiga|default:"-" }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Matriz de Extrusão:</td>
+                            <td class="text-light font-monospace">{{ op.produto.matriz_extrusao|default:"-" }}</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Peso do Tarugo:</td>
+                            <td class="text-success fw-bold font-monospace">{{ op.produto.peso_tarugo_kg|default:"-" }} kg</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Diâmetro do Tarugo:</td>
+                            <td class="text-light">{{ op.produto.diametro_tarugo_mm|default:"-" }} mm</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Comprimento Chanfrado:</td>
+                            <td class="text-light">{{ op.produto.comprimento_chanfrado_cm|default:"-" }} cm</td>
+                        </tr>
+                        <tr>
+                            <td class="text-muted">Tempo de Vulcanização:</td>
+                            <td class="text-light">{{ op.produto.tempo_vulcanizacao_min|default:"-" }} min</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Estimativa de Matéria-Prima -->
+            <div class="p-3 mt-3 rounded bg-dark border border-secondary border-opacity-25">
+                <span class="small fw-bold text-warning d-block mb-1">
+                    <i class="bi bi-calculator"></i> Dimensionamento Teórico de Matéria-Prima
+                </span>
+                <div class="row g-2 text-center small">
+                    <div class="col-6">
+                        <span class="text-muted d-block">Previsão Teórica Total</span>
+                        <strong class="text-light font-monospace fs-6">
+                            {% if op.consumo_teorico_planejado_kg %}{{ op.consumo_teorico_planejado_kg }} kg{% else %}-{% endif %}
+                        </strong>
+                    </div>
+                    <div class="col-6">
+                        <span class="text-muted d-block">Consumo Teórico Realizado</span>
+                        <strong class="text-success font-monospace fs-6">
+                            {% if op.consumo_teorico_realizado_kg %}{{ op.consumo_teorico_realizado_kg }} kg{% else %}-{% endif %}
+                        </strong>
+                    </div>
+                </div>
+                <span class="d-block small text-muted text-center mt-2 opacity-75">
+                    * Rótulo Oficial: Consumo Teórico Calculado (1 Tarugo = 1 Bladder).
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recursos, Instruções e Origem do Saldo -->
+    <div class="col-12 col-lg-6">
+        <div class="glass-card h-100">
+            <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light d-flex align-items-center gap-2">
+                <i class="bi bi-tools text-warning"></i> Recursos e Rastreabilidade do Saldo
+            </h5>
+
+            <div class="mb-3">
+                <span class="text-muted small d-block mb-1">Recursos Alocados:</span>
+                {% if op.recursos_alocados.all %}
+                    <div class="d-flex flex-wrap gap-1">
+                        {% for r in op.recursos_alocados.all %}
+                            <span class="badge bg-dark border border-secondary text-light">{{ r }}</span>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <span class="text-secondary small">Nenhum recurso específico cadastrado.</span>
+                {% endif %}
+            </div>
+
+            {% if op.recursos_observacoes %}
+                <div class="p-2 mb-3 rounded bg-dark border border-secondary border-opacity-25 small text-secondary">
+                    <strong class="text-warning">Instruções Técnicas:</strong> {{ op.recursos_observacoes }}
+                </div>
+            {% endif %}
+
+            <!-- Rastreabilidade de Saldos Incorporados nesta OP -->
+            <div class="mb-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-muted small fw-bold">Origem das Pendências Incorporadas:</span>
+                    {% if saldos_incorporados %}
+                        <span class="badge bg-info text-dark font-monospace">Total Incorporado: +{{ op.saldo_anterior_incorporado }} un</span>
+                    {% endif %}
+                </div>
+                {% if saldos_incorporados %}
+                    <div class="table-responsive">
+                        <table class="table table-dark table-sm table-hover align-middle mb-0 small">
+                            <thead>
+                                <tr class="text-muted border-secondary">
+                                    <th>OP Origem</th>
+                                    <th>Data Origem</th>
+                                    <th>Turma</th>
+                                    <th>Modelo</th>
+                                    <th class="text-center">Programado</th>
+                                    <th class="text-center">Realizado</th>
+                                    <th class="text-center text-info">Saldo Inc.</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for s in saldos_incorporados %}
+                                    <tr>
+                                        <td>
+                                            {% if s.op_origem %}
+                                                <a href="{% url 'bladder:ordem_detalhe' s.op_origem.pk %}" class="text-warning font-monospace fw-bold text-decoration-none">
+                                                    {{ s.op_origem.numero_ordem }}
+                                                </a>
+                                            {% else %}
+                                                <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td class="text-light">{{ s.op_origem.data_programada|date:"d/m/Y"|default:"-" }}</td>
+                                        <td>
+                                            <span class="badge {% if s.op_origem.turma_prevista == 'TURMA_A' %}bg-primary{% else %}bg-info text-dark{% endif %}" style="font-size: 0.7rem;">
+                                                {{ s.op_origem.turma_responsavel_fechamento|default:s.op_origem.get_turma_prevista_display }}
+                                            </span>
+                                        </td>
+                                        <td class="font-monospace text-light">{{ s.produto.codigo }}</td>
+                                        <td class="text-center font-monospace">{{ s.op_origem.quantidade_planejada|default:"-" }}</td>
+                                        <td class="text-center font-monospace text-success">{{ s.op_origem.quantidade_realizada|default:"0" }}</td>
+                                        <td class="text-center font-monospace fw-bold text-info">+{{ s.quantidade }} un</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <span class="text-secondary small">Esta OP não incorporou saldos de ordens anteriores.</span>
+                {% endif %}
+            </div>
+
+            <!-- Saldos Gerados por esta OP se encerrada PARCIAL -->
+            {% if saldos_gerados %}
+                <div class="p-2 rounded bg-dark border border-warning border-opacity-25 small text-secondary">
+                    <strong class="text-warning"><i class="bi bi-box-arrow-up-right"></i> Saldo Gerado ao Encerrar:</strong>
+                    {% for sg in saldos_gerados %}
+                        <div class="d-flex justify-content-between align-items-center mt-1">
+                            <span>Gerou <strong>{{ sg.quantidade }} un</strong> em saldo pendente ({{ sg.get_status_display }}).</span>
+                            {% if sg.op_destino %}
+                                <span class="text-muted">Incorporado na OP {{ sg.op_destino.numero_ordem }}</span>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Tabela de Apontamentos Operacionais -->
+<div class="glass-card mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3 border-bottom border-secondary border-opacity-25 pb-2">
+        <h5 class="fw-bold mb-0 text-light d-flex align-items-center gap-2">
+            <i class="bi bi-person-workspace text-success"></i> Apontamentos Operacionais de Chão de Fábrica
+        </h5>
+        {% if op.status != 'CANCELADA' and op.status != 'CONCLUIDA' %}
+            <button type="button" class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#modalApontar">
+                <i class="bi bi-plus-lg"></i> Registrar Apontamento
+            </button>
+        {% endif %}
+    </div>
+
+    {% if apontamentos %}
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0 small">
+                <thead>
+                    <tr class="text-muted">
+                        <th>Data/Hora Início</th>
+                        <th>Data/Hora Fim</th>
+                        <th>Operador</th>
+                        <th>Turma</th>
+                        <th class="text-center">Qtd Produzida</th>
+                        <th class="text-center">Situação</th>
+                        <th>Ocorrência / Desvio</th>
+                        <th class="text-end">Ação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ap in apontamentos %}
+                        <tr>
+                            <td class="font-monospace text-muted">{{ ap.data_hora_inicio|date:"d/m H:i" }}</td>
+                            <td class="font-monospace text-muted">{{ ap.data_hora_fim|date:"d/m H:i"|default:"Em Andamento" }}</td>
+                            <td class="fw-semibold text-light">{{ ap.operador.get_full_name|default:ap.operador.username }}</td>
+                            <td><span class="badge bg-dark">{{ ap.get_turma_display }}</span></td>
+                            <td class="text-center font-monospace fw-bold text-success fs-6">{{ ap.quantidade_realizada }} un</td>
+                            <td class="text-center">
+                                <span class="badge {% if ap.situacao == 'CONCLUIDA' %}bg-success{% elif ap.situacao == 'PARCIAL' %}bg-warning text-dark{% elif ap.situacao == 'INTERROMPIDA' %}bg-danger{% else %}bg-info text-dark{% endif %}">
+                                    {{ ap.get_situacao_display }}
+                                </span>
+                            </td>
+                            <td class="text-secondary small">{{ ap.motivo_desvio|default:ap.observacoes|default:"-" }}</td>
+                            <td class="text-end">
+                                <a href="{% url 'bladder:corrigir_apontamento' ap.pk %}" class="btn btn-sm btn-outline-warning" title="Corrigir este lançamento">
+                                    <i class="bi bi-pencil"></i> Corrigir
+                                </a>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="text-center py-4 text-secondary small">
+            Nenhum apontamento operacional registrado para esta Ordem de Produção até o momento.
+        </div>
+    {% endif %}
+</div>
+
+<!-- Trilha de Auditoria e Histórico da Ordem -->
+<div class="glass-card">
+    <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light d-flex align-items-center gap-2">
+        <i class="bi bi-shield-check text-info"></i> Linha do Tempo de Auditoria (Histórico Imutável)
+    </h5>
+    {% if historicos %}
+        <div class="timeline p-2">
+            {% for h in historicos %}
+                <div class="p-2 mb-2 rounded bg-dark border border-secondary border-opacity-25 d-flex justify-content-between align-items-start small">
+                    <div>
+                        <span class="badge bg-secondary me-2">{{ h.get_tipo_evento_display }}</span>
+                        <strong class="text-light">{{ h.motivo }}</strong>
+                        {% if h.data_anterior and h.data_nova %}
+                            <div class="text-muted mt-1">Data: de {{ h.data_anterior|date:"d/m/Y" }} para {{ h.data_nova|date:"d/m/Y" }}</div>
+                        {% endif %}
+                    </div>
+                    <div class="text-end text-muted font-monospace" style="font-size: 0.78rem;">
+                        <div>{{ h.usuario.get_full_name|default:h.usuario.username }}</div>
+                        <div>{{ h.created_at|date:"d/m/Y H:i:s" }}</div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="text-center py-3 text-secondary small">
+            Nenhum evento adicional registrado no histórico.
+        </div>
+    {% endif %}
+</div>
+
+<!-- Modais Operacionais -->
+<!-- Modal Reprogramar -->
+<div class="modal fade" id="modalReprogramar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold"><i class="bi bi-calendar-event text-warning"></i> Reprogramar Data da OP</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'bladder:ordem_reprogramar' op.pk %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p class="small text-secondary">
+                        A reprogramação altera a data na MESMA OP e registra a data anterior de forma imutável no histórico de auditoria.
+                    </p>
+                    <div class="mb-3">
+                        <label class="form-label">Nova Data Programada *</label>
+                        {{ reprogramar_form.nova_data }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Motivo da Reprogramação (Obrigatório) *</label>
+                        {{ reprogramar_form.motivo }}
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-warning fw-bold">Confirmar Reprogramação</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Cancelar -->
+<div class="modal fade" id="modalCancelar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-danger">
+            <div class="modal-header border-danger">
+                <h5 class="modal-title fw-bold text-danger"><i class="bi bi-exclamation-triangle"></i> Cancelamento Lógico da OP</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'bladder:ordem_cancelar' op.pk %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p class="small text-secondary">
+                        O cancelamento é lógico e auditável. Saldos de ordens anteriores eventualmente incorporados nesta OP serão liberados de volta para o Ledger.
+                    </p>
+                    <div class="mb-3">
+                        <label class="form-label">Motivo do Cancelamento (Obrigatório) *</label>
+                        {{ cancelar_form.motivo }}
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-danger fw-bold">Confirmar Cancelamento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Encerrar Parcial / Turno -->
+<div class="modal fade" id="modalEncerrarParcial" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-warning">
+            <div class="modal-header border-warning">
+                <h5 class="modal-title fw-bold text-warning"><i class="bi bi-clock-history"></i> Encerrar Turno / Saldo Parcial</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'bladder:encerrar_parcial' op.pk %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p class="small text-secondary">
+                        Ao encerrar a OP: se houver saldo remanescente ({{ op.saldo_remanescente }} un), a OP receberá status <strong>PARCIAL</strong> e o saldo será transferido para o Ledger como saldo pendente do modelo para a próxima programação.
+                    </p>
+                    <div class="mb-3">
+                        <label class="form-label">Observações / Motivo do Encerramento</label>
+                        <textarea name="motivo_encerramento" rows="3" class="form-control" placeholder="Informe motivos do encerramento de turno..."></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-warning fw-bold">Encerrar OP</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Apontar -->
+<div class="modal fade" id="modalApontar" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-secondary">
+            <div class="modal-header border-secondary">
+                <h5 class="modal-title fw-bold"><i class="bi bi-pencil-square text-warning"></i> Registrar Apontamento</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'bladder:operador_apontar' op.pk %}?origem=detalhe">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Quantidade Produzida (un) *</label>
+                        {{ apontar_form.quantidade_realizada }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Situação</label>
+                        {{ apontar_form.situacao }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Motivo / Ocorrência (Obrigatório se Parcial)</label>
+                        {{ apontar_form.motivo_desvio }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Observações</label>
+                        {{ apontar_form.observacoes }}
+                    </div>
+                </div>
+                <div class="modal-footer border-secondary">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Fechar</button>
+                    <button type="submit" class="btn btn-success fw-bold">Salvar Apontamento</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

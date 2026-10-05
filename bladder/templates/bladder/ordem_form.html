@@ -1,0 +1,324 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}{{ titulo }} &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-lg-8">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h1 class="h3 fw-bold text-light mb-0">{{ titulo }}</h1>
+            <a href="{% url 'bladder:ordens_lista' %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left"></i> Voltar à Lista
+            </a>
+        </div>
+
+        <div class="glass-card">
+            <form method="post" id="form-ordem-bladder">
+                {% csrf_token %}
+
+                {% if form.non_field_errors %}
+                    <div class="alert alert-danger">
+                        {{ form.non_field_errors }}
+                    </div>
+                {% endif %}
+
+                <!-- Bloco de Alerta Dinâmico de Pendências de Produção -->
+                <div id="box-pendencias-container" class="p-3 mb-4 rounded bg-dark border border-warning border-opacity-75 d-none shadow-sm">
+                    <div class="d-flex align-items-center justify-content-between mb-3 pb-2 border-bottom border-warning border-opacity-25">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-exclamation-triangle-fill text-warning fs-4"></i>
+                            <div>
+                                <h5 class="text-warning fw-bold mb-0">Existem pendências anteriores para este modelo</h5>
+                                <span class="small text-secondary">Ordens de produção anteriores geraram saldo remanescente não concluído.</span>
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-warning text-dark fs-6 font-monospace" id="txt-total-saldo-pendente">0 un</span>
+                            <span class="small text-muted d-block">total pendente</span>
+                        </div>
+                    </div>
+
+                    <!-- Lista de Pendências Individuais -->
+                    <div id="lista-pendencias-cards" class="d-flex flex-column gap-2 mb-3">
+                        <!-- Gerado dinamicamente via JS -->
+                    </div>
+
+                    <!-- Painel de Decisão Explícita da Liderança -->
+                    <div class="p-3 rounded bg-black bg-opacity-60 border border-secondary border-opacity-50">
+                        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-2">
+                            <div class="fw-bold text-light">
+                                <i class="bi bi-person-check text-warning me-1"></i> Decisão da Liderança:
+                            </div>
+                            <span id="badge-decisao-status" class="badge bg-secondary p-2">
+                                Decisão: IGNORAR POR ENQUANTO (Saldo continua em aberto)
+                            </span>
+                        </div>
+
+                        <input type="hidden" name="decisao_pendencias" id="input-decisao-pendencias" value="IGNORAR">
+
+                        <div class="d-flex flex-wrap gap-2 mt-2">
+                            <button type="button" class="btn btn-outline-warning fw-bold d-flex align-items-center gap-2" id="btn-incorporar-pendencia">
+                                <i class="bi bi-box-arrow-in-down"></i> INCORPORAR PENDÊNCIA
+                            </button>
+                            <button type="button" class="btn btn-secondary fw-semibold d-flex align-items-center gap-2" id="btn-ignorar-pendencia">
+                                <i class="bi bi-clock-history"></i> IGNORAR POR ENQUANTO
+                            </button>
+                        </div>
+
+                        <div class="small text-light text-opacity-75 mt-3 pt-2 border-top border-secondary border-opacity-25" id="txt-resumo-calculo-op">
+                            Nova OP produzirá apenas a demanda nova solicitada. O saldo anterior permanecerá no Ledger.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-3">
+                    <div class="col-12 col-md-6">
+                        <label class="form-label" for="{{ form.produto.id_for_label }}">Produto / Modelo de Bladder *</label>
+                        {{ form.produto }}
+                        {% if form.produto.errors %}<div class="text-danger small mt-1">{{ form.produto.errors }}</div>{% endif %}
+                    </div>
+                    <div class="col-12 col-md-6">
+                        <label class="form-label" for="{{ form.processo.id_for_label }}">Processo / Equipamento *</label>
+                        {{ form.processo }}
+                        {% if form.processo.errors %}<div class="text-danger small mt-1">{{ form.processo.errors }}</div>{% endif %}
+                    </div>
+
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="{{ form.data_programada.id_for_label }}">Data Programada *</label>
+                        {{ form.data_programada }}
+                        <div class="small mt-1" id="badge-escala-data">
+                            <span class="badge bg-secondary"><i class="bi bi-calendar3"></i> Escala derivada pela data</span>
+                        </div>
+                        {% if form.data_programada.errors %}<div class="text-danger small mt-1">{{ form.data_programada.errors }}</div>{% endif %}
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="{{ form.quantidade_nova.id_for_label }}">Nova Quantidade Solicitada *</label>
+                        {{ form.quantidade_nova }}
+                        <div class="form-text text-muted">Demanda nova inserida pelo líder.</div>
+                        {% if form.quantidade_nova.errors %}<div class="text-danger small mt-1">{{ form.quantidade_nova.errors }}</div>{% endif %}
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="{{ form.prioridade.id_for_label }}">Prioridade</label>
+                        {{ form.prioridade }}
+                        {% if form.prioridade.errors %}<div class="text-danger small mt-1">{{ form.prioridade.errors }}</div>{% endif %}
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label" for="{{ form.recursos_alocados.id_for_label }}">Recursos Necessários (Matrizes, Ferramentas, Compostos)</label>
+                        {{ form.recursos_alocados }}
+                        <div class="form-text text-muted">Segure Ctrl (Windows) para selecionar múltiplos recursos cadastrados.</div>
+                        {% if form.recursos_alocados.errors %}<div class="text-danger small mt-1">{{ form.recursos_alocados.errors }}</div>{% endif %}
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label" for="{{ form.recursos_observacoes.id_for_label }}">Instruções de Recursos e Ferramental</label>
+                        {{ form.recursos_observacoes }}
+                        {% if form.recursos_observacoes.errors %}<div class="text-danger small mt-1">{{ form.recursos_observacoes.errors }}</div>{% endif %}
+                    </div>
+
+                    <div class="col-12">
+                        <label class="form-label" for="{{ form.observacoes.id_for_label }}">Observações Gerais</label>
+                        {{ form.observacoes }}
+                        {% if form.observacoes.errors %}<div class="text-danger small mt-1">{{ form.observacoes.errors }}</div>{% endif %}
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2 mt-4 border-top border-secondary border-opacity-25 pt-3">
+                    <a href="{% url 'bladder:ordens_lista' %}" class="btn btn-outline-secondary">Cancelar</a>
+                    <button type="submit" class="btn btn-warning fw-bold px-4">
+                        <i class="bi bi-check-lg"></i> Salvar Programação
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const prodSelect = document.getElementById("select-produto-bladder");
+        const boxPendencias = document.getElementById("box-pendencias-container");
+        const listaPendencias = document.getElementById("lista-pendencias-cards");
+        const txtTotalSaldo = document.getElementById("txt-total-saldo-pendente");
+        const inputDecisao = document.getElementById("input-decisao-pendencias");
+        const btnIncorporar = document.getElementById("btn-incorporar-pendencia");
+        const btnIgnorar = document.getElementById("btn-ignorar-pendencia");
+        const badgeDecisao = document.getElementById("badge-decisao-status");
+        const txtResumoCalculo = document.getElementById("txt-resumo-calculo-op");
+        const inputQtdNova = document.querySelector("input[name='quantidade_nova']");
+
+        let pendenciasAtuais = [];
+
+        function getQtdNova() {
+            const v = parseInt(inputQtdNova ? inputQtdNova.value : 0, 10);
+            return isNaN(v) || v < 0 ? 0 : v;
+        }
+
+        function getSaldoSelecionado() {
+            if (inputDecisao.value !== "INCORPORAR") return 0;
+            const checkboxes = document.querySelectorAll(".chk-pendencia:checked");
+            let sum = 0;
+            checkboxes.forEach(cb => {
+                sum += parseInt(cb.dataset.saldo || 0, 10);
+            });
+            return sum;
+        }
+
+        function atualizarPainelDecisao() {
+            const qtdNova = getQtdNova();
+            const decisao = inputDecisao.value;
+
+            if (decisao === "INCORPORAR") {
+                const saldoInc = getSaldoSelecionado();
+                const total = qtdNova + saldoInc;
+
+                btnIncorporar.className = "btn btn-warning fw-bold d-flex align-items-center gap-2";
+                btnIgnorar.className = "btn btn-outline-secondary fw-semibold d-flex align-items-center gap-2";
+                badgeDecisao.className = "badge bg-success p-2";
+                badgeDecisao.innerHTML = `<i class="bi bi-check-circle-fill me-1"></i> Decisão: INCORPORAR PENDÊNCIA (+${saldoInc} un)`;
+
+                txtResumoCalculo.innerHTML = `<strong>Cálculo da OP:</strong> Demanda Nova (${qtdNova}) + Saldo Incorporado (${saldoInc}) = <span class="text-warning fw-bold font-monospace fs-6">${total} un</span> a produzir no turno.`;
+            } else {
+                btnIncorporar.className = "btn btn-outline-warning fw-bold d-flex align-items-center gap-2";
+                btnIgnorar.className = "btn btn-secondary fw-semibold d-flex align-items-center gap-2";
+                badgeDecisao.className = "badge bg-secondary p-2";
+                badgeDecisao.innerHTML = `<i class="bi bi-clock-history me-1"></i> Decisão: IGNORAR POR ENQUANTO (Saldo continua em aberto)`;
+
+                txtResumoCalculo.innerHTML = `Nova OP produzirá apenas a demanda nova solicitada (<span class="text-light fw-bold font-monospace">${qtdNova} un</span>). O saldo anterior permanecerá no Ledger.`;
+            }
+        }
+
+        function renderizarPendencias(pendencias) {
+            pendenciasAtuais = pendencias;
+            listaPendencias.innerHTML = "";
+
+            if (!pendencias || pendencias.length === 0) {
+                boxPendencias.classList.add("d-none");
+                inputDecisao.value = "IGNORAR";
+                return;
+            }
+
+            boxPendencias.classList.remove("d-none");
+
+            pendencias.forEach((p, idx) => {
+                const card = document.createElement("div");
+                card.className = "p-3 rounded bg-secondary bg-opacity-10 border border-secondary border-opacity-50 text-light";
+                card.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="d-flex align-items-start gap-2">
+                            <input type="checkbox" name="saldos_selecionados" value="${p.id}" data-saldo="${p.saldo}" class="form-check-input chk-pendencia mt-1" id="chk-pend-${p.id}">
+                            <div>
+                                <label for="chk-pend-${p.id}" class="fw-bold fs-6 text-warning mb-0 text-decoration-none cursor-pointer">
+                                    ${p.modelo} — ${p.processo_equipamento}
+                                </label>
+                                <div class="small text-light text-opacity-75">
+                                    <strong>OP origem:</strong> <span class="font-monospace text-info">${p.op_origem_numero}</span> &bull; 
+                                    <strong>Data:</strong> ${p.data} &bull; 
+                                    <strong>Turma:</strong> ${p.turma_origem}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-danger fs-6 font-monospace">Saldo: ${p.saldo} un</span>
+                        </div>
+                    </div>
+                    <div class="row g-2 small text-light text-opacity-75 pt-2 border-top border-secondary border-opacity-25">
+                        <div class="col-6 col-sm-3"><strong>Programado:</strong> ${p.quantidade_programada} un</div>
+                        <div class="col-6 col-sm-3"><strong>Realizado:</strong> ${p.quantidade_realizada} un</div>
+                        <div class="col-12 col-sm-6"><strong>Motivo:</strong> <span class="text-warning">${p.motivo}</span></div>
+                    </div>
+                `;
+                listaPendencias.appendChild(card);
+            });
+
+            document.querySelectorAll(".chk-pendencia").forEach(cb => {
+                cb.addEventListener("change", function () {
+                    if (this.checked && inputDecisao.value !== "INCORPORAR") {
+                        inputDecisao.value = "INCORPORAR";
+                    }
+                    atualizarPainelDecisao();
+                });
+            });
+
+            // Decisão padrão: IGNORAR POR ENQUANTO (regra crítica do líder)
+            inputDecisao.value = "IGNORAR";
+            document.querySelectorAll(".chk-pendencia").forEach(cb => cb.checked = false);
+            atualizarPainelDecisao();
+        }
+
+        function verificarSaldo() {
+            const produtoId = prodSelect ? prodSelect.value : null;
+            if (!produtoId) {
+                boxPendencias.classList.add("d-none");
+                return;
+            }
+
+            fetch(`/bladder/api/saldo-produto/${produtoId}/`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.total_saldo_pendente > 0 && data.pendencias && data.pendencias.length > 0) {
+                        txtTotalSaldo.innerText = `${data.total_saldo_pendente} un`;
+                        renderizarPendencias(data.pendencias);
+                    } else {
+                        boxPendencias.classList.add("d-none");
+                    }
+                })
+                .catch(() => {
+                    boxPendencias.classList.add("d-none");
+                });
+        }
+
+        if (btnIncorporar) {
+            btnIncorporar.addEventListener("click", function () {
+                inputDecisao.value = "INCORPORAR";
+                document.querySelectorAll(".chk-pendencia").forEach(cb => cb.checked = true);
+                atualizarPainelDecisao();
+            });
+        }
+
+        if (btnIgnorar) {
+            btnIgnorar.addEventListener("click", function () {
+                inputDecisao.value = "IGNORAR";
+                document.querySelectorAll(".chk-pendencia").forEach(cb => cb.checked = false);
+                atualizarPainelDecisao();
+            });
+        }
+
+        if (inputQtdNova) {
+            inputQtdNova.addEventListener("input", atualizarPainelDecisao);
+        }
+
+        // Atualização dinâmica da escala do dia selecionado
+        const inputDataProg = document.querySelector("input[name='data_programada']");
+        const badgeEscala = document.getElementById("badge-escala-data");
+
+        function atualizarEscalaData() {
+            const dataVal = inputDataProg ? inputDataProg.value : null;
+            if (!dataVal || !badgeEscala) return;
+
+            fetch(`/bladder/api/escala-dia/?data=${dataVal}`)
+                .then(r => r.json())
+                .then(res => {
+                    const cor = res.turma === 'TURMA_A' ? 'bg-primary' : (res.turma === 'TURMA_B' ? 'bg-info text-dark' : 'bg-warning text-dark');
+                    const ajusteTxt = res.is_ajuste ? ` (Ajuste Excepcional: ${res.motivo})` : ' (Escala 12x36)';
+                    badgeEscala.innerHTML = `<span class="badge ${cor}"><i class="bi bi-people-fill me-1"></i> ${res.turma_display}${ajusteTxt}</span>`;
+                })
+                .catch(() => {
+                    badgeEscala.innerHTML = `<span class="badge bg-secondary"><i class="bi bi-calendar3"></i> Escala derivada pela data</span>`;
+                });
+        }
+
+        if (inputDataProg) {
+            inputDataProg.addEventListener("change", atualizarEscalaData);
+            atualizarEscalaData();
+        }
+
+        if (prodSelect) {
+            prodSelect.addEventListener("change", verificarSaldo);
+            verificarSaldo(); // Executa na carga inicial caso já venha pré-selecionado
+        }
+    });
+</script>
+{% endblock %}

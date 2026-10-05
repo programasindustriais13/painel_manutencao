@@ -1,0 +1,342 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Relatórios de Fechamento &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h1 class="h3 fw-bold mb-1 text-light">Fechamento Mensal e Relatórios Operacionais</h1>
+        <p class="text-secondary small mb-0">
+            Acompanhamento mensal da produção, desempenho por turma (A/B), produção diária e pendências auditadas.
+        </p>
+    </div>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+        <form method="get" class="d-flex flex-wrap align-items-center gap-2">
+            <!-- Mês -->
+            <select name="mes" class="form-select form-select-sm" style="width: 120px;" title="Filtrar por Mês">
+                <option value="1" {% if mes == 1 %}selected{% endif %}>Janeiro</option>
+                <option value="2" {% if mes == 2 %}selected{% endif %}>Fevereiro</option>
+                <option value="3" {% if mes == 3 %}selected{% endif %}>Março</option>
+                <option value="4" {% if mes == 4 %}selected{% endif %}>Abril</option>
+                <option value="5" {% if mes == 5 %}selected{% endif %}>Maio</option>
+                <option value="6" {% if mes == 6 %}selected{% endif %}>Junho</option>
+                <option value="7" {% if mes == 7 %}selected{% endif %}>Julho</option>
+                <option value="8" {% if mes == 8 %}selected{% endif %}>Agosto</option>
+                <option value="9" {% if mes == 9 %}selected{% endif %}>Setembro</option>
+                <option value="10" {% if mes == 10 %}selected{% endif %}>Outubro</option>
+                <option value="11" {% if mes == 11 %}selected{% endif %}>Novembro</option>
+                <option value="12" {% if mes == 12 %}selected{% endif %}>Dezembro</option>
+            </select>
+            <!-- Ano -->
+            <input type="number" name="ano" value="{{ ano }}" class="form-control form-control-sm font-monospace" style="width: 85px;" title="Filtrar por Ano">
+            <!-- Turno -->
+            <select name="turno" class="form-select form-select-sm" style="width: 130px;" title="Filtrar por Turno">
+                <option value="TODOS" {% if turno_filtro == 'TODOS' %}selected{% endif %}>Turno: Todos</option>
+                <option value="TURMA_A" {% if turno_filtro == 'TURMA_A' %}selected{% endif %}>Turma A</option>
+                <option value="TURMA_B" {% if turno_filtro == 'TURMA_B' %}selected{% endif %}>Turma B</option>
+            </select>
+            <!-- Modelo -->
+            <select name="modelo" class="form-select form-select-sm" style="width: 145px;" title="Filtrar por Modelo">
+                <option value="TODOS" {% if modelo_filtro == 'TODOS' or not modelo_filtro %}selected{% endif %}>Modelo: Todos</option>
+                {% for m in modelos_disponiveis %}
+                    <option value="{{ m.codigo }}" {% if modelo_filtro == m.codigo %}selected{% endif %}>{{ m.codigo }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-warning btn-sm fw-bold">
+                <i class="bi bi-filter"></i> Filtrar
+            </button>
+        </form>
+
+        <a href="{% url 'bladder:relatorios_exportar_excel' %}?mes={{ mes }}&ano={{ ano }}&turno={{ turno_filtro }}&modelo={{ modelo_filtro }}" class="btn btn-success btn-sm fw-bold d-flex align-items-center gap-1">
+            <i class="bi bi-file-earmark-excel-fill"></i> Exportar Excel
+        </a>
+    </div>
+</div>
+
+<!-- 2.2 RESUMO DO MÊS (6 Indicadores Principais) -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Total Programado</span>
+            <div class="fs-4 fw-bold text-light font-monospace">{{ total_programado }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">{{ total_ops }} OPs (Nova: {{ total_demanda_nova }} | Saldo: {{ total_saldo_incorporado }})</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Total Realizado</span>
+            <div class="fs-4 fw-bold text-success font-monospace">{{ total_realizado }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">Atingimento auditado</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Pendência Total</span>
+            <div class="fs-4 fw-bold text-warning font-monospace">{{ pendencia_total }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">A recuperar no Ledger</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Excedente Total</span>
+            <div class="fs-4 fw-bold text-success font-monospace">{{ excedente_total }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">Produção acima da meta</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3">
+            <span class="text-muted small d-block mb-1">Diferença Líquida</span>
+            <div class="fs-4 fw-bold {% if diferenca_liquida >= 0 %}text-success{% else %}text-danger{% endif %} font-monospace">{% if diferenca_liquida > 0 %}+{% endif %}{{ diferenca_liquida }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">Realizado - Meta</span>
+        </div>
+    </div>
+    <div class="col-6 col-md-4 col-xl-2">
+        <div class="glass-card text-center p-3 border-primary border-opacity-50">
+            <span class="text-muted small d-block mb-1">Cumprimento da Meta</span>
+            <div class="fs-4 fw-bold text-info font-monospace">{{ percentual_geral_display }}</div>
+            <span class="small text-secondary">Meta global do período</span>
+        </div>
+    </div>
+</div>
+
+<!-- 2.3 PRODUÇÃO POR TURNO E 2.5 PRODUÇÃO POR MODELO -->
+<div class="row g-3 mb-4">
+    <!-- 2.3 PRODUÇÃO POR TURNO -->
+    <div class="col-12 col-lg-5">
+        <div class="glass-card h-100">
+            <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light">
+                <i class="bi bi-people-fill text-warning me-2"></i>Produção por Turno
+            </h5>
+            <div class="table-responsive">
+                <table class="table table-dark table-sm table-hover align-middle mb-0 small">
+                    <thead>
+                        <tr class="text-muted">
+                            <th>Turno</th>
+                            <th class="text-center">Programado</th>
+                            <th class="text-center">Realizado</th>
+                            <th class="text-center">Excedente</th>
+                            <th class="text-center">Pendência</th>
+                            <th class="text-center">% Cumprimento</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="badge bg-primary">Turma A</span></td>
+                            <td class="text-center font-monospace">{{ prog_turma_a }} un</td>
+                            <td class="text-center font-monospace fw-bold text-success">{{ prod_turma_a }} un</td>
+                            <td class="text-center font-monospace text-success">{% if excedente_turma_a > 0 %}+{{ excedente_turma_a }}{% else %}0{% endif %}</td>
+                            <td class="text-center font-monospace text-warning">{{ pendencia_turma_a }} un</td>
+                            <td class="text-center">
+                                <span class="badge {% if prod_turma_a >= prog_turma_a and prog_turma_a > 0 %}bg-success{% else %}bg-warning text-dark{% endif %} font-monospace">
+                                    {{ pct_turma_a_display }}
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><span class="badge bg-info text-dark">Turma B</span></td>
+                            <td class="text-center font-monospace">{{ prog_turma_b }} un</td>
+                            <td class="text-center font-monospace fw-bold text-success">{{ prod_turma_b }} un</td>
+                            <td class="text-center font-monospace text-success">{% if excedente_turma_b > 0 %}+{{ excedente_turma_b }}{% else %}0{% endif %}</td>
+                            <td class="text-center font-monospace text-warning">{{ pendencia_turma_b }} un</td>
+                            <td class="text-center">
+                                <span class="badge {% if prod_turma_b >= prog_turma_b and prog_turma_b > 0 %}bg-success{% else %}bg-warning text-dark{% endif %} font-monospace">
+                                    {{ pct_turma_b_display }}
+                                </span>
+                            </td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr class="border-top border-secondary border-opacity-50 fw-bold">
+                            <td><span class="badge bg-secondary">Total Consolidado</span></td>
+                            <td class="text-center font-monospace text-light">{{ prog_total_turmas }} un</td>
+                            <td class="text-center font-monospace text-success">{{ prod_total_turmas }} un</td>
+                            <td class="text-center font-monospace text-success">{% if excedente_total_turmas > 0 %}+{{ excedente_total_turmas }}{% else %}0{% endif %}</td>
+                            <td class="text-center font-monospace text-warning">{{ pendencia_total_turmas }} un</td>
+                            <td class="text-center">
+                                <span class="badge bg-info text-dark font-monospace">
+                                    {{ pct_total_turmas_display }}
+                                </span>
+                            </td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="small text-secondary mt-3">
+                <i class="bi bi-info-circle text-muted me-1"></i> Fonte oficial: fechamentos de turno realizados pelos operadores.
+            </div>
+        </div>
+    </div>
+
+    <!-- 2.5 PRODUÇÃO POR MODELO DE BLADDER -->
+    <div class="col-12 col-lg-7">
+        <div class="glass-card h-100">
+            <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light">
+                <i class="bi bi-pie-chart-fill text-info me-2"></i>Produção por Modelo de Bladder
+            </h5>
+            {% if prod_por_produto %}
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0 small">
+                        <thead>
+                            <tr class="text-muted">
+                                <th>Código — Medida</th>
+                                <th>Descrição</th>
+                                <th class="text-center">OPs</th>
+                                <th class="text-center">Programado</th>
+                                <th class="text-center">Realizado</th>
+                                <th class="text-center">Excedente</th>
+                                <th class="text-center">Pendência</th>
+                                <th class="text-center">Cumprimento</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in prod_por_produto %}
+                                <tr>
+                                    <td class="font-monospace fw-bold text-warning">{{ p.codigo_com_medida }}</td>
+                                    <td class="text-light small">{{ p.descricao|truncatechars:24 }}</td>
+                                    <td class="text-center">{{ p.quantidade_ops }}</td>
+                                    <td class="text-center font-monospace">{{ p.programado }}</td>
+                                    <td class="text-center font-monospace fw-bold text-success">{{ p.realizado }}</td>
+                                    <td class="text-center font-monospace text-success">{% if p.excedente > 0 %}+{{ p.excedente }}{% else %}0{% endif %}</td>
+                                    <td class="text-center font-monospace text-warning">{{ p.pendencia }}</td>
+                                    <td class="text-center">
+                                        {% if p.programado > 0 %}
+                                            <span class="badge {% if p.realizado >= p.programado %}bg-success{% else %}bg-warning text-dark{% endif %} font-monospace">
+                                                {{ p.percentual_display }}
+                                            </span>
+                                        {% else %}-{% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-4 text-secondary small">
+                    Nenhum registro de produção encontrado para este período.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- 2.4 PRODUÇÃO POR DIA -->
+<div class="row g-3 mb-4">
+    <div class="col-12">
+        <div class="glass-card">
+            <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light d-flex align-items-center justify-content-between">
+                <span><i class="bi bi-calendar2-range text-warning me-2"></i>Produção por Dia</span>
+                <span class="small text-secondary fw-normal">Histórico diário auditado por turma</span>
+            </h5>
+            {% if producao_diaria %}
+                <div class="table-responsive">
+                    <table class="table table-dark table-sm table-hover align-middle mb-0 small">
+                        <thead>
+                            <tr class="text-muted">
+                                <th>Data</th>
+                                <th class="text-center">Produção Turma A</th>
+                                <th class="text-center">Produção Turma B</th>
+                                <th class="text-center">Total Produzido no Dia</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for d in producao_diaria %}
+                                <tr>
+                                    <td class="font-monospace text-light fw-semibold">{{ d.data|date:"d/m/Y" }}</td>
+                                    <td class="text-center font-monospace">
+                                        {% if d.turma_a %}<span class="text-primary fw-bold">{{ d.turma_a }} un</span>{% else %}<span class="text-muted">-</span>{% endif %}
+                                    </td>
+                                    <td class="text-center font-monospace">
+                                        {% if d.turma_b %}<span class="text-info fw-bold">{{ d.turma_b }} un</span>{% else %}<span class="text-muted">-</span>{% endif %}
+                                    </td>
+                                    <td class="text-center font-monospace fw-bold text-success">{{ d.total }} un</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot>
+                            <tr class="border-top border-secondary border-opacity-50 fw-bold bg-black bg-opacity-25">
+                                <td colspan="3" class="text-warning fs-6">Acumulado do Período</td>
+                                <td class="text-center font-monospace text-success fs-5">{{ acumulado_periodo }} un</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-4 text-secondary small">
+                    Nenhum registro de produção diária encontrado para os filtros selecionados.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- 2.6 PENDÊNCIAS DO PERÍODO -->
+<div class="row g-3 mb-4">
+    <div class="col-12">
+        <div class="glass-card">
+            <h5 class="fw-bold mb-3 border-bottom border-secondary border-opacity-25 pb-2 text-light d-flex align-items-center justify-content-between">
+                <span><i class="bi bi-exclamation-triangle-fill text-warning me-2"></i>Pendências do Período</span>
+                <span class="badge bg-dark border border-warning text-warning small">{{ pendencias_periodo|length }} pendência(s)</span>
+            </h5>
+            {% if pendencias_periodo %}
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0 small">
+                        <thead>
+                            <tr class="text-muted">
+                                <th>Data Fechamento</th>
+                                <th>Turno</th>
+                                <th>Número da OP</th>
+                                <th>Bladder (Código — Medida)</th>
+                                <th>Processo / Equipamento</th>
+                                <th class="text-center">Programado</th>
+                                <th class="text-center">Realizado</th>
+                                <th class="text-center">Pendência</th>
+                                <th>Categoria(s) do Desvio</th>
+                                <th>O que aconteceu? (Descrição)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for p in pendencias_periodo %}
+                                <tr>
+                                    <td class="font-monospace text-light">{{ p.data_fechamento|date:"d/m/Y" }}</td>
+                                    <td>
+                                        <span class="badge {% if p.turno == 'Turma A' or p.turno == 'TURMA_A' %}bg-primary{% else %}bg-info text-dark{% endif %}" style="font-size: 0.72rem;">
+                                            {{ p.turno }}
+                                        </span>
+                                    </td>
+                                    <td class="font-monospace fw-bold text-warning">{{ p.numero_ordem }}</td>
+                                    <td>
+                                        <span class="font-monospace fw-semibold text-light">{{ p.codigo_com_medida }}</span>
+                                    </td>
+                                    <td class="text-light small">
+                                        {{ p.processo }}
+                                        {% if p.maquina and p.maquina != '-' %}
+                                            <span class="text-muted d-block" style="font-size: 0.72rem;">{{ p.maquina }}</span>
+                                        {% endif %}
+                                    </td>
+                                    <td class="text-center font-monospace">{{ p.quantidade_programada }}</td>
+                                    <td class="text-center font-monospace text-success">{{ p.quantidade_realizada }}</td>
+                                    <td class="text-center font-monospace fw-bold text-warning">{{ p.pendencia }}</td>
+                                    <td>
+                                        <span class="badge bg-danger bg-opacity-25 border border-danger text-danger-emphasis">
+                                            {{ p.categorias }}
+                                        </span>
+                                    </td>
+                                    <td class="text-light">
+                                        <i class="bi bi-chat-left-dots text-secondary me-1"></i>
+                                        {{ p.descricao_desvio|default:p.motivo }}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-4 text-secondary small">
+                    <i class="bi bi-check-circle text-success fs-3 d-block mb-2"></i>
+                    Nenhuma pendência registrada nos fechamentos de turno deste período.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

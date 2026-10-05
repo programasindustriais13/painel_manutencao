@@ -1,0 +1,487 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Chão de Fábrica &bull; Setor de Bladder{% endblock %}
+
+{% block extra_css %}
+<style>
+    .op-card-board {
+        background: #111827;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .op-card-board:hover {
+        border-color: rgba(245, 158, 11, 0.6);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    }
+    .op-metric-box {
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 0.75rem 0.85rem;
+    }
+    .metric-value {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 700;
+        line-height: 1.1;
+    }
+    .touch-btn {
+        min-height: 44px;
+        font-size: 0.95rem;
+        letter-spacing: 0.4px;
+    }
+    .touch-header-btn {
+        min-height: 44px;
+        padding: 0.5rem 1.25rem;
+    }
+    /* Adaptações de Responsividade: Tablet Retrato, Paisagem e Desktop */
+    @media (max-width: 767.98px) {
+        .op-metric-box {
+            padding: 0.6rem 0.75rem;
+        }
+    }
+    @media (min-width: 768px) and (max-width: 1199.98px) {
+        /* Tablet Retrato e Tablet Paisagem: ~2 cards por linha com altura contida */
+        .op-card-board {
+            min-height: 190px;
+        }
+    }
+    .modal-dialog-scrollable .modal-body {
+        max-height: calc(85vh - 130px);
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Cabeçalho do Chão de Fábrica &bull; Quadro Operacional do Turno -->
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4 p-3 glass-card border-warning border-opacity-25">
+    <div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+            <span class="badge bg-warning text-dark fw-bold fs-6 px-2 py-1">
+                <i class="bi bi-tablet me-1"></i> CHÃO DE FÁBRICA &bull; QUADRO OPERACIONAL
+            </span>
+            <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-2 py-1">
+                {{ turma_hoje_display }}
+            </span>
+            {% if perfil_operacional %}
+                <span class="badge bg-dark border border-warning text-warning fs-6 px-2 py-1">
+                    <i class="bi bi-people-fill"></i> Equipe: {{ perfil_operacional.get_turma_display }}
+                </span>
+            {% endif %}
+            {% if is_apoio %}
+                <span class="badge bg-success fs-6 px-2 py-1">
+                    <i class="bi bi-person-badge"></i> {{ apoio_obj.papel }}
+                </span>
+            {% endif %}
+        </div>
+        <h1 class="h4 fw-bold text-light mb-0">Programação de Bladder &bull; {{ hoje|date:"d/m/Y" }}</h1>
+    </div>
+    <div class="d-flex align-items-center gap-3">
+        <div class="text-end d-none d-sm-block">
+            <span class="small text-muted d-block">Operador Conectado</span>
+            <span class="fw-bold text-light fs-6">{{ request.user.first_name|default:request.user.username }}</span>
+        </div>
+        <!-- Botão Único de Fechamento do Turno no Topo -->
+        {% if fechamento_hoje %}
+            <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-outline-success fw-bold d-flex align-items-center gap-2 touch-header-btn" title="Turno já encerrado">
+                <i class="bi bi-check-circle-fill"></i> Turno Encerrado
+            </a>
+        {% else %}
+            <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-warning fw-bold d-flex align-items-center gap-2 touch-header-btn">
+                <i class="bi bi-door-closed-fill"></i> FECHAR TURNO
+            </a>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Fila de Atividades Programadas para o Turno (Responsivo: 1 col mobile, 2 col tablet, 2 a 3 col desktop) -->
+<div class="mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 fw-bold text-light mb-0 d-flex align-items-center gap-2">
+            <i class="bi bi-list-task text-warning"></i> Atividades do Turno ({{ ordens|length }})
+        </h2>
+        <span class="small text-muted">Identificação rápida &bull; Ficha Técnica para consulta detalhada</span>
+    </div>
+
+    {% if ordens %}
+        <div class="row g-3">
+            {% for op in ordens %}
+                <div class="col-12 col-md-6 col-xxl-4">
+                    <div class="op-card-board p-3 d-flex flex-column justify-content-between h-100">
+                        <!-- Topo do Card: Identificação curta da OP, Processo/Equipamento, Prioridade e Status -->
+                        <div>
+                            <div class="d-flex justify-content-between align-items-start mb-2">
+                                <div>
+                                    <!-- Menor destaque: Identificação Curta da OP -->
+                                    <span class="fs-6 fw-bold font-monospace text-warning px-2 py-0.5 rounded bg-black bg-opacity-40 border border-warning border-opacity-25" title="Identificador Oficial: {{ op.numero_ordem }}">
+                                        {{ op.numero_ordem_curto }}
+                                    </span>
+                                    <!-- Destaque secundário: Processo e Equipamento -->
+                                    <div class="text-secondary small mt-1">
+                                        <i class="bi bi-gear-wide-connected text-muted"></i>
+                                        <span class="text-light fw-semibold">{{ op.processo.nome }}</span>
+                                        {% if op.processo.maquina %}
+                                            <span class="text-muted">({{ op.processo.maquina.nome }})</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="text-end">
+                                    <!-- Menor destaque: Prioridade e Situação -->
+                                    <span class="badge {% if op.prioridade == 'URGENTE' %}bg-danger{% elif op.prioridade == 'ALTA' %}bg-warning text-dark{% else %}bg-dark text-muted border border-secondary border-opacity-50{% endif %} px-2 py-1">
+                                        {{ op.get_prioridade_display }}
+                                    </span>
+                                    <div class="small mt-1">
+                                        <span class="badge {% if op.status_visual == 'CONCLUÍDA' %}bg-success{% elif op.status_visual == 'PARCIAL / PENDÊNCIA' %}bg-warning text-dark{% elif op.status_visual == 'NÃO REALIZADA / PENDÊNCIA' %}bg-danger text-light{% elif op.status_visual == 'CANCELADA' %}bg-secondary{% else %}bg-primary{% endif %}">
+                                            {{ op.status_visual }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Modelo do Bladder e Meta de Produção (Maior Destaque Visual) -->
+                            <div class="op-metric-box my-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <span class="text-muted small d-block">Código do Bladder</span>
+                                        <!-- Maior Destaque 1: Código do Bladder -->
+                                        <span class="fs-3 fw-bold text-warning font-monospace">{{ op.produto.codigo }}</span>
+                                        <!-- Destaque Secundário: Modelo/Descrição -->
+                                        <span class="text-light small d-block">{{ op.produto.descricao }}</span>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="text-muted small d-block">Meta do Turno</span>
+                                        <!-- Maior Destaque 2: Meta do Turno -->
+                                        <span class="metric-value text-warning fs-2">{{ op.quantidade_planejada }} <span class="fs-6 text-muted font-monospace">un</span></span>
+                                        {% if op.saldo_anterior_incorporado > 0 %}
+                                            <span class="small text-info d-block fw-semibold">(+{{ op.saldo_anterior_incorporado }} saldo inc.)</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Botão FICHA TÉCNICA (Área de toque confortável para Tablet) -->
+                        <div class="mt-2 pt-2 border-top border-secondary border-opacity-25">
+                            <button type="button" class="btn btn-outline-warning w-100 fw-bold py-2 d-flex align-items-center justify-content-center gap-2 touch-btn" data-bs-toggle="modal" data-bs-target="#modalDetalhes{{ op.pk }}" title="Ficha Técnica &bull; Ver Detalhes Técnicos">
+                                <i class="bi bi-file-earmark-text-fill"></i> FICHA TÉCNICA
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal de Ficha Técnica da OP (Consulta Exclusiva Organizada por Grupos Técnicos Reais) -->
+                <div class="modal fade" id="modalDetalhes{{ op.pk }}" tabindex="-1" aria-labelledby="modalLabel{{ op.pk }}" aria-hidden="true">
+                    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+                        <div class="modal-content bg-dark text-light border border-warning border-opacity-50 shadow-lg">
+                            <div class="modal-header border-secondary border-opacity-50 pb-2">
+                                <div>
+                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                        <span class="badge bg-warning text-dark fw-bold">FICHA TÉCNICA</span>
+                                        <span class="font-monospace text-warning fw-bold fs-6">{{ op.produto.codigo }}</span>
+                                        <span class="badge bg-dark border border-secondary text-secondary">Especificações Técnicas do Modelo (ET.029)</span>
+                                    </div>
+                                    <h5 class="modal-title fw-bold text-light mb-0" id="modalLabel{{ op.pk }}">
+                                        {{ op.produto.descricao }}
+                                    </h5>
+                                    <div class="small text-secondary mt-1">
+                                        Identificação Oficial: <span class="text-warning font-monospace fw-semibold">{{ op.numero_ordem }}</span> &bull; 
+                                        {{ op.data_programada|date:"d/m/Y" }} &bull; {{ op.get_turma_prevista_display }}
+                                    </div>
+                                </div>
+                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                            </div>
+                            <div class="modal-body p-3">
+                                <!-- 6.1 IDENTIFICAÇÃO -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
+                                        <i class="bi bi-info-circle-fill"></i> 1. Identificação Geral
+                                    </h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
+                                            <tbody>
+                                                <tr>
+                                                    <td class="text-muted w-35">Código do Bladder:</td>
+                                                    <td class="fw-bold font-monospace text-warning">{{ op.produto.codigo }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Modelo / Descrição:</td>
+                                                    <td class="text-light">{{ op.produto.descricao }}</td>
+                                                </tr>
+                                                {% if op.produto.nomenclatura_antiga %}
+                                                    <tr>
+                                                        <td class="text-muted">Nomenclatura Antiga:</td>
+                                                        <td class="text-light">{{ op.produto.nomenclatura_antiga }}</td>
+                                                    </tr>
+                                                {% endif %}
+                                                <tr>
+                                                    <td class="text-muted">Identificação Completa da OP:</td>
+                                                    <td class="fw-bold font-monospace text-info">{{ op.numero_ordem }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Processo Operacional:</td>
+                                                    <td class="text-light">{{ op.processo.nome }} ({{ op.processo.get_tipo_display }})</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Equipamento / Máquina:</td>
+                                                    <td class="text-light">
+                                                        {% if op.processo.maquina %}
+                                                            {{ op.processo.maquina.nome }}
+                                                        {% else %}
+                                                            {{ op.processo.nome }}
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Turma Programada:</td>
+                                                    <td class="text-light">{{ op.get_turma_prevista_display }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Data Programada:</td>
+                                                    <td class="text-light">{{ op.data_programada|date:"d/m/Y" }}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Meta do Turno:</td>
+                                                    <td class="fw-bold text-light font-monospace">
+                                                        {{ op.quantidade_planejada }} un
+                                                        {% if op.saldo_anterior_incorporado > 0 %}
+                                                            <span class="text-info fw-normal">({{ op.quantidade_nova }} nova + {{ op.saldo_anterior_incorporado }} saldo inc.)</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                {% if op.consumo_teorico_planejado_kg %}
+                                                    <tr>
+                                                        <td class="text-muted">Consumo Teórico Calculado:</td>
+                                                        <td class="font-monospace text-info">{{ op.consumo_teorico_planejado_kg }} kg de composto</td>
+                                                    </tr>
+                                                {% endif %}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <!-- 6.2 TARUGO -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
+                                        <i class="bi bi-circle-square"></i> 2. Tarugo
+                                    </h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
+                                            <tbody>
+                                                <tr>
+                                                    <td class="text-muted w-35">Peso do Tarugo:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.peso_tarugo_kg %}
+                                                            <strong>{{ op.produto.peso_tarugo_kg }} kg</strong>
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Diâmetro do Tarugo:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.diametro_tarugo_mm %}
+                                                            <strong>{{ op.produto.diametro_tarugo_mm }} mm</strong>
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Comprimento do Tarugo:</td>
+                                                    <td class="text-muted fst-italic">Não cadastrado</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Composto / Material:</td>
+                                                    <td class="text-light">
+                                                        {% for r in op.recursos_alocados.all %}
+                                                            {% if r.categoria == 'COMPOSTO' %}
+                                                                <span class="badge bg-secondary me-1">{{ r.nome }}</span>
+                                                            {% endif %}
+                                                        {% empty %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endfor %}
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <!-- 6.3 EXTRUSÃO -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
+                                        <i class="bi bi-arrows-collapse"></i> 3. Parâmetros de Extrusão
+                                    </h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
+                                            <tbody>
+                                                <tr>
+                                                    <td class="text-muted w-35">Matriz de Extrusão:</td>
+                                                    <td class="font-monospace text-warning fw-bold">
+                                                        {% if op.produto.matriz_extrusao %}
+                                                            {{ op.produto.matriz_extrusao }}
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic fw-normal">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Comprimento de Extrusão:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.comprimento_extrusao_cm %}
+                                                            {{ op.produto.comprimento_extrusao_cm }} cm
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Comprimento Chanfrado:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.comprimento_chanfrado_cm %}
+                                                            {{ op.produto.comprimento_chanfrado_cm }} cm
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Velocidade de Extrusão:</td>
+                                                    <td class="text-muted fst-italic">Não cadastrado</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Temperaturas de Extrusão:</td>
+                                                    <td class="text-muted fst-italic">Não cadastrado</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <!-- 6.4 VULCANIZAÇÃO -->
+                                <div class="mb-4">
+                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
+                                        <i class="bi bi-fire"></i> 4. Parâmetros de Vulcanização
+                                    </h6>
+                                    <div class="table-responsive">
+                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
+                                            <tbody>
+                                                <tr>
+                                                    <td class="text-muted w-35">Tempo de Vulcanização:</td>
+                                                    <td class="font-monospace text-warning fw-bold">
+                                                        {% if op.produto.tempo_vulcanizacao_min %}
+                                                            {{ op.produto.tempo_vulcanizacao_min }} min
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic fw-normal">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Peso Vulcanizado Acabado:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.peso_vulcanizado_kg %}
+                                                            {{ op.produto.peso_vulcanizado_kg }} kg
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Circunferência no Centro:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.circunferencia_centro_mm %}
+                                                            {{ op.produto.circunferencia_centro_mm }} mm
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Altura do Bladder:</td>
+                                                    <td class="font-monospace text-light">
+                                                        {% if op.produto.altura_cm %}
+                                                            {{ op.produto.altura_cm }} cm
+                                                        {% else %}
+                                                            <span class="text-muted fst-italic">Não cadastrado</span>
+                                                        {% endif %}
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Temperatura de Cura:</td>
+                                                    <td class="text-muted fst-italic">Não cadastrado</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Pressão / Vácuo:</td>
+                                                    <td class="text-muted fst-italic">Não cadastrado</td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="text-muted">Cavidades:</td>
+                                                    <td class="text-muted fst-italic">Não cadastrado</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <!-- 6.5 INSTRUÇÕES ESPECIAIS E FERRAMENTAL -->
+                                <div class="mb-2">
+                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
+                                        <i class="bi bi-tools"></i> 5. Instruções Especiais e Ferramental
+                                    </h6>
+                                    <div class="mb-3">
+                                        <span class="text-muted small d-block mb-1 fw-semibold">Recursos e Ferramentas Alocados:</span>
+                                        {% if op.recursos_alocados.all %}
+                                            <div class="d-flex flex-wrap gap-2 mb-2">
+                                                {% for r in op.recursos_alocados.all %}
+                                                    <span class="badge bg-secondary text-light p-2">
+                                                        <i class="bi bi-tag-fill text-warning me-1"></i> {{ r.nome }} ({{ r.codigo }})
+                                                    </span>
+                                                {% endfor %}
+                                            </div>
+                                        {% else %}
+                                            <span class="text-muted small fst-italic d-block mb-2">Nenhum recurso extra alocado especificamente.</span>
+                                        {% endif %}
+                                    </div>
+
+                                    {% if op.recursos_observacoes %}
+                                        <div class="p-2.5 rounded bg-black bg-opacity-40 border border-secondary border-opacity-50 small text-light mb-2">
+                                            <strong class="text-warning"><i class="bi bi-info-circle me-1"></i> Instruções de Ferramental:</strong> {{ op.recursos_observacoes }}
+                                        </div>
+                                    {% endif %}
+
+                                    {% if op.observacoes %}
+                                        <div class="p-2.5 rounded bg-black bg-opacity-40 border border-secondary border-opacity-50 small text-light">
+                                            <strong class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i> Observações Gerais / Cuidados:</strong> {{ op.observacoes }}
+                                        </div>
+                                    {% endif %}
+
+                                    {% if not op.recursos_observacoes and not op.observacoes %}
+                                        <span class="text-muted small fst-italic">Nenhuma instrução especial ou observação cadastrada para esta OP.</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="modal-footer border-secondary border-opacity-50 d-flex justify-content-between align-items-center">
+                                <span class="small text-muted">
+                                    <i class="bi bi-shield-check text-success"></i> Visualização técnica exclusivamente para consulta.
+                                </span>
+                                <button type="button" class="btn btn-secondary px-4 fw-semibold" data-bs-dismiss="modal">
+                                    Fechar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="glass-card text-center py-5">
+            <i class="bi bi-calendar-check text-success fs-1 d-block mb-3"></i>
+            <h4 class="fw-bold text-light">Nenhuma programação para este turno!</h4>
+            <p class="text-secondary small">Não há ordens de produção programadas para a data de hoje neste turno.</p>
+        </div>
+    {% endif %}
+
+</div>
+{% endblock %}

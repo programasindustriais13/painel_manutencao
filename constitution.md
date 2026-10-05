@@ -22,7 +22,7 @@ O sistema deve ser:
 - Subagentes NÃO podem:
   - Criar múltiplos ambientes virtuais.
   - Criar cópias ou duplicatas do projeto.
-  - Criar ou duplicar aplicações Django.
+  - Criar novos apps Django sem necessidade e sem autorização explícita. Um novo app pode ser criado apenas quando representar domínio funcional independente, estiver formalmente justificado em SPEC e houver autorização humana registrada. (Registrado: o app dedicado `bladder` foi formalmente autorizado pela governança da SPEC do Setor de Bladder).
 
 ### ✅ Estrutura obrigatória:
 - Apenas **1 ambiente virtual (.venv)** na raiz.

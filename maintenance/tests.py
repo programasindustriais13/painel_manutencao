@@ -2209,6 +2209,48 @@ class SessionConcurrencyAndExpiryTestCase(TestCase):
         # Nenhuma das abas destruiu a sessão e a chave continua válida
         self.assertTrue(self._get_session_store().exists(s_key))
 
+    def test_13_login_page_renders_clean_login_form_after_session_expired(self):
+        """
+        13. Tela de login após expiração:
+        Ao ser deslogado por inatividade e redirecionado para /login/,
+        o sistema deve desautenticar o usuário, ocultar a barra lateral (sidebar)
+        e exibir o formulário limpo de usuário/senha com a mensagem de inatividade.
+        """
+        import time
+        client = Client()
+        client.login(username='operador_sessao', password=self.user_password)
+
+        session = client.session
+        session['_last_human_activity'] = time.time() - 400
+        session.save()
+
+        # 1. Requisição bloqueada redireciona para login
+        res_redirect = client.get(reverse('technician_management'))
+        self.assertEqual(res_redirect.status_code, 302)
+        self.assertIn('login', res_redirect.url)
+
+        # 2. Ao acessar a URL de login de destino
+        res_login = client.get(res_redirect.url)
+        self.assertEqual(res_login.status_code, 200)
+
+        # 3. Usuário foi devidamente desautenticado na requisição de login
+        self.assertFalse(res_login.wsgi_request.user.is_authenticated)
+
+        content = res_login.content.decode('utf-8')
+        body = content[content.find('<body>'):content.find('</body>') + 7] if '<body>' in content else content
+
+        # 4. Formulário de login visível e alerta de inatividade presente
+        self.assertIn('Portal Industrial', content)
+        self.assertIn('Acessar Sistema', content)
+        self.assertIn('Sua sessão foi encerrada por inatividade.', content)
+
+        # 5. Barra lateral e menus do usuário logado NÃO estão presentes no corpo da página
+        self.assertNotIn('btn-sidebar-cta', body)
+        self.assertNotIn('+ Nova OS', body)
+        self.assertNotIn('Controle Técnico', body)
+        self.assertNotIn('operador_sessao', body)
+
+
 
 
 

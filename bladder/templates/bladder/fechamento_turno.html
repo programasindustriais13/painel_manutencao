@@ -1,0 +1,348 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Fechamento do Turno &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-12 col-xl-10">
+        <!-- Topo da Página -->
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="badge bg-warning text-dark fw-bold fs-6 px-2 py-1">
+                        <i class="bi bi-door-closed-fill me-1"></i> FECHAMENTO DO TURNO
+                    </span>
+                    <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-2 py-1">
+                        {{ turma_hoje_display }}
+                    </span>
+                </div>
+                <h1 class="h3 fw-bold text-light mb-0">Encerramento e Apontamento Final &bull; {{ hoje|date:"d/m/Y" }}</h1>
+            </div>
+            <div>
+                <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary">
+                    <i class="bi bi-arrow-left"></i> Voltar ao Quadro
+                </a>
+            </div>
+        </div>
+
+        {% if fechamento_existente %}
+            <!-- Turno Já Encerrado: Visualização Auditada em Somente Leitura -->
+            <div class="glass-card mb-4 border-success border-opacity-50">
+                <div class="d-flex align-items-center gap-3 mb-3 pb-3 border-bottom border-secondary border-opacity-25">
+                    <i class="bi bi-check-circle-fill text-success fs-1"></i>
+                    <div>
+                        <h4 class="fw-bold text-light mb-0">Turno Já Encerrado</h4>
+                        <span class="text-secondary small">
+                            Fechamento auditado realizado por <strong>{{ fechamento_existente.operador.get_full_name|default:fechamento_existente.operador.username }}</strong>
+                            em <strong>{{ fechamento_existente.data_hora_fechamento|date:"d/m/Y às H:i" }}</strong>.
+                        </span>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="table table-dark table-hover align-middle mb-0 small">
+                        <thead>
+                            <tr class="text-muted">
+                                <th>OP</th>
+                                <th>Processo</th>
+                                <th>Modelo</th>
+                                <th class="text-center">Meta</th>
+                                <th class="text-center">Realizado</th>
+                                <th class="text-center">Saldo</th>
+                                <th class="text-center">Situação</th>
+                                <th>Motivo / Justificativa</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in fechamento_existente.itens.all %}
+                                <tr>
+                                    <td class="font-monospace fw-bold text-warning">{{ item.ordem.numero_ordem }}</td>
+                                    <td>{{ item.ordem.processo.nome }}</td>
+                                    <td class="fw-semibold text-light">{{ item.ordem.produto.codigo }}</td>
+                                    <td class="text-center font-monospace">{{ item.quantidade_programada }} un</td>
+                                    <td class="text-center font-monospace fw-bold text-success">{{ item.quantidade_realizada }} un</td>
+                                    <td class="text-center font-monospace {% if item.saldo_gerado > 0 %}text-danger fw-bold{% else %}text-muted{% endif %}">
+                                        {{ item.saldo_gerado }} un
+                                    </td>
+                                    <td class="text-center">
+                                        <span class="badge {% if item.situacao == 'CONCLUIDA' %}bg-success{% elif item.situacao == 'PARCIAL' %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                            {{ item.get_situacao_display }}
+                                        </span>
+                                    </td>
+                                    <td class="text-secondary">{{ item.motivo_completo|default:"-" }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                {% if fechamento_existente.observacoes %}
+                    <div class="mt-3 p-3 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 small text-light">
+                        <strong class="text-warning">Observações Gerais do Turno:</strong> {{ fechamento_existente.observacoes }}
+                    </div>
+                {% endif %}
+            </div>
+
+        {% elif not ordens %}
+            <!-- Sem OPs Programadas -->
+            <div class="glass-card text-center py-5">
+                <i class="bi bi-exclamation-circle text-warning fs-1 d-block mb-3"></i>
+                <h4 class="fw-bold text-light">Não existem ordens de produção para fechamento neste turno!</h4>
+                <p class="text-secondary small">Nenhuma ordem de produção foi programada para a data de hoje.</p>
+                <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary mt-2">Voltar ao Quadro Operacional</a>
+            </div>
+
+        {% else %}
+            <!-- Formulário de Fechamento do Turno -->
+            <form method="post" id="form-fechamento-turno" onsubmit="desabilitarSubmitFechamento(this)">
+                {% csrf_token %}
+
+                <div class="glass-card mb-4 border-warning border-opacity-50">
+                    <div class="d-flex align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-25">
+                        <i class="bi bi-clipboard-check text-warning fs-4"></i>
+                        <div>
+                            <h5 class="fw-bold text-light mb-0">Apontamento das Atividades do Turno</h5>
+                            <span class="small text-secondary">Informe a quantidade total produzida para cada OP programada no turno.</span>
+                        </div>
+                    </div>
+
+                    <div class="d-flex flex-column gap-3">
+                        {% for op in ordens %}
+                            <div class="p-3 rounded bg-black bg-opacity-50 border border-secondary border-opacity-50 card-op-fechamento" data-op-id="{{ op.id }}" data-meta="{{ op.quantidade_planejada }}">
+                                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                                    <div>
+                                        <span class="fs-5 fw-bold font-monospace text-warning">{{ op.numero_ordem }}</span>
+                                        <span class="badge bg-secondary ms-2">{{ op.processo.nome }}</span>
+                                        <div class="fw-semibold text-light mt-1">
+                                            {{ op.produto.codigo }} &mdash; <span class="text-secondary small">{{ op.produto.descricao }}</span>
+                                        </div>
+                                    </div>
+                                    <div class="text-end">
+                                        <span class="text-muted small d-block">Meta Programada</span>
+                                        <span class="fs-4 fw-bold font-monospace text-light">{{ op.quantidade_planejada }} un</span>
+                                        {% if op.saldo_anterior_incorporado > 0 %}
+                                            <span class="small text-info d-block">(+{{ op.saldo_anterior_incorporado }} saldo inc.)</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <div class="row g-3 align-items-center mt-1 pt-2 border-top border-secondary border-opacity-25">
+                                    <!-- Input Quantidade Realizada -->
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label small text-warning fw-bold mb-1" for="qtd_realizada_{{ op.id }}">
+                                            Quantidade Realizada (un) *
+                                        </label>
+                                        <input type="number" 
+                                               name="qtd_realizada_{{ op.id }}" 
+                                               id="qtd_realizada_{{ op.id }}" 
+                                               value="{{ op.quantidade_planejada }}" 
+                                               min="0" 
+                                               class="form-control form-control-lg font-monospace fw-bold text-center input-qtd-fechamento" 
+                                               data-op-id="{{ op.id }}" 
+                                               data-meta="{{ op.quantidade_planejada }}"
+                                               required>
+                                        <div class="small text-muted text-center mt-1">A produção pode superar a meta.</div>
+                                    </div>
+
+                                    <!-- Indicador de Saldo, Excedente e Situação -->
+                                    <div class="col-12 col-md-4">
+                                        <div class="p-2 rounded bg-dark border border-secondary border-opacity-50 text-center">
+                                            <div class="small text-muted mb-1">Resultado Calculado</div>
+                                            <div class="d-flex justify-content-around align-items-center">
+                                                <div>
+                                                    <span class="small text-muted d-block">Saldo / Excedente:</span>
+                                                    <span class="font-monospace fw-bold fs-6 text-light" id="txt-saldo-{{ op.id }}">0 un</span>
+                                                </div>
+                                                <div>
+                                                    <span class="small text-muted d-block">Situação:</span>
+                                                    <span class="badge bg-success" id="badge-status-{{ op.id }}">CONCLUÍDA</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Observação da OP -->
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label small text-muted mb-1" for="obs_{{ op.id }}">
+                                            Observações Operacionais (Opcional)
+                                        </label>
+                                        <input type="text" name="obs_{{ op.id }}" id="obs_{{ op.id }}" class="form-control form-control-sm" placeholder="Ex: turno estável, tarugo ok...">
+                                    </div>
+                                </div>
+
+                                <!-- Bloco Condicional de Desvio (Obrigatório se Realizado < Meta) -->
+                                <div id="box-motivo-{{ op.id }}" class="p-3 mt-3 rounded bg-danger bg-opacity-10 border border-danger border-opacity-50 d-none">
+                                    <div class="fw-bold text-warning small mb-2 d-flex align-items-center gap-1">
+                                        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                                        Esta OP não atingiu a meta planejada. Selecione uma ou mais categorias e descreva o ocorrido:
+                                    </div>
+
+                                    <!-- Categorias do Desvio (uma ou mais) -->
+                                    <div class="mb-3">
+                                        <label class="form-label small text-light fw-semibold mb-2">Categoria(s) do Desvio *</label>
+                                        <div class="d-flex flex-wrap gap-2" id="box-categorias-{{ op.id }}">
+                                            {% for cat in categorias_desvio %}
+                                                <input type="checkbox" 
+                                                       class="btn-check chk-cat-fechamento" 
+                                                       name="categorias_{{ op.id }}" 
+                                                       id="cat_{{ op.id }}_{{ cat.codigo }}" 
+                                                       value="{{ cat.codigo }}"
+                                                       data-op-id="{{ op.id }}">
+                                                <label class="btn btn-outline-warning btn-sm" for="cat_{{ op.id }}_{{ cat.codigo }}">
+                                                    {{ cat.nome }}
+                                                </label>
+                                            {% empty %}
+                                                {% for cod, rotulo in motivo_choices %}
+                                                    <input type="checkbox" 
+                                                           class="btn-check chk-cat-fechamento" 
+                                                           name="categorias_{{ op.id }}" 
+                                                           id="cat_{{ op.id }}_{{ cod }}" 
+                                                           value="{{ cod }}"
+                                                           data-op-id="{{ op.id }}">
+                                                    <label class="btn btn-outline-warning btn-sm" for="cat_{{ op.id }}_{{ cod }}">
+                                                        {{ rotulo }}
+                                                    </label>
+                                                {% endfor %}
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+
+                                    <!-- Descrição do Ocorrido: O que aconteceu? -->
+                                    <div>
+                                        <label class="form-label small text-light fw-semibold mb-1" for="descricao_desvio_{{ op.id }}">
+                                            O que aconteceu? (Descrição obrigatória) *
+                                        </label>
+                                        <textarea name="descricao_desvio_{{ op.id }}" 
+                                                  id="descricao_desvio_{{ op.id }}" 
+                                                  rows="2" 
+                                                  class="form-control form-control-sm input-descricao-desvio" 
+                                                  data-op-id="{{ op.id }}"
+                                                  placeholder="Descreva o ocorrido (ex: A prensa apresentou vazamento durante o ciclo e ficou parada por aproximadamente duas horas)..."></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+
+                    <!-- Observações Gerais do Fechamento -->
+                    <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
+                        <label class="form-label small text-light fw-bold" for="observacoes_gerais">
+                            Observações Gerais do Turno (Opcional)
+                        </label>
+                        <textarea name="observacoes_gerais" id="observacoes_gerais" rows="2" class="form-control" placeholder="Observações para a liderança ou para o próximo turno..."></textarea>
+                    </div>
+
+                    <!-- Botão de Confirmação com Proteção de Duplo Clique -->
+                    <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top border-secondary border-opacity-25">
+                        <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary">Cancelar</a>
+                        <button type="submit" class="btn btn-warning fw-bold px-4 py-2 d-flex align-items-center gap-2" id="btn-submit-fechamento">
+                            <i class="bi bi-check2-circle fs-5"></i> CONFIRMAR FECHAMENTO DO TURNO
+                        </button>
+                    </div>
+                </div>
+            </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function desabilitarSubmitFechamento(form) {
+        // Validação client-side para garantir que OPs com deficit tenham categoria e descrição
+        const inputsQtd = document.querySelectorAll(".input-qtd-fechamento");
+        for (const input of inputsQtd) {
+            const opId = input.dataset.opId;
+            const meta = parseInt(input.dataset.meta || 0, 10);
+            const realizada = parseInt(input.value || 0, 10);
+
+            if (realizada < meta) {
+                const categoriasChecked = document.querySelectorAll(`input[name="categorias_${opId}"]:checked`);
+                if (categoriasChecked.length === 0) {
+                    alert(`Por favor, selecione pelo menos uma categoria de desvio para a OP.`);
+                    const boxCat = document.getElementById(`box-categorias-${opId}`);
+                    if (boxCat) boxCat.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return false;
+                }
+
+                const desc = document.getElementById(`descricao_desvio_${opId}`);
+                if (!desc || !desc.value.trim()) {
+                    alert(`Por favor, descreva 'O que aconteceu?' para a OP.`);
+                    if (desc) desc.focus();
+                    return false;
+                }
+            }
+        }
+
+        const btn = document.getElementById("btn-submit-fechamento");
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Gravando Fechamento e Atualizando Saldos...`;
+        }
+        return true;
+    }
+
+    document.addEventListener("DOMContentLoaded", function () {
+        const inputsQtd = document.querySelectorAll(".input-qtd-fechamento");
+
+        function atualizarCardOP(input) {
+            const opId = input.dataset.opId;
+            const meta = parseInt(input.dataset.meta || 0, 10);
+            const realizada = parseInt(input.value || 0, 10);
+
+            const saldo = Math.max(0, meta - realizada);
+            const excedente = Math.max(0, realizada - meta);
+            const txtSaldo = document.getElementById(`txt-saldo-${opId}`);
+            const badgeStatus = document.getElementById(`badge-status-${opId}`);
+            const boxMotivo = document.getElementById(`box-motivo-${opId}`);
+            const descArea = document.getElementById(`descricao_desvio_${opId}`);
+
+            if (txtSaldo) {
+                if (excedente > 0) {
+                    txtSaldo.innerHTML = `<span class="text-success">+${excedente} un (excedente)</span>`;
+                } else if (saldo > 0) {
+                    txtSaldo.innerHTML = `<span class="text-danger fw-bold">${saldo} un (saldo)</span>`;
+                } else {
+                    txtSaldo.innerText = "0 un";
+                }
+            }
+
+            if (saldo === 0) {
+                if (badgeStatus) {
+                    badgeStatus.className = "badge bg-success";
+                    badgeStatus.innerText = excedente > 0 ? `CONCLUÍDA (+${excedente})` : "CONCLUÍDA";
+                }
+                if (boxMotivo) {
+                    boxMotivo.classList.add("d-none");
+                }
+                if (descArea) {
+                    descArea.required = false;
+                }
+            } else {
+                if (badgeStatus) {
+                    if (realizada > 0) {
+                        badgeStatus.className = "badge bg-warning text-dark";
+                        badgeStatus.innerText = "PARCIAL";
+                    } else {
+                        badgeStatus.className = "badge bg-danger";
+                        badgeStatus.innerText = "NÃO REALIZADA";
+                    }
+                }
+                if (boxMotivo) {
+                    boxMotivo.classList.remove("d-none");
+                }
+                if (descArea) {
+                    descArea.required = true;
+                }
+            }
+        }
+
+        inputsQtd.forEach(input => {
+            input.addEventListener("input", function () {
+                atualizarCardOP(this);
+            });
+            atualizarCardOP(input); // Executa na carga inicial
+        });
+    });
+</script>
+{% endblock %}
