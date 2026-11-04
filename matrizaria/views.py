@@ -34,6 +34,7 @@ from .forms import (
 )
 from .decorators import (
     matrizaria_access_required,
+    matrizaria_kanban_required,
     matrizaria_solicitar_required,
     matrizaria_executar_required,
     matrizaria_conferir_required,
@@ -46,6 +47,9 @@ from .decorators import (
     _user_can_cancelar,
     _user_can_relatorios,
     _user_can_tv,
+    _user_is_operador_vulcanizacao,
+    _user_is_exclusively_operador_vulcanizacao,
+    _user_can_access_matrizaria_kanban,
 )
 
 
@@ -63,7 +67,7 @@ def sanitize_excel_cell(val):
 
 
 @login_required
-@matrizaria_access_required
+@matrizaria_kanban_required
 def kanban_view(request):
     """
     Painel Kanban operacional da Matrizaria organizado em 4 raias:
@@ -126,6 +130,71 @@ def kanban_view(request):
 
 
 @login_required
+@matrizaria_access_required
+def minhas_solicitacoes_operador_view(request):
+    """
+    Interface restrita de chão de fábrica para acompanhamento de chamados.
+    Filtra rigorosamente apenas as solicitações abertas pelo próprio usuário autenticado.
+    """
+    user = request.user
+    base_qs = (
+        SolicitacaoServicoMatrizaria.objects.filter(solicitado_por=user)
+        .select_related("prensa", "tipo_servico", "matriz_fisica", "responsavel_atribuido")
+    )
+
+    # Estatísticas consolidadas para os stat-cards superiores
+    total = base_qs.count()
+    total_solicitados = base_qs.filter(status__in=["SOLICITADO", "AGUARDANDO_RETRABALHO"]).count()
+    total_em_execucao = base_qs.filter(status="EM_EXECUCAO").count()
+    total_aguardando_conferencia = base_qs.filter(status="AGUARDANDO_CONFERENCIA").count()
+    total_concluidos = base_qs.filter(status="CONCLUIDO").count()
+
+    # Filtros opcionais via GET
+    status_filtro = request.GET.get("status", "").strip().upper()
+    q = request.GET.get("q", "").strip()
+
+    qs = base_qs
+    if status_filtro:
+        if status_filtro in ["SOLICITADO", "ABERTO", "SOLICITADOS"]:
+            qs = qs.filter(status__in=["SOLICITADO", "AGUARDANDO_RETRABALHO"])
+        elif status_filtro in dict(SolicitacaoServicoMatrizaria.STATUS_CHOICES):
+            qs = qs.filter(status=status_filtro)
+
+    if q:
+        qs = qs.filter(
+            Q(prensa__nome__icontains=q)
+            | Q(prensa_nome_snapshot__icontains=q)
+            | Q(tipo_servico__nome__icontains=q)
+            | Q(tipo_servico_nome_snapshot__icontains=q)
+            | Q(descricao_solicitacao__icontains=q)
+            | Q(matriz_identificador_snapshot__icontains=q)
+        )
+
+    qs = qs.order_by("-data_solicitacao")
+
+    # Paginação em blocos de 15 registros
+    paginator = Paginator(qs, 15)
+    page_number = request.GET.get("page")
+    page_obj = paginator.get_page(page_number)
+
+    context = {
+        "solicitacoes": page_obj,
+        "page_obj": page_obj,
+        "total": total,
+        "total_solicitados": total_solicitados,
+        "total_em_execucao": total_em_execucao,
+        "total_aguardando_conferencia": total_aguardando_conferencia,
+        "total_concluidos": total_concluidos,
+        "status_filtro": status_filtro,
+        "q": q,
+        "can_solicitar": _user_can_solicitar(user),
+        "is_operador_vulcanizacao": True,
+        "can_access_matrizaria_kanban": _user_can_access_matrizaria_kanban(user),
+    }
+    return render(request, "matrizaria/minhas_solicitacoes.html", context)
+
+
+@login_required
 @matrizaria_solicitar_required
 def solicitar_servico_view(request):
     """
@@ -139,6 +208,8 @@ def solicitar_servico_view(request):
         session_key = f"matrizaria_req_done_{idempotency_key}" if idempotency_key else None
         if session_key and request.session.get(session_key):
             messages.info(request, "Esta solicitação já foi processada anteriormente.")
+            if _user_is_exclusively_operador_vulcanizacao(request.user):
+                return redirect("matrizaria:minhas_solicitacoes")
             return redirect("matrizaria:detalhe_servico", pk=request.session[session_key])
 
         if form.is_valid():
@@ -159,6 +230,8 @@ def solicitar_servico_view(request):
                     request,
                     f"Solicitação SM #{solicitacao.id} para {solicitacao.equipamento_display} aberta com sucesso!",
                 )
+                if _user_is_exclusively_operador_vulcanizacao(request.user):
+                    return redirect("matrizaria:minhas_solicitacoes")
                 return redirect("matrizaria:detalhe_servico", pk=solicitacao.id)
             except ValidationError as e:
                 form.add_error(None, str(e.message if hasattr(e, "message") else e))
@@ -168,6 +241,7 @@ def solicitar_servico_view(request):
     context = {
         "form": form,
         "titulo": "Abrir Chamado de Matrizaria",
+        "is_operador_vulcanizacao": _user_is_operador_vulcanizacao(request.user),
     }
     return render(request, "matrizaria/form_solicitacao.html", context)
 
@@ -198,9 +272,18 @@ def detalhe_servico_view(request, pk):
     historico = solicitacao.historico_transicoes.all().order_by("-data_evento", "-id")
 
     user = request.user
-    user_can_exec = _user_can_executar(user)
-    user_can_conf = _user_can_conferir(user)
-    user_can_canc = _user_can_cancelar(user)
+
+    # Isolamento estrito de chamados para operadores exclusivos de vulcanização:
+    # Bloqueia a visualização de chamados de terceiros e restringe chamados próprios a somente leitura.
+    is_exclusively_vulcanizacao = _user_is_exclusively_operador_vulcanizacao(user)
+    if is_exclusively_vulcanizacao:
+        if solicitacao.solicitado_por_id != user.id:
+            messages.error(request, "Acesso negado. Você só possui permissão para visualizar suas próprias solicitações.")
+            return redirect("matrizaria:minhas_solicitacoes")
+
+    user_can_exec = _user_can_executar(user) and not is_exclusively_vulcanizacao
+    user_can_conf = _user_can_conferir(user) and not is_exclusively_vulcanizacao
+    user_can_canc = _user_can_cancelar(user) and not is_exclusively_vulcanizacao
 
     # Regra de autoconferência: usuário que participou da execução técnica não pode aprovar
     impedimento_autoconferencia = False
@@ -227,13 +310,15 @@ def detalhe_servico_view(request, pk):
         or user.has_perm("matrizaria.change_solicitacaoservicomatrizaria")
     )
     can_editar = (
-        (is_solicitante_proprio or is_gestao)
+        not is_exclusively_vulcanizacao
+        and (is_solicitante_proprio or is_gestao)
         and solicitacao.status == "SOLICITADO"
         and solicitacao.ciclos_execucao.count() == 0
         and not user.username.startswith("tv")
     )
     can_excluir = (
-        user.is_superuser
+        not is_exclusively_vulcanizacao
+        and user.is_superuser
         and solicitacao.status == "SOLICITADO"
         and solicitacao.ciclos_execucao.count() == 0
         and not user.username.startswith("tv")
@@ -272,6 +357,7 @@ def detalhe_servico_view(request, pk):
         "form_transferir": form_transferir,
         "form_cancelar": form_cancelar,
         "form_editar": form_editar,
+        "is_operador_vulcanizacao": is_exclusively_vulcanizacao or _user_is_operador_vulcanizacao(user),
     }
     return render(request, "matrizaria/detalhe_solicitacao.html", context)
 
@@ -282,8 +368,12 @@ def editar_solicitacao_view(request, pk):
     """
     Ação de editar a solicitação original antes do primeiro início técnico.
     """
-    solicitacao = get_object_or_404(SolicitacaoServicoMatrizaria, pk=pk)
     user = request.user
+    if _user_is_exclusively_operador_vulcanizacao(user):
+        messages.error(request, "Acesso negado. Operadores de vulcanização não possuem permissão para editar solicitações.")
+        return redirect("matrizaria:minhas_solicitacoes")
+
+    solicitacao = get_object_or_404(SolicitacaoServicoMatrizaria, pk=pk)
 
     user_can_sol = _user_can_solicitar(user)
     user_can_conf = _user_can_conferir(user)

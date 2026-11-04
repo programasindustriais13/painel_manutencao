@@ -22,7 +22,7 @@ class Command(BaseCommand):
         # Liderança recebe todas as permissões do módulo
         grupo_lider.permissions.set(todas_perms_bladder)
 
-        # Operadores recebem apenas visualização de OPs e registro de apontamentos
+        # Operadores recebem visualização de cadastros/OPs, apontamentos e passagem de turno
         perms_operador_codenames = [
             "view_ordemproducaobladder",
             "view_processobladder",
@@ -31,6 +31,15 @@ class Command(BaseCommand):
             "add_apontamentoturnobladder",
             "change_apontamentoturnobladder",
             "view_apontamentoturnobladder",
+            "add_mensagempassagemturnobladder",
+            "change_mensagempassagemturnobladder",
+            "view_mensagempassagemturnobladder",
+            "add_acaomensagemturnobladder",
+            "view_acaomensagemturnobladder",
+            "view_fechamentoturnobladder",
+            "view_itemfechamentoturnobladder",
+            "view_categoriadesviobladder",
+            "view_saldopendentebladder",
         ]
         perms_op = Permission.objects.filter(
             content_type__in=content_types,

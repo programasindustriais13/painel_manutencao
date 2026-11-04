@@ -256,7 +256,7 @@
         <div class="container-fluid d-flex justify-content-between align-items-center">
             <!-- Brand -->
             <div class="d-flex align-items-center gap-3">
-                <a href="{% url 'matrizaria:kanban' %}" class="matriz-brand">
+                <a href="{% if is_operador_vulcanizacao and not can_access_matrizaria_kanban %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="matriz-brand">
                     <img src="{% static 'maintenance/img/logo_pneus_freedom_gold.png' %}" alt="Pneus Freedom" style="height: 32px;">
                     <div class="d-none d-md-block">
                         <span class="fw-bold fs-6">PNEUS FREEDOM</span>
@@ -266,20 +266,27 @@
 
                 <!-- Nav Links -->
                 <nav class="d-none d-lg-flex align-items-center gap-1 ms-3">
+                    {% if is_operador_vulcanizacao %}
+                    <a href="{% url 'matrizaria:minhas_solicitacoes' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'minhas_solicitacoes' %}active{% endif %}">
+                        <i class="bi bi-list-check"></i> Minhas Solicitações
+                    </a>
+                    {% endif %}
+                    {% if can_access_matrizaria_kanban or not is_operador_vulcanizacao %}
                     <a href="{% url 'matrizaria:kanban' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'kanban' %}active{% endif %}">
                         <i class="bi bi-kanban"></i> Kanban
                     </a>
+                    {% endif %}
                     {% if can_solicitar %}
                     <a href="{% url 'matrizaria:solicitar_servico' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'solicitar_servico' %}active{% endif %}">
                         <i class="bi bi-plus-circle"></i> Abrir Chamado
                     </a>
                     {% endif %}
-                    {% if can_relatorios %}
+                    {% if can_relatorios and not is_operador_vulcanizacao %}
                     <a href="{% url 'matrizaria:relatorios' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'relatorios' %}active{% endif %}">
                         <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
                     </a>
                     {% endif %}
-                    {% if can_tv %}
+                    {% if can_tv and not is_operador_vulcanizacao %}
                     <a href="{% url 'matrizaria:tv' %}" target="_blank" class="nav-link-custom text-info">
                         <i class="bi bi-tv"></i> Painel TV <i class="bi bi-box-arrow-up-right" style="font-size: 0.75rem;"></i>
                     </a>

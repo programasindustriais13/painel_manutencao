@@ -27,9 +27,15 @@ def module_access_context(request):
             'is_lider_ou_operador': False,
             'can_create_os': False,
             'is_lider_bladder': False,
+            'is_operador_vulcanizacao': False,
+            'can_access_matrizaria_kanban': False,
         }
 
     from bladder.decorators import user_is_lider_bladder
+    from matrizaria.decorators import (
+        _user_is_operador_vulcanizacao,
+        _user_can_access_matrizaria_kanban,
+    )
     return {
         'can_access_maintenance': _user_can_access_maintenance(user),
         'can_access_production': _user_can_access_production(user),
@@ -40,6 +46,8 @@ def module_access_context(request):
         'is_lider_ou_operador': _user_is_lider_ou_operador(user),
         'can_create_os': _user_can_create_os(user),
         'is_lider_bladder': user_is_lider_bladder(user),
+        'is_operador_vulcanizacao': _user_is_operador_vulcanizacao(user),
+        'can_access_matrizaria_kanban': _user_can_access_matrizaria_kanban(user),
     }
 
 

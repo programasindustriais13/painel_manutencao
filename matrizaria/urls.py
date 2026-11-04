@@ -7,6 +7,9 @@ urlpatterns = [
     # Kanban Principal
     path("", views.kanban_view, name="kanban"),
 
+    # Interface Dedicada do Operador de Vulcanização (Chão de Fábrica)
+    path("minhas-solicitacoes/", views.minhas_solicitacoes_operador_view, name="minhas_solicitacoes"),
+
     # Fluxo de Atendimento
     path("solicitar/", views.solicitar_servico_view, name="solicitar_servico"),
     path("servicos/<int:pk>/", views.detalhe_servico_view, name="detalhe_servico"),

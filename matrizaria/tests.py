@@ -517,10 +517,15 @@ class MatrizariaRouterAndMultiContextTestCase(MatrizariaBaseTestCase):
         res_tv = client.get(reverse("home_redirect"))
         self.assertRedirects(res_tv, reverse("matrizaria:tv"))
 
-        # 2. Usuário com 1 módulo (solicitante_user: apenas vulcanização -> matrizaria)
+        # 2. Usuário com 1 módulo (solicitante_user: vulcanização exclusiva -> minhas_solicitacoes)
         client.force_login(self.solicitante_user)
         res_single = client.get(reverse("home_redirect"))
-        self.assertRedirects(res_single, reverse("matrizaria:kanban"))
+        self.assertRedirects(res_single, reverse("matrizaria:minhas_solicitacoes"))
+
+        # 2.1 Usuário da oficina (tecnico_matrizaria_1: apenas matrizaria -> kanban)
+        client.force_login(self.tecnico_matrizaria_1)
+        res_tech = client.get(reverse("home_redirect"))
+        self.assertRedirects(res_tech, reverse("matrizaria:kanban"))
 
         # 3. Usuário com múltiplos módulos (lider_user -> tem produção e matrizaria)
         client.force_login(self.lider_user)
@@ -1216,13 +1221,13 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
             prensa=self.prensa_01,
             tipo_servico=self.tipo_ajuste,
             descricao_solicitacao="Teste de visibilidade de botões",
-            solicitado_por=self.solicitante_user,
+            solicitado_por=self.lider_user,
             destino="MAQUINA",
         )
         url = reverse("matrizaria:detalhe_servico", kwargs={"pk": sol.id})
 
-        # 1. Solicitante comum acessa a tela de detalhes
-        self.client.force_login(self.solicitante_user)
+        # 1. Líder autorizado acessa a tela de detalhes
+        self.client.force_login(self.lider_user)
         res_user = self.client.get(url)
         self.assertEqual(res_user.status_code, 200)
         self.assertFalse(res_user.context["can_excluir"])
@@ -1259,7 +1264,7 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
            - destino identificado como MATRIZARIA;
            - prensa_nome_snapshot preenchido como 'Matrizaria'.
         """
-        self.client.force_login(self.solicitante_user)
+        self.client.force_login(self.lider_user)
         url = reverse("matrizaria:solicitar_servico")
         payload = {
             "prensa": "__MATRIZARIA__",
@@ -1286,7 +1291,7 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
            - prensa corretamente vinculada;
            - destino identificado como MAQUINA.
         """
-        self.client.force_login(self.solicitante_user)
+        self.client.force_login(self.lider_user)
         url = reverse("matrizaria:solicitar_servico")
         payload = {
             "prensa": self.prensa_01.id,
@@ -1337,10 +1342,10 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
             prensa=None,
             tipo_servico=self.tipo_ajuste,
             descricao_solicitacao="Chamado para validar Kanban visual",
-            solicitado_por=self.solicitante_user,
+            solicitado_por=self.lider_user,
             destino="MATRIZARIA",
         )
-        self.client.force_login(self.solicitante_user)
+        self.client.force_login(self.tecnico_matrizaria_1)
         res = self.client.get(reverse("matrizaria:kanban"))
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "Matrizaria")
@@ -1355,7 +1360,7 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
             prensa=None,
             tipo_servico=self.tipo_ajuste,
             descricao_solicitacao="Chamado interno de bancada",
-            solicitado_por=self.solicitante_user,
+            solicitado_por=self.lider_user,
             destino="MATRIZARIA",
         )
         self.assertEqual(self.prensa_01.solicitacoes_matrizaria.count(), 0)
@@ -1366,7 +1371,7 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
             prensa=self.prensa_01,
             tipo_servico=self.tipo_ajuste,
             descricao_solicitacao="Chamado para a prensa 01",
-            solicitado_por=self.solicitante_user,
+            solicitado_por=self.lider_user,
             destino="MAQUINA",
         )
         self.assertEqual(self.prensa_01.solicitacoes_matrizaria.count(), 1)
@@ -1382,12 +1387,12 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
             prensa=self.prensa_01,
             tipo_servico=self.tipo_ajuste,
             descricao_solicitacao="Ajuste inicial em máquina",
-            solicitado_por=self.solicitante_user,
+            solicitado_por=self.lider_user,
             destino="MAQUINA",
         )
         self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")
 
-        self.client.force_login(self.solicitante_user)
+        self.client.force_login(self.lider_user)
         # Edita para Matrizaria
         res_edit_1 = self.client.post(
             reverse("matrizaria:editar_solicitacao", kwargs={"pk": sol.id}),
@@ -1425,4 +1430,359 @@ class MatrizariaSpec1AdjustsTestCase(MatrizariaBaseTestCase):
         self.assertEqual(sol.prensa, self.prensa_02)
         self.assertEqual(sol.prensa_nome_snapshot, "PRENSA BOM 01")  # Preserva snapshot da abertura
         self.assertEqual(sol.equipamento_display, "PRENSA BOM 02")
+
+
+class OperadorVulcanizacaoSpecTestCase(MatrizariaBaseTestCase):
+    """
+    Suíte completa de 25 cenários obrigatórios validando o Perfil de Operador da Vulcanização
+    conforme a SPEC aprovada pelo Subagente Arquiteto.
+    """
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        from django.core.management import call_command
+        # Garantir provisionamento idempotente do grupo e permissões no banco de testes
+        call_command("provisionar_grupos_matrizaria", database="default")
+
+        # Operador de vulcanização exclusivo dedicado
+        cls.op_vulc_1 = User.objects.create_user(
+            username="op_vulc_exclusivo_1", password="password123", first_name="Operador", last_name="Vulc 1"
+        )
+        cls.op_vulc_1.groups.add(cls.grp_vulc)
+
+        # Segundo operador para testes de isolamento de chamados
+        cls.op_vulc_2 = User.objects.create_user(
+            username="op_vulc_exclusivo_2", password="password123", first_name="Operador", last_name="Vulc 2"
+        )
+        cls.op_vulc_2.groups.add(cls.grp_vulc)
+
+    # ---------------------------------------------------------
+    # Grupo A: Autenticação e Permissões (01 a 05)
+    # ---------------------------------------------------------
+    def test_01_grupo_operadores_vulcanizacao_provisionado(self):
+        """01. Valida que o grupo 'Operadores Vulcanização' é criado no banco default via migration/command."""
+        grupo = Group.objects.filter(name="Operadores Vulcanização").first()
+        self.assertIsNotNone(grupo)
+
+    def test_02_grupo_possui_permissoes_estritas_solicitacao(self):
+        """02. Valida presença exclusiva de view e add em solicitacaoservicomatrizaria."""
+        grupo = Group.objects.get(name="Operadores Vulcanização")
+        sol_perms = set(
+            grupo.permissions.filter(content_type__model="solicitacaoservicomatrizaria").values_list("codename", flat=True)
+        )
+        self.assertEqual(sol_perms, {"view_solicitacaoservicomatrizaria", "add_solicitacaoservicomatrizaria"})
+
+    def test_03_grupo_possui_permissoes_leitura_matriz_e_tipo(self):
+        """03. Valida presença de view_matrizfisica e view_tiposervicomatrizaria."""
+        grupo = Group.objects.get(name="Operadores Vulcanização")
+        codenames = set(grupo.permissions.values_list("codename", flat=True))
+        self.assertIn("view_matrizfisica", codenames)
+        self.assertIn("view_tiposervicomatrizaria", codenames)
+
+    def test_04_grupo_nao_possui_permissoes_privilegiadas(self):
+        """04. Valida que o grupo NÃO possui change/delete em solicitações nem permissões em ciclos."""
+        grupo = Group.objects.get(name="Operadores Vulcanização")
+        codenames = set(grupo.permissions.values_list("codename", flat=True))
+        self.assertNotIn("change_solicitacaoservicomatrizaria", codenames)
+        self.assertNotIn("delete_solicitacaoservicomatrizaria", codenames)
+        ciclo_perms = grupo.permissions.filter(content_type__model="cicloexecucaomatrizaria")
+        self.assertEqual(ciclo_perms.count(), 0)
+
+    def test_05_helper_user_is_operador_vulcanizacao(self):
+        """05. Testa que o helper retorna True para membros do grupo e False para outros."""
+        from matrizaria.decorators import _user_is_operador_vulcanizacao
+        self.assertTrue(_user_is_operador_vulcanizacao(self.op_vulc_1))
+        self.assertTrue(_user_is_operador_vulcanizacao(self.solicitante_user))
+        self.assertFalse(_user_is_operador_vulcanizacao(self.tecnico_matrizaria_1))
+        self.assertFalse(_user_is_operador_vulcanizacao(self.lider_user))
+        self.assertFalse(_user_is_operador_vulcanizacao(None))
+
+    # ---------------------------------------------------------
+    # Grupo B: Roteamento e Login (06 a 09)
+    # ---------------------------------------------------------
+    def test_06_helper_user_can_access_matrizaria_kanban_bloqueia_vulcanizacao(self):
+        """06. Testa que _user_can_access_matrizaria_kanban retorna False para operador exclusivo e True para técnicos/líderes."""
+        from matrizaria.decorators import _user_can_access_matrizaria_kanban
+        self.assertFalse(_user_can_access_matrizaria_kanban(self.op_vulc_1))
+        self.assertTrue(_user_can_access_matrizaria_kanban(self.tecnico_matrizaria_1))
+        self.assertTrue(_user_can_access_matrizaria_kanban(self.lider_user))
+
+    def test_07_home_redirect_operador_vulcanizacao_vai_para_minhas_solicitacoes(self):
+        """07. Usuário exclusivo de vulcanização é redirecionado por home_redirect para /matrizaria/minhas-solicitacoes/."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("home_redirect"))
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_08_portal_select_operador_vulcanizacao_redireciona_direto(self):
+        """08. Acesso a portal_select por operador de vulcanização exclusivo redireciona direto para minhas-solicitacoes."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("portal_select"))
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_09_portal_select_dual_access_card_aponta_minhas_solicitacoes(self):
+        """09. Usuário com dual access (Vulcanização + Produção) recebe matrizaria_url apontando para minhas_solicitacoes."""
+        dual_user = User.objects.create_user(username="dual_user_spec", password="password123")
+        dual_user.groups.add(self.grp_vulc)
+        # Permissão de produção sem atribuir grupo privilegiado da oficina
+        perm_prod = Permission.objects.get(codename="view_productiontarget", content_type__app_label="production")
+        dual_user.user_permissions.add(perm_prod)
+
+        self.client.force_login(dual_user)
+        res = self.client.get(reverse("portal_select"))
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.context["matrizaria_url"], "matrizaria:minhas_solicitacoes")
+        self.assertContains(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    # ---------------------------------------------------------
+    # Grupo C: Abertura de Chamados (10 a 13)
+    # ---------------------------------------------------------
+    def test_10_operador_vulcanizacao_acessa_formulario_solicitar_sucesso(self):
+        """10. GET em /matrizaria/solicitar/ retorna HTTP 200 para operador de vulcanização."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("matrizaria:solicitar_servico"))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Abrir Chamado de Matrizaria")
+
+    def test_11_abertura_solicitacao_define_solicitado_por_automatico(self):
+        """11. POST de criação salva a solicitação com solicitado_por == request.user."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.post(
+            reverse("matrizaria:solicitar_servico"),
+            data={
+                "prensa": self.prensa_01.id,
+                "tipo_servico": self.tipo_ajuste.id,
+                "descricao_solicitacao": "Ordem de serviço aberta pelo operador 1",
+                "prioridade": "NORMAL",
+                "idempotency_key": "spec-test-11",
+            },
+        )
+        sol = SolicitacaoServicoMatrizaria.objects.filter(descricao_solicitacao="Ordem de serviço aberta pelo operador 1").first()
+        self.assertIsNotNone(sol)
+        self.assertEqual(sol.solicitado_por, self.op_vulc_1)
+
+    def test_12_abertura_solicitacao_ignora_injecao_outro_solicitante(self):
+        """12. Tentativa de enviar outro ID no payload POST não altera o solicitante real."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.post(
+            reverse("matrizaria:solicitar_servico"),
+            data={
+                "prensa": self.prensa_01.id,
+                "tipo_servico": self.tipo_ajuste.id,
+                "descricao_solicitacao": "Tentativa forjar autoria",
+                "prioridade": "NORMAL",
+                "solicitado_por": self.lider_user.id,
+                "idempotency_key": "spec-test-12",
+            },
+        )
+        sol = SolicitacaoServicoMatrizaria.objects.filter(descricao_solicitacao="Tentativa forjar autoria").first()
+        self.assertIsNotNone(sol)
+        self.assertEqual(sol.solicitado_por, self.op_vulc_1)
+
+    def test_13_abertura_solicitacao_redireciona_com_sucesso(self):
+        """13. Abertura com sucesso redireciona para matrizaria:minhas_solicitacoes com mensagem de sucesso."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.post(
+            reverse("matrizaria:solicitar_servico"),
+            data={
+                "prensa": self.prensa_01.id,
+                "tipo_servico": self.tipo_ajuste.id,
+                "descricao_solicitacao": "Redirecionamento para minhas solicitacoes",
+                "prioridade": "NORMAL",
+                "idempotency_key": "spec-test-13",
+            },
+        )
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    # ---------------------------------------------------------
+    # Grupo D: Interface Restrita e Isolamento (14 a 17)
+    # ---------------------------------------------------------
+    def test_14_operador_acessa_minhas_solicitacoes_sucesso(self):
+        """14. GET em /matrizaria/minhas-solicitacoes/ retorna HTTP 200 e lista solicitações próprias."""
+        MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Ordem própria para listagem",
+            solicitado_por=self.op_vulc_1,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("matrizaria:minhas_solicitacoes"))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Ordem própria para listagem")
+
+    def test_15_minhas_solicitacoes_isola_solicitacoes_de_terceiros(self):
+        """15. Solicitações de outros operadores NÃO aparecem na tela do operador."""
+        sol_op1 = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado do operador 1",
+            solicitado_por=self.op_vulc_1,
+        )
+        sol_op2 = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_02,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado secreto do operador 2",
+            solicitado_por=self.op_vulc_2,
+        )
+
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("matrizaria:minhas_solicitacoes"))
+        self.assertEqual(res.status_code, 200)
+        self.assertContains(res, "Chamado do operador 1")
+        self.assertNotContains(res, "Chamado secreto do operador 2")
+        ids_no_context = [s.id for s in res.context["solicitacoes"]]
+        self.assertIn(sol_op1.id, ids_no_context)
+        self.assertNotIn(sol_op2.id, ids_no_context)
+
+    def test_16_detalhe_propria_solicitacao_somente_leitura(self):
+        """16. Detalhe de solicitação própria carrega em HTTP 200 com todas as flags de ação desativadas."""
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Inspecionar chamado próprio",
+            solicitado_por=self.op_vulc_1,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("matrizaria:detalhe_servico", kwargs={"pk": sol.id}))
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.context["can_executar"])
+        self.assertFalse(res.context["can_conferir"])
+        self.assertFalse(res.context["can_cancelar"])
+        self.assertFalse(res.context["can_editar"])
+        self.assertFalse(res.context["can_excluir"])
+        self.assertTrue(res.context["is_operador_vulcanizacao"])
+
+    def test_17_detalhe_solicitacao_terceiros_bloqueado(self):
+        """17. Operador tentando acessar detalhe de chamado de terceiro recebe bloqueio (redirecionamento com erro)."""
+        sol_terceiro = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_02,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Chamado alheio",
+            solicitado_por=self.op_vulc_2,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("matrizaria:detalhe_servico", kwargs={"pk": sol_terceiro.id}))
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    # ---------------------------------------------------------
+    # Grupo E: Bloqueio de Ações Técnicas (18 a 21)
+    # ---------------------------------------------------------
+    def test_18_kanban_geral_bloqueado_para_operador_vulcanizacao(self):
+        """18. Operador tentando acessar /matrizaria/ é redirecionado para /matrizaria/minhas-solicitacoes/."""
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.get(reverse("matrizaria:kanban"))
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_19_iniciar_atendimento_bloqueado_para_operador_vulcanizacao(self):
+        """19. POST em /servicos/<pk>/iniciar/ por operador de vulcanização é bloqueado."""
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Tentativa de iniciar",
+            solicitado_por=self.op_vulc_1,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.post(
+            reverse("matrizaria:iniciar_atendimento", kwargs={"pk": sol.id}),
+            data={"versao": sol.versao},
+        )
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+        sol.refresh_from_db()
+        self.assertEqual(sol.status, "SOLICITADO")
+
+    def test_20_transferir_e_finalizar_bloqueados_para_operador_vulcanizacao(self):
+        """20. POSTs em /transferir/ e /finalizar/ são bloqueados."""
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Tentativa de finalizar e transferir",
+            solicitado_por=self.op_vulc_1,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res_trans = self.client.post(
+            reverse("matrizaria:transferir_responsabilidade", kwargs={"pk": sol.id}),
+            data={"versao": sol.versao},
+        )
+        self.assertRedirects(res_trans, reverse("matrizaria:minhas_solicitacoes"))
+
+        res_fin = self.client.post(
+            reverse("matrizaria:finalizar_execucao", kwargs={"pk": sol.id}),
+            data={"versao": sol.versao},
+        )
+        self.assertRedirects(res_fin, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_21_conferir_aprovacao_bloqueado_para_operador_vulcanizacao(self):
+        """21. POST em /servicos/<pk>/conferir/ é bloqueado com erro de permissão."""
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Tentativa de conferir",
+            solicitado_por=self.op_vulc_1,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res = self.client.post(
+            reverse("matrizaria:conferir_servico", kwargs={"pk": sol.id}),
+            data={"versao": sol.versao, "acao": "APROVAR"},
+        )
+        self.assertRedirects(res, reverse("matrizaria:minhas_solicitacoes"))
+
+    # ---------------------------------------------------------
+    # Grupo F: Bloqueio de Gestão e Outros Módulos (22 a 25)
+    # ---------------------------------------------------------
+    def test_22_editar_e_cancelar_bloqueados_para_operador_vulcanizacao(self):
+        """22. POSTs em /editar/ e /cancelar/ são bloqueados para o operador."""
+        sol = MatrizariaService.criar_solicitacao(
+            prensa=self.prensa_01,
+            tipo_servico=self.tipo_ajuste,
+            descricao_solicitacao="Tentativa de editar/cancelar",
+            solicitado_por=self.op_vulc_1,
+        )
+        self.client.force_login(self.op_vulc_1)
+        res_edit = self.client.post(
+            reverse("matrizaria:editar_solicitacao", kwargs={"pk": sol.id}),
+            data={
+                "versao": sol.versao,
+                "prensa": self.prensa_01.id,
+                "tipo_servico": self.tipo_ajuste.id,
+                "descricao_solicitacao": "Editada ilegalmente",
+                "prioridade": "NORMAL",
+                "motivo_edicao": "Teste",
+            },
+        )
+        self.assertRedirects(res_edit, reverse("matrizaria:minhas_solicitacoes"))
+
+        res_canc = self.client.post(
+            reverse("matrizaria:cancelar_servico", kwargs={"pk": sol.id}),
+            data={"versao": sol.versao, "motivo_cancelamento": "Teste cancelamento"},
+        )
+        self.assertRedirects(res_canc, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_23_relatorios_matrizaria_bloqueados_para_operador_vulcanizacao(self):
+        """23. GET em /relatorios/ e /relatorios/exportar-excel/ são bloqueados."""
+        self.client.force_login(self.op_vulc_1)
+        res_rel = self.client.get(reverse("matrizaria:relatorios"))
+        self.assertRedirects(res_rel, reverse("matrizaria:minhas_solicitacoes"))
+
+        res_exp = self.client.get(reverse("matrizaria:exportar_excel"))
+        self.assertRedirects(res_exp, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_24_painel_tv_matrizaria_bloqueado_para_operador_vulcanizacao(self):
+        """24. GET em /tv/ e /api/tv-data/ são bloqueados."""
+        self.client.force_login(self.op_vulc_1)
+        res_tv = self.client.get(reverse("matrizaria:tv"))
+        self.assertRedirects(res_tv, reverse("matrizaria:minhas_solicitacoes"))
+
+        res_api = self.client.get(reverse("matrizaria:api_tv_data"))
+        self.assertRedirects(res_api, reverse("matrizaria:minhas_solicitacoes"))
+
+    def test_25_modulos_manutencao_producao_bladder_bloqueados(self):
+        """25. Operador de vulcanização tentando acessar /management/, /producao/ e /bladder/ recebe acesso negado."""
+        self.client.force_login(self.op_vulc_1)
+        res_maint = self.client.get(reverse("technician_management"))
+        self.assertEqual(res_maint.status_code, 302)
+
+        res_prod = self.client.get(reverse("production:dashboard"))
+        self.assertEqual(res_prod.status_code, 302)
+
+        res_blad = self.client.get(reverse("bladder:dashboard"))
+        self.assertEqual(res_blad.status_code, 302)
 

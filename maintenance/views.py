@@ -286,6 +286,9 @@ def home_redirect(request):
         if mod == 'production':
             return redirect('production:dashboard')
         elif mod == 'matrizaria':
+            from matrizaria.decorators import _user_is_exclusively_operador_vulcanizacao
+            if _user_is_exclusively_operador_vulcanizacao(user):
+                return redirect('matrizaria:minhas_solicitacoes')
             return redirect('matrizaria:kanban')
         elif mod == 'bladder':
             if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
@@ -317,6 +320,9 @@ def portal_select(request):
         if 'production' in accessible:
             return redirect('production:dashboard')
         if 'matrizaria' in accessible:
+            from matrizaria.decorators import _user_is_exclusively_operador_vulcanizacao
+            if _user_is_exclusively_operador_vulcanizacao(user):
+                return redirect('matrizaria:minhas_solicitacoes')
             return redirect('matrizaria:kanban')
         if 'bladder' in accessible:
             if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
@@ -347,9 +353,16 @@ def portal_select(request):
     else:
         bladder_url = 'bladder:operador'
 
+    from matrizaria.decorators import _user_is_exclusively_operador_vulcanizacao
+    if _user_is_exclusively_operador_vulcanizacao(user):
+        matrizaria_url = 'matrizaria:minhas_solicitacoes'
+    else:
+        matrizaria_url = 'matrizaria:kanban'
+
     context = {
         'maintenance_url': maintenance_url,
         'bladder_url': bladder_url,
+        'matrizaria_url': matrizaria_url,
         'can_access_maintenance': 'maintenance' in accessible,
         'can_access_production': 'production' in accessible,
         'can_access_matrizaria': 'matrizaria' in accessible,

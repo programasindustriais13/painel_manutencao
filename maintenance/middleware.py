@@ -34,6 +34,8 @@ def is_dedicated_tv_account(user) -> bool:
         "Operadores Vulcanização",
         "Liderança de Produção",
         "Matrizaria",
+        "Liderança Bladder",
+        "Operadores Bladder",
     ]
     if user.groups.filter(name__in=operational_groups).exists():
         return False

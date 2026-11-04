@@ -581,7 +581,7 @@
 
             <!-- Card 4: Matrizaria Industrial -->
             {% if can_access_matrizaria %}
-            <a href="{% url 'matrizaria:kanban' %}" class="portal-card card-matriz" id="card-matrizaria">
+            <a href="{% url matrizaria_url|default:'matrizaria:kanban' %}" class="portal-card card-matriz" id="card-matrizaria">
                 <div>
                     <div class="icon-box">
                         <i class="bi bi-grid-3x3-gap-fill"></i>

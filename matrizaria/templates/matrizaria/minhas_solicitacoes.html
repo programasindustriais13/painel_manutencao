@@ -1,0 +1,278 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+
+{% block title %}Minhas Solicitações &bull; Operador Vulcanização &bull; Pneus Freedom{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stat-card {
+        background-color: var(--dark-card);
+        border: 1px solid var(--dark-card-border);
+        border-radius: 12px;
+        padding: 1.1rem;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    .stat-card:hover {
+        transform: translateY(-2px);
+        border-color: rgba(139, 92, 246, 0.4);
+    }
+    .stat-card.active-stat {
+        border-color: var(--matriz-accent);
+        background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(19, 27, 42, 0.95) 100%);
+    }
+    .stat-number {
+        font-size: 1.85rem;
+        font-weight: 800;
+        line-height: 1.2;
+    }
+    .solicitacao-card {
+        background-color: var(--dark-card);
+        border: 1px solid var(--dark-card-border);
+        border-radius: 14px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        transition: all 0.2s ease;
+    }
+    .solicitacao-card:hover {
+        border-color: rgba(139, 92, 246, 0.35);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    .solicitacao-card.urgent-border {
+        border-left: 5px solid #EF4444;
+    }
+    .badge-status-solicitado { background-color: #64748B; color: #FFFFFF; }
+    .badge-status-em_execucao { background-color: #3B82F6; color: #FFFFFF; }
+    .badge-status-aguardando_conferencia { background-color: #F59E0B; color: #0F172A; }
+    .badge-status-aguardando_retrabalho { background-color: #EF4444; color: #FFFFFF; }
+    .badge-status-concluido { background-color: #10B981; color: #FFFFFF; }
+    .badge-status-cancelado { background-color: #475569; color: #CBD5E1; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+    <!-- Header de Abertura e Título -->
+    <div class="glass-card p-3 p-md-4 mb-4">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2">
+                    <h3 class="fw-bold text-white mb-0">
+                        <i class="bi bi-list-check text-purple" style="color: var(--matriz-accent-light);"></i>
+                        Minhas Solicitações de Matrizaria
+                    </h3>
+                    <span class="badge bg-purple-subtle text-white border border-purple-subtle rounded-pill px-3 py-1" style="background: rgba(139, 92, 246, 0.2); border-color: rgba(139, 92, 246, 0.4);">
+                        Vulcanização
+                    </span>
+                </div>
+                <p class="text-muted small mb-0 mt-1">
+                    Acompanhe em tempo real o status dos chamados de matrizes e manutenção de ferramentas solicitados por você.
+                </p>
+            </div>
+
+            <!-- Botão Nova Solicitação Destacado -->
+            <div>
+                <a href="{% url 'matrizaria:solicitar_servico' %}" class="btn btn-primary btn-lg fw-bold d-inline-flex align-items-center gap-2 shadow" style="background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%); border: none;">
+                    <i class="bi bi-plus-circle-fill fs-5"></i>
+                    <span>Nova Solicitação</span>
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stat Cards com Filtro de Status -->
+    <div class="row g-3 mb-4">
+        <!-- Total -->
+        <div class="col-6 col-md-4 col-xl">
+            <a href="{% url 'matrizaria:minhas_solicitacoes' %}" class="stat-card {% if not status_filtro %}active-stat{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="text-muted small fw-semibold">Total Criadas</span>
+                    <i class="bi bi-collection text-secondary"></i>
+                </div>
+                <div class="stat-number text-white">{{ total }}</div>
+            </a>
+        </div>
+
+        <!-- Solicitados / Pendentes -->
+        <div class="col-6 col-md-4 col-xl">
+            <a href="{% url 'matrizaria:minhas_solicitacoes' %}?status=SOLICITADO" class="stat-card {% if status_filtro == 'SOLICITADO' %}active-stat{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="text-muted small fw-semibold">Abertas / Fila</span>
+                    <i class="bi bi-hourglass-split text-secondary"></i>
+                </div>
+                <div class="stat-number text-light">{{ total_solicitados }}</div>
+            </a>
+        </div>
+
+        <!-- Em Execução -->
+        <div class="col-6 col-md-4 col-xl">
+            <a href="{% url 'matrizaria:minhas_solicitacoes' %}?status=EM_EXECUCAO" class="stat-card {% if status_filtro == 'EM_EXECUCAO' %}active-stat{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="text-muted small fw-semibold">Em Execução</span>
+                    <i class="bi bi-tools text-primary"></i>
+                </div>
+                <div class="stat-number text-primary">{{ total_em_execucao }}</div>
+            </a>
+        </div>
+
+        <!-- Aguardando Conferência -->
+        <div class="col-6 col-md-4 col-xl">
+            <a href="{% url 'matrizaria:minhas_solicitacoes' %}?status=AGUARDANDO_CONFERENCIA" class="stat-card {% if status_filtro == 'AGUARDANDO_CONFERENCIA' %}active-stat{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="text-muted small fw-semibold">Aguard. Líder</span>
+                    <i class="bi bi-clipboard-check text-warning"></i>
+                </div>
+                <div class="stat-number text-warning">{{ total_aguardando_conferencia }}</div>
+            </a>
+        </div>
+
+        <!-- Concluídos -->
+        <div class="col-12 col-md-4 col-xl">
+            <a href="{% url 'matrizaria:minhas_solicitacoes' %}?status=CONCLUIDO" class="stat-card {% if status_filtro == 'CONCLUIDO' %}active-stat{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <span class="text-muted small fw-semibold">Concluídos</span>
+                    <i class="bi bi-check2-circle text-success"></i>
+                </div>
+                <div class="stat-number text-success">{{ total_concluidos }}</div>
+            </a>
+        </div>
+    </div>
+
+    <!-- Barra de Filtros e Busca -->
+    <div class="glass-card p-3 mb-4">
+        <form method="get" class="row g-2 align-items-center">
+            {% if status_filtro %}
+            <input type="hidden" name="status" value="{{ status_filtro }}">
+            {% endif %}
+
+            <div class="col-12 col-md-8">
+                <div class="input-group">
+                    <span class="input-group-text bg-dark border-secondary border-opacity-25 text-muted">
+                        <i class="bi bi-search"></i>
+                    </span>
+                    <input type="text" name="q" value="{{ q }}" class="form-control" placeholder="Buscar por prensa, matriz, descrição ou serviço...">
+                </div>
+            </div>
+
+            <div class="col-6 col-md-2">
+                <button type="submit" class="btn btn-outline-light w-100 fw-semibold">
+                    Filtrar
+                </button>
+            </div>
+
+            <div class="col-6 col-md-2">
+                <a href="{% url 'matrizaria:minhas_solicitacoes' %}" class="btn btn-outline-secondary w-100" title="Limpar filtros">
+                    <i class="bi bi-arrow-counterclockwise"></i> Limpar
+                </a>
+            </div>
+        </form>
+    </div>
+
+    <!-- Lista de Solicitações -->
+    {% if solicitacoes %}
+        <div class="row g-3">
+            {% for s in solicitacoes %}
+            <div class="col-12 col-lg-6">
+                <div class="solicitacao-card {% if s.prioridade == 'URGENTE' %}urgent-border{% endif %}">
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <span class="fw-bold text-white fs-5">SM #{{ s.id }}</span>
+                            <span class="badge badge-status-{{ s.status|lower }}">{{ s.get_status_display }}</span>
+                            {% if s.prioridade == "URGENTE" %}
+                            <span class="badge bg-danger text-white badge-pulse">URGENTE</span>
+                            {% endif %}
+                        </div>
+                        <span class="text-muted small">
+                            <i class="bi bi-clock me-1"></i>{{ s.data_solicitacao|date:"d/m H:i" }}
+                        </span>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="text-light fw-semibold fs-6 mb-1">
+                            <i class="bi bi-cpu text-info me-1"></i> {{ s.equipamento_display }}
+                        </div>
+                        <div class="text-secondary small">
+                            <i class="bi bi-wrench me-1"></i> <strong>{{ s.tipo_servico_nome_snapshot }}</strong>
+                        </div>
+                        {% if s.matriz_identificador_snapshot or s.matriz_fisica %}
+                        <div class="text-secondary small mt-1">
+                            <i class="bi bi-disc me-1"></i>
+                            Matriz: <span class="text-light">{{ s.matriz_identificador_snapshot|default:s.matriz_fisica.nome_exibicao }}</span>
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    <div class="p-2 rounded bg-dark border border-secondary border-opacity-25 small text-muted mb-3" style="max-height: 70px; overflow-y: auto;">
+                        {{ s.descricao_solicitacao|truncatechars:180 }}
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center pt-2 border-top border-secondary border-opacity-25">
+                        <div class="small text-muted">
+                            {% if s.responsavel_atribuido %}
+                                <i class="bi bi-person-gear text-purple"></i> {{ s.responsavel_atribuido_nome }}
+                            {% else %}
+                                <i class="bi bi-hourglass-split"></i> Aguardando Atendimento
+                            {% endif %}
+                        </div>
+
+                        <a href="{% url 'matrizaria:detalhe_servico' s.id %}" class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1">
+                            <span>Ver Detalhes</span>
+                            <i class="bi bi-chevron-right"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Paginação -->
+        {% if page_obj.has_other_pages %}
+        <nav class="d-flex justify-content-center mt-4">
+            <ul class="pagination pagination-sm">
+                {% if page_obj.has_previous %}
+                <li class="page-item">
+                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.previous_page_number }}{% if status_filtro %}&status={{ status_filtro }}{% endif %}{% if q %}&q={{ q }}{% endif %}">
+                        &laquo; Anterior
+                    </a>
+                </li>
+                {% endif %}
+
+                <li class="page-item active">
+                    <span class="page-link bg-purple border-purple" style="background-color: var(--matriz-accent); border-color: var(--matriz-accent);">
+                        Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+                    </span>
+                </li>
+
+                {% if page_obj.has_next %}
+                <li class="page-item">
+                    <a class="page-link bg-dark text-light border-secondary" href="?page={{ page_obj.next_page_number }}{% if status_filtro %}&status={{ status_filtro }}{% endif %}{% if q %}&q={{ q }}{% endif %}">
+                        Próxima &raquo;
+                    </a>
+                </li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+
+    {% else %}
+        <!-- Estado Vazio -->
+        <div class="glass-card text-center p-5">
+            <div class="mb-3">
+                <i class="bi bi-inbox text-muted" style="font-size: 3.5rem;"></i>
+            </div>
+            <h5 class="fw-bold text-white mb-2">Nenhuma solicitação encontrada</h5>
+            <p class="text-muted small mb-4">
+                {% if status_filtro or q %}
+                    Não encontramos chamados para os filtros selecionados. Tente limpar os filtros de busca.
+                {% else %}
+                    Você ainda não abriu nenhuma solicitação de serviço para a Matrizaria.
+                {% endif %}
+            </p>
+            <a href="{% url 'matrizaria:solicitar_servico' %}" class="btn btn-primary fw-semibold" style="background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%); border: none;">
+                <i class="bi bi-plus-circle me-1"></i> Abrir Primeira Solicitação
+            </a>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

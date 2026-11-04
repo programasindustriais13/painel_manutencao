@@ -17,7 +17,7 @@
                         Preencha as informações para solicitar atendimento técnico de matrizes ou ferramental.
                     </p>
                 </div>
-                <a href="{% url 'matrizaria:kanban' %}" class="btn btn-outline-secondary btn-sm">
+                <a href="{% if is_operador_vulcanizacao %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="btn btn-outline-secondary btn-sm">
                     <i class="bi bi-x-lg"></i> Voltar
                 </a>
             </div>
@@ -99,7 +99,7 @@
 
                 <!-- Footer Buttons -->
                 <div class="d-flex justify-content-end gap-3 pt-3 border-top border-secondary border-opacity-25">
-                    <a href="{% url 'matrizaria:kanban' %}" class="btn btn-outline-secondary px-4">
+                    <a href="{% if is_operador_vulcanizacao %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="btn btn-outline-secondary px-4">
                         Cancelar
                     </a>
                     <button type="submit" class="btn btn-primary px-4 fw-semibold" id="btn-submit" style="background: linear-gradient(135deg, #8B5CF6 0%, #6D28D9 100%); border: none;">

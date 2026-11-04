@@ -4223,3 +4223,82 @@ Status: 100% HOMOLOGADO E APROVADO (GREEN)
    - Validação backend em todas as rotas de criação e ação. Staff genérico e operadores de outros módulos são bloqueados.
 ================================================================================
 
+
+================================================================================
+15. NOVO PERFIL DE OPERADOR DA VULCANIZAÇÃO NA MATRIZARIA E PIPELINE DE DEPLOY AUTOMATIZADO
+================================================================================
+
+1. OBJETIVO E DIRETRIZES DE SEGURANÇA E ARQUITETURA:
+   - Funcionalidade que permite aos operadores da Vulcanização abrir e acompanhar ordens/solicitações de serviço para moldes e matrizes industriais sem comprometer o fluxo operacional ou a confidencialidade da oficina de Matrizaria.
+   - Princípio do Menor Privilégio e Zero Trust:
+     * Operadores de vulcanização NÃO possuem acesso ao Kanban geral da matrizaria (`/matrizaria/`), à TV da matrizaria (`/matrizaria/tv/`), aos relatórios analíticos (`/matrizaria/relatorios/`) nem à exportação de dados em Excel.
+     * Operadores de vulcanização são estritamente impedidos de executar ações exclusivas da equipe da oficina: iniciar atendimento, transferir técnico, finalizar serviço, conferir/aprovar, editar chamados alheios ou cancelar ordens.
+   - Isolamento Estrito de Visibilidade:
+     * Nova interface `/matrizaria/minhas-solicitacoes/` lista exclusivamente os chamados em que `solicitado_por == request.user`.
+     * Tentativas de acessar detalhes de solicitações pertencentes a outros solicitantes resultam em bloqueio e redirecionamento de segurança.
+   - Prevenção de Injeção de Identidade:
+     * No formulário `/matrizaria/solicitar/`, o campo `solicitado_por` é vinculado no backend forçadamente a `request.user`. Qualquer valor forjado no POST é expressamente desconsiderado.
+   - Roteamento Inteligente e Dual Access:
+     * Operador exclusivo de Vulcanização que acessa a raiz `/` (`home_redirect`) ou `/management/portal/` é automaticamente redirecionado para `/matrizaria/minhas-solicitacoes/`.
+     * Usuários com múltiplos perfis autorizados (ex: Produção + Vulcanização) mantêm a tela de seleção de módulos (`/management/portal/`), na qual o card "Matrizaria" aponta inteligentemente para `/matrizaria/minhas-solicitacoes/`.
+     * O contador de mensagens não lidas (`unread_messages_count`) é zerado no middleware para evitar consultas indevidas aos recados da Manutenção/Bladder.
+     * Operadores de Vulcanização sem outras permissões recebem bloqueio (HTTP 302/403) ao tentar navegar nas áreas restritas de `/management/`, `/producao/` e `/bladder/`.
+
+2. PROVISIONAMENTO DE GRUPOS E MIGRATION 0004:
+   - Grupo de Governança Django: `Operadores Vulcanização`
+   - Permissões Concedidas:
+     * `matrizaria.add_solicitacaoservicomatrizaria`
+     * `matrizaria.view_solicitacaoservicomatrizaria`
+   - Migration Criada: `matrizaria/migrations/0004_provisionar_grupo_operadores_vulcanizacao.py`
+     * Migration puramente aditiva e reversível, garantindo o provisionamento no banco de dados default da aplicação.
+   - Comando de Gerenciamento:
+     * `python manage.py provisionar_grupos_matrizaria`
+     * Idempotente, com execução segura em ambientes de desenvolvimento, homologação e produção.
+
+3. ARQUIVOS CRIADOS E ALTERADOS:
+   - `matrizaria/migrations/0004_provisionar_grupo_operadores_vulcanizacao.py`: Migration aditiva de provisionamento de grupos e permissões.
+   - `matrizaria/management/commands/provisionar_grupos_matrizaria.py`: Provisionamento de permissões do grupo "Operadores Vulcanização" e garantia de permissões para "Matrizaria".
+   - `matrizaria/decorators.py`: Helpers `is_operador_vulcanizacao`, `is_equipe_matrizaria` e decoradores `solicitante_matrizaria_required` e `matrizaria_staff_required`.
+   - `matrizaria/views.py`:
+     * Implementação da view `MinhasSolicitacoesView` com métricas rápidas (Abertas, Em Andamento, Concluídas), paginação de 15 itens por página e isolamento por usuário.
+     * Proteção de `SolicitarServicoView` para forçar `solicitado_por = request.user` e redirecionar para `minhas_solicitacoes`.
+     * Proteção de `DetalheSolicitacaoView` com modo somente leitura para solicitantes.
+     * Bloqueio das views de oficina (`iniciar_atendimento`, `transferir_atendimento`, `finalizar_atendimento`, `conferir_aprovacao`, `editar_solicitacao`, `cancelar_solicitacao`, relatórios e TV).
+     * Redirecionamento da `KanbanView` para `minhas_solicitacoes` quando o usuário for operador da vulcanização.
+   - `matrizaria/urls.py`: Adicionada rota `/minhas-solicitacoes/` com name `minhas_solicitacoes`.
+   - `matrizaria/templates/matrizaria/minhas_solicitacoes.html`: Interface visual responsiva, touch-friendly, com métricas, cards detalhados, crachá de solicitante e botão rápido "+ Nova Solicitação".
+   - `matrizaria/templates/matrizaria/base_matrizaria.html`: Topbar adaptativa que oculta itens de gestão/Kanban/TV para operadores de vulcanização e exibe o link direto "Minhas Solicitações".
+   - `matrizaria/templates/matrizaria/form_solicitacao.html`: Oculta o seletor de solicitante caso o usuário seja operador de vulcanização, exibindo crachá fixo do operador logado.
+   - `matrizaria/templates/matrizaria/detalhe_solicitacao.html`: Oculta formulários de transição de status para operadores de vulcanização.
+   - `maintenance/views.py`: Ajustado roteamento de `home_redirect` e lógica de `portal_select` para suporte ao perfil de vulcanização e dual access.
+   - `maintenance/templates/maintenance/portal_select.html`: Card da Matrizaria aponta para `/matrizaria/minhas-solicitacoes/` caso o usuário seja operador de vulcanização.
+   - `maintenance/middleware.py`: Isolamento do contador de mensagens não lidas para perfis restritos.
+   - `maintenance/context_processors.py`: Injeção de flags de perfil (`is_operador_vulcanizacao`, `is_equipe_matrizaria`) no contexto dos templates.
+   - `matrizaria/tests.py`: Adicionada classe `OperadorVulcanizacaoSpecTestCase` com 25 testes cobrindo todos os cenários da especificação técnica.
+   - `regras_programacao/SPEC_ACESSO_OPERADORES_VULCANIZACAO_MATRIZARIA.md`: Documentação técnica completa da especificação de acesso.
+   - `scripts/deploy_production.ps1`: Pipeline automatizado de deploy em produção PowerShell para Windows Server.
+
+4. SCRIPT DE DEPLOY AUTOMATIZADO EM PRODUÇÃO (`scripts/deploy_production.ps1`):
+   - Criado script robusto e idempotente para orquestração de deploy no Windows Server da Pneus Freedom:
+     * Etapa 1: Pré-verificações de integridade (existência de `manage.py`, validação do Python 3.11 no `.venv`, integridade do arquivo `.env`, status do Git e execução de `manage.py check`).
+     * Etapa 2: Backup preventivo de segurança (cópia automática com carimbo de data/hora em `backups/deploy_YYYYMMDD_HHmmss` contendo `db.sqlite3`, `.env` e pasta `media/`, com validação de tamanho de arquivo maior que zero).
+     * Etapa 3: Aplicação de migrações (`manage.py migrate --database=default`), provisionamento de grupos (`manage.py provisionar_grupos_matrizaria`) e compilação de assets estáticos (`manage.py collectstatic --noinput`).
+     * Etapa 4: Gerenciamento seguro de processos (interrupção e reinício de serviços agendados/Waitress na porta 8900 e coletor SCADA, com liberação forçada de portas travadas caso necessário).
+     * Etapa 5: Pós-verificação e Smoke Tests (requisição HTTP GET no endpoint `/login/` na porta 8900 para atestar status 200/302 e saúde completa da aplicação).
+   - Comandos de Execução no Windows Server:
+     * Modo Apenas Diagnóstico (não altera nada):
+       `powershell -ExecutionPolicy Bypass -File .\scripts\deploy_production.ps1 -CheckOnly`
+     * Modo Simulação Completa (Dry-Run sem alterações no disco):
+       `powershell -ExecutionPolicy Bypass -File .\scripts\deploy_production.ps1 -DryRun`
+     * Modo Produção Real (com backup preventivo automático):
+       `powershell -ExecutionPolicy Bypass -File .\scripts\deploy_production.ps1`
+
+5. RESULTADOS DE TESTES DE HOMOLOGAÇÃO E REGRESSÃO (QA):
+   - django check: 0 erros / 0 silenced (`manage.py check`).
+   - migrations check: No changes detected (`manage.py makemigrations --check --dry-run`).
+   - matrizaria.tests.OperadorVulcanizacaoSpecTestCase: 25 testes aprovados em 3.56s (100% OK).
+   - matrizaria (suíte completa): 86 testes aprovados em 27.63s (100% OK).
+   - maintenance & production (regressão): 350 testes aprovados em 79.51s (100% OK).
+   - Total de testes validados pelo QA: 436 testes executados e 100% aprovados sem falhas.
+   - Script de deploy testado e validado em ambos os modos `-CheckOnly` e `-DryRun`.
+================================================================================

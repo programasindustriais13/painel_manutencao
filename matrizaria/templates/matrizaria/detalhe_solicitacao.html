@@ -60,7 +60,7 @@
 <div class="glass-card p-3 p-md-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
         <div class="d-flex align-items-center gap-3">
-            <a href="{% url 'matrizaria:kanban' %}" class="btn btn-outline-secondary btn-sm" title="Voltar ao Kanban">
+            <a href="{% if is_operador_vulcanizacao %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="btn btn-outline-secondary btn-sm" title="{% if is_operador_vulcanizacao %}Voltar para Minhas Solicitações{% else %}Voltar ao Kanban{% endif %}">
                 <i class="bi bi-arrow-left"></i>
             </a>
             <div>
@@ -228,9 +228,19 @@
         <div class="glass-card p-4">
             <h5 class="fw-bold text-white mb-3 d-flex align-items-center gap-2 border-bottom border-secondary border-opacity-25 pb-2">
                 <i class="bi bi-lightning-charge text-warning"></i>
-                Ações Operacionais
+                {% if is_operador_vulcanizacao %}Status do Atendimento{% else %}Ações Operacionais{% endif %}
             </h5>
 
+            {% if is_operador_vulcanizacao and solicitacao.status != "CONCLUIDO" and solicitacao.status != "CANCELADO" %}
+            <div class="alert alert-info border-0 mb-0">
+                <div class="fw-bold mb-1"><i class="bi bi-info-circle-fill me-2"></i> Chamado em Acompanhamento (Modo Somente Leitura)</div>
+                <p class="small mb-0">
+                    Sua solicitação está sendo atendida pela equipe técnica da Matrizaria. As ações de início, execução e aprovação de liberação são de responsabilidade da oficina e liderança técnica.
+                </p>
+            </div>
+            {% endif %}
+
+            {% if not is_operador_vulcanizacao %}
             <!-- AÇÃO: INICIAR ATENDIMENTO -->
             {% if solicitacao.status == "SOLICITADO" or solicitacao.status == "AGUARDANDO_RETRABALHO" %}
                 {% if can_executar %}
@@ -347,6 +357,7 @@
                     <i class="bi bi-lock-fill me-2"></i> Você não possui perfil para conferir serviços da Matrizaria.
                 </div>
                 {% endif %}
+            {% endif %}
             {% endif %}
 
             <!-- STATUS FINALIZADO -->
@@ -486,6 +497,7 @@
 {% endif %}
 
 <!-- MODAL TRANSFERIR RESPONSABILIDADE -->
+{% if can_executar %}
 <div class="modal fade" id="modalTransferir" tabindex="-1" aria-labelledby="modalTransferirLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content bg-dark text-white border border-secondary border-opacity-50">
@@ -523,8 +535,10 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- MODAL CANCELAR SOLICITAÇÃO -->
+{% if can_cancelar %}
 <div class="modal fade" id="modalCancelar" tabindex="-1" aria-labelledby="modalCancelarLabel" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content bg-dark text-white border border-danger border-opacity-50">
@@ -554,6 +568,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- MODAL EXCLUIR SOLICITAÇÃO (ANTES DO INÍCIO TÉCNICO - EXCLUSIVO SUPERUSER) -->
 {% if can_excluir and user.is_superuser %}
