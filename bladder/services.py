@@ -1518,7 +1518,8 @@ def auditar_planilha_dr201():
 def sincronizar_lote_movimentacoes_dr201(movimentacoes_ids, data_turno_str=None, turno_str=None):
     """
     Sincroniza uma lista de movimentações físicas de estoque com a planilha DR-201 (Google Sheets).
-    Utiliza ESTRITAMENTE o método append_rows no final da aba DR201 em uma única chamada atômica.
+    Calcula com precisão matemática a próxima linha disponível com base na Coluna A (Carimbo de data/hora),
+    gravando cada movimentação em sua própria linha sem depender de heurísticas e sem risco de sobrescrever dados.
     Garante que cada movimentação gere uma linha individual na DR-201 com seu respectivo lote.
     Garante que NENHUM dado existente seja sobrescrito ou apagado.
     """
@@ -1593,8 +1594,20 @@ def sincronizar_lote_movimentacoes_dr201(movimentacoes_ids, data_turno_str=None,
                 "",                  # Col J: Foto da etiqueta
             ])
 
-        # append_rows adiciona no final da planilha sem mexer em nenhuma célula anterior
-        ws.append_rows(novas_linhas, value_input_option='USER_ENTERED')
+        # Localiza a próxima linha disponível com precisão absoluta através da coluna A (Carimbo de Data/Hora)
+        # Evita que heurísticas do Sheets sobrescrevam a mesma linha em planilhas vinculadas a Google Forms
+        col_carimbos = ws.col_values(1)
+        proxima_linha = len(col_carimbos) + 1
+        linha_fim = proxima_linha + len(novas_linhas) - 1
+
+        # Expande o grid de linhas se necessário
+        if linha_fim > ws.row_count:
+            linhas_adicionais = max(100, len(novas_linhas))
+            ws.add_rows(linhas_adicionais)
+
+        # Atualiza exatamente o intervalo novo (ex: A2934:J2934), saltando linha a linha com 100% de garantia
+        range_destino = f"A{proxima_linha}:J{linha_fim}"
+        ws.update(values=novas_linhas, range_name=range_destino, value_input_option='USER_ENTERED')
 
         agora = timezone.now()
         for m in movs:
