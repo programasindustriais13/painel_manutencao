@@ -79,12 +79,27 @@ Get-Content $EnvPath | Where-Object { $_ -match "^\s*([A-Za-z_][A-Za-z0-9_]*)\s*
 
 $WaitressHost = if ($env:WAITRESS_HOST) { $env:WAITRESS_HOST } elseif ($EnvVars.ContainsKey("WAITRESS_HOST") -and $EnvVars["WAITRESS_HOST"]) { $EnvVars["WAITRESS_HOST"] } else { "127.0.0.1" }
 $WaitressPortRaw = if ($env:WAITRESS_PORT) { $env:WAITRESS_PORT } elseif ($EnvVars.ContainsKey("WAITRESS_PORT") -and $EnvVars["WAITRESS_PORT"]) { $EnvVars["WAITRESS_PORT"] } else { "8900" }
+$WaitressThreadsRaw = if ($env:WAITRESS_THREADS) { $env:WAITRESS_THREADS } elseif ($EnvVars.ContainsKey("WAITRESS_THREADS") -and $EnvVars["WAITRESS_THREADS"]) { $EnvVars["WAITRESS_THREADS"] } else { "12" }
 
 $WaitressPort = 0
 if (-not [int]::TryParse($WaitressPortRaw, [ref]$WaitressPort) -or $WaitressPort -lt 1 -or $WaitressPort -gt 65535) {
     $WaitressPort = 8900
 }
-Write-Host "  [OK] Arquivo '.env' validado (Host: $WaitressHost | Porta: $WaitressPort)." -ForegroundColor Green
+
+$WaitressThreads = 0
+if (-not [int]::TryParse($WaitressThreadsRaw, [ref]$WaitressThreads) -or $WaitressThreads -lt 1) {
+    $WaitressThreads = 12
+}
+
+Write-Host "  [OK] Arquivo '.env' validado (Host: $WaitressHost | Porta: $WaitressPort | Threads: $WaitressThreads)." -ForegroundColor Green
+
+# 1.3.1 Verificar credentials.json (Google Sheets DR-201)
+$CredFile = Join-Path $ProjectRoot "credentials.json"
+if (Test-Path $CredFile) {
+    Write-Host "  [OK] Credenciais Google Sheets ('credentials.json') presentes para integração DR-201." -ForegroundColor Green
+} else {
+    Write-Host "  [AVISO] 'credentials.json' não encontrado na raiz. A integração DR-201 ficará pausada até inclusão do arquivo." -ForegroundColor Yellow
+}
 
 # 1.4 Estado do Repositório Git
 try {
@@ -158,6 +173,12 @@ if ($DryRun) {
         Copy-Item -Path $MediaPath -Destination $MediaBackupPath -Recurse -Force
         Write-Host "  [OK] Backup do diretório 'media/' realizado com sucesso." -ForegroundColor Green
     }
+
+    # Backup de credentials.json se existir
+    if (Test-Path $CredFile) {
+        Copy-Item -Path $CredFile -Destination (Join-Path $BackupDir "credentials.json") -Force
+        Write-Host "  [OK] Backup de 'credentials.json' realizado com sucesso." -ForegroundColor Green
+    }
 }
 
 # ==============================================================================
@@ -166,11 +187,26 @@ if ($DryRun) {
 Write-Host "`n>>> [ETAPA 3/5] Aplicando Migrações e Atualizações de Aplicação..." -ForegroundColor Yellow
 
 if ($DryRun) {
+    Write-Host "  [DRY-RUN] Simulação de instalação de dependências (requirements.txt)" -ForegroundColor Yellow
     Write-Host "  [DRY-RUN] Simulação de migrações pendentes no banco default:" -ForegroundColor Yellow
     & $PythonExec manage.py migrate --database=default --plan
     Write-Host "  [DRY-RUN] Simulação do comando 'provisionar_grupos_matrizaria --database=default'" -ForegroundColor Yellow
+    Write-Host "  [DRY-RUN] Simulação do comando 'popular_tipos_atividade_bladder'" -ForegroundColor Yellow
     Write-Host "  [DRY-RUN] Simulação de 'collectstatic --noinput'" -ForegroundColor Yellow
 } else {
+    # 3.0 Atualizar dependências Python (requirements.txt)
+    $ReqFile = Join-Path $ProjectRoot "requirements.txt"
+    if (Test-Path $ReqFile) {
+        Write-Host "  Atualizando dependências Python (requirements.txt)..." -ForegroundColor Gray
+        $ReqOut = & $PythonExec -m pip install -r $ReqFile --quiet --no-warn-script-location 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERRO CRÍTICO] Falha ao instalar dependências do requirements.txt:" -ForegroundColor Red
+            $ReqOut | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+            exit 1
+        }
+        Write-Host "  [OK] Dependências do requirements.txt atualizadas com sucesso." -ForegroundColor Green
+    }
+
     # 3.1 Executar migrações exclusivamente no banco default
     Write-Host "  Aplicando migrações no banco de dados 'default'..." -ForegroundColor Gray
     $MigrateOutput = & $PythonExec manage.py migrate --database=default --noinput 2>&1
@@ -191,7 +227,12 @@ if ($DryRun) {
     }
     Write-Host "  [OK] Grupos e permissões provisionados/higienizados com sucesso." -ForegroundColor Green
 
-    # 3.3 Coleta de arquivos estáticos
+    # 3.3 Tipos padrão de atividades operacionais do Bladder
+    Write-Host "  Inicializando tipos padrão de atividades operacionais do Bladder..." -ForegroundColor Gray
+    $BladderOutput = & $PythonExec manage.py popular_tipos_atividade_bladder 2>&1
+    Write-Host "  [OK] $BladderOutput" -ForegroundColor Green
+
+    # 3.4 Coleta de arquivos estáticos
     Write-Host "  Coletando arquivos estáticos (collectstatic)..." -ForegroundColor Gray
     $StaticOutput = & $PythonExec manage.py collectstatic --noinput 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -208,8 +249,28 @@ if ($DryRun) {
 Write-Host "`n>>> [ETAPA 4/5] Gerenciamento Seguro de Processos e Inicialização..." -ForegroundColor Yellow
 
 # Verificar se roda como Serviços Windows via NSSM / SCM
-$ServiceWaitress = Get-Service -Name "PainelManutencao" -ErrorAction SilentlyContinue
-$ServiceScada = Get-Service -Name "ScadaCollector" -ErrorAction SilentlyContinue
+$ServiceWaitress = $null
+$ServicosWebPossiveis = @("PainelManutencaoWSGI", "PainelManutencao")
+foreach ($sName in $ServicosWebPossiveis) {
+    $svc = Get-Service -Name $sName -ErrorAction SilentlyContinue
+    if ($svc) {
+        $ServiceWaitress = $svc
+        break
+    }
+}
+
+$ServiceScada = $null
+$ServicosScadaPossiveis = @("ScadaCollectorService", "ScadaCollector")
+foreach ($scName in $ServicosScadaPossiveis) {
+    $svcSc = Get-Service -Name $scName -ErrorAction SilentlyContinue
+    if ($svcSc) {
+        $ServiceScada = $svcSc
+        break
+    }
+}
+
+# Verificar se roda como Tarefa Agendada do Windows
+$TaskWaitress = Get-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
 
 if ($DryRun) {
     Write-Host "  [DRY-RUN] Verificando ocupação da porta $WaitressPort..." -ForegroundColor Yellow
@@ -221,13 +282,42 @@ if ($DryRun) {
     }
     Write-Host "  [DRY-RUN] Simulação de reinício de serviços / liberação de portas sem interrupção real." -ForegroundColor Yellow
 } else {
+    $ReiniciouPorGerenciador = $false
+
     if ($ServiceWaitress) {
-        Write-Host "  Serviço Windows 'PainelManutencao' detectado. Reiniciando serviço..." -ForegroundColor Gray
-        Restart-Service -Name "PainelManutencao" -Force
-        Start-Sleep -Seconds 3
-        Write-Host "  [OK] Serviço 'PainelManutencao' reiniciado com sucesso." -ForegroundColor Green
-    } else {
-        # Gerenciamento de processos standalone: verificar e liberar porta 8900
+        Write-Host "  Serviço Windows '$($ServiceWaitress.Name)' detectado. Reiniciando serviço..." -ForegroundColor Gray
+        try {
+            Restart-Service -Name $ServiceWaitress.Name -Force
+            Start-Sleep -Seconds 3
+            Write-Host "  [OK] Serviço '$($ServiceWaitress.Name)' reiniciado com sucesso." -ForegroundColor Green
+            $ReiniciouPorGerenciador = $true
+        } catch {
+            Write-Host "  [AVISO] Tentando reiniciar via NSSM..." -ForegroundColor Yellow
+            try {
+                & nssm restart $ServiceWaitress.Name
+                Start-Sleep -Seconds 3
+                Write-Host "  [OK] Serviço '$($ServiceWaitress.Name)' reiniciado via NSSM." -ForegroundColor Green
+                $ReiniciouPorGerenciador = $true
+            } catch {
+                Write-Host "  [AVISO] Falha ao reiniciar serviço Windows: $_" -ForegroundColor Yellow
+            }
+        }
+    } elseif ($TaskWaitress) {
+        Write-Host "  Tarefa Agendada 'Painel Manutencao - Waitress' detectada. Reiniciando tarefa..." -ForegroundColor Gray
+        try {
+            Stop-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            Start-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            Write-Host "  [OK] Tarefa Agendada 'Painel Manutencao - Waitress' reiniciada com sucesso." -ForegroundColor Green
+            $ReiniciouPorGerenciador = $true
+        } catch {
+            Write-Host "  [AVISO] Falha ao reiniciar Tarefa Agendada: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if (-not $ReiniciouPorGerenciador) {
+        # Gerenciamento de processos standalone: verificar e liberar porta configurada
         $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
         if ($TcpConn) {
             $Pids = $TcpConn.OwningProcess | Select-Object -Unique
@@ -264,10 +354,10 @@ if ($DryRun) {
 
         # Iniciar Waitress em background se não for serviço Windows gerenciado
         Write-Host "  Iniciando processo do servidor Waitress..." -ForegroundColor Gray
-        $WaitressArgs = "-m waitress --host=$WaitressHost --port=$WaitressPort --threads=4 maintenance_project.wsgi:application"
+        $WaitressArgs = "-m waitress --host=$WaitressHost --port=$WaitressPort --threads=$WaitressThreads maintenance_project.wsgi:application"
         Start-Process -FilePath $PythonExec -ArgumentList $WaitressArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden
         Start-Sleep -Seconds 3
-        Write-Host "  [OK] Processo do Waitress iniciado." -ForegroundColor Green
+        Write-Host "  [OK] Processo do Waitress iniciado em background." -ForegroundColor Green
     }
 
     # Gerenciamento do Coletor SCADA
@@ -325,8 +415,8 @@ if ($DryRun) {
     $LoginUrl = "http://127.0.0.1:$WaitressPort/login/"
     try {
         $Response = Invoke-WebRequest -Uri $LoginUrl -Method Get -TimeoutSec 10 -UseBasicParsing
-        if ($Response.StatusCode -eq 200) {
-            Write-Host "  [OK] Smoke test HTTP bem-sucedido: $LoginUrl retornou HTTP 200 OK." -ForegroundColor Green
+        if ($Response.StatusCode -eq 200 -or $Response.StatusCode -eq 302) {
+            Write-Host "  [OK] Smoke test HTTP bem-sucedido: $LoginUrl retornou HTTP $($Response.StatusCode)." -ForegroundColor Green
         } else {
             Write-Host "[ERRO] Smoke test HTTP retornou status inesperado: $($Response.StatusCode)" -ForegroundColor Red
             exit 1

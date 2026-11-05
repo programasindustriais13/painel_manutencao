@@ -9,7 +9,7 @@ echo.
 echo Executando deploy seguro apos o git pull...
 echo.
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\deploy_servidor.ps1" %*
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\deploy_production.ps1" %*
 
 if %ERRORLEVEL% NEQ 0 (
     echo.
