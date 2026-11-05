@@ -222,3 +222,30 @@ Para homologação manual da nova tela de recados:
 4. Observar que o recado aparece listado na aba "Recados do Turno de Hoje" com o badge "Aguardando ciência da equipe destinatária".
 5. Simular login da Turma B (ou data seguinte) em `/bladder/operador/` e marcar `[ CIENTE ]`.
 6. Retornar à tela `/bladder/recados/` e observar a confirmação de leitura com o nome do operador e timestamp.
+
+---
+
+## 🏭 10. REESTRUTURAÇÃO DO MÓDULO BLADDER, ESTOQUE DR-201 E INTEGRAÇÕES (05/11/2026)
+
+- **Status da Entrega:** 🟢 IMPLEMENTADA — AGUARDANDO TESTES
+- **Restrição Aplicada:** Testes automatizados suspensos temporariamente nesta rodada por determinação do cliente.
+- **Novos Modelos e Schema (`bladder/migrations/0006_tipoatividadebladder_and_more.py`):**
+  1. `TipoAtividadeBladder`: Categorias operacionais cadastradas (`EXTRUSAO`, `LIMPEZA`, `ORGANIZACAO`, `MANUTENCAO`, `CORTE_BORRACHA`, `PERSONALIZADA`).
+  2. `AtividadeTurnoBladder`: Tarefas operacionais rápidas de turno com ação de conclusão em 1 toque.
+  3. `MovimentacaoEstoqueBladder`: Ledger auditável de Bladders Acabados com tipos `ENTRADA`, `SAIDA`, `AJUSTE_INVENTARIO`. Bloqueio matemático de estoque negativo.
+  4. `HistoricoEdicaoMensagemTurnoBladder`: Histórico de edições in-place das mensagens de passagem de turno para auditoria.
+  5. `ConfiguracaoWhatsAppBladder`: Parametrização para resumo diário de estoque via microserviço Baileys em dry-run.
+  6. `ProdutoBladder`: Adicionados `estoque_minimo`, `estoque_atual`, propriedades semafóricas (`CRITICO`, `ATENCAO`, `NORMAL`), `sugestao_op` e `cobertura_dias()`.
+- **Reconciliação DR-201 Google Sheets:**
+  - Planilha auditada (2.929 registros válidos, 1.532 entradas, 1.397 saídas, 10 modelos BLA001-BLA010 100% correspondentes).
+  - Importação inicial idempotente executada com comando `importar_estoque_dr201`.
+  - Tela de conciliação disponível em `/bladder/estoque/auditoria-dr201/`.
+- **Reestruturação Visual & Navegação:**
+  - Dois ambientes integrados: Tema Escuro para Líder (dashboard, estoque, calendário, relatórios) e Tema Claro para Operador (chão de fábrica limpo, cards brancos, botões >= 48px). Alternador de tema no cabeçalho com persistência em `localStorage`.
+  - Menus organizados em 6 itens para Líder e 1 item exclusivo (Turno) para Operador.
+  - Ambiente Turno estruturado em 3 abas principais: 1. Recados Recebidos, 2. Atividades do Turno, 3. Histórico.
+  - Botão "+ Nova OP" integrado na tela de Ordens de Produção e filtro rápido para OPs atrasadas (`?filtro=atrasadas`).
+- **Verificações Realizadas:**
+  - `python manage.py check`: 0 erros (0 silenced).
+  - `python manage.py makemigrations --check --dry-run`: No changes detected.
+  - `git diff --check`: 0 erros de formatação ou whitespace.

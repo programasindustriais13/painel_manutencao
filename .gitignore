@@ -46,3 +46,7 @@ DOCUMENTO_INTEGRACAO_MYSQL_SCADALTS.md
 ET.029 - ESPECIFICAÇÃO TÉCNICA - BLA - TESTE (1).xlsx
 ET.029 - ESPECIFICAÇÃO TÉCNICA - BLA - TESTE.xlsx
 Resumo_Sistema_OS_Producao.pdf
+
+credentials.json
+backups/
+*.sqlite3

@@ -42,6 +42,47 @@ class ProcessoBladder(models.Model):
         return f"{self.codigo} - {self.nome}"
 
 
+class TipoAtividadeBladder(models.Model):
+    """
+    Cadastro flexível de tipos de atividades do Setor de Bladder.
+    Permite configurar pelo Líder quais campos são exigidos para cada tipo,
+    evitando exigir quantidade, modelo e tarugo em atividades que não necessitam
+    dessas informações (ex: limpeza, organização, manutenção, etc.).
+    """
+    CATEGORIA_CHOICES = [
+        ('PRODUCAO', 'Produção Quantitativa (OP)'),
+        ('OPERACIONAL', 'Atividade Operacional / Apoio'),
+    ]
+
+    codigo = models.CharField(max_length=40, unique=True, verbose_name="Código da Atividade")
+    nome = models.CharField(max_length=100, verbose_name="Nome da Atividade")
+    categoria = models.CharField(
+        max_length=20,
+        choices=CATEGORIA_CHOICES,
+        default='OPERACIONAL',
+        verbose_name="Categoria"
+    )
+    descricao = models.TextField(blank=True, null=True, verbose_name="Descrição / Instruções")
+    exige_quantidade = models.BooleanField(default=False, verbose_name="Exige Quantidade")
+    exige_modelo = models.BooleanField(default=False, verbose_name="Exige Modelo de Bladder")
+    exige_dados_tecnicos_tarugo = models.BooleanField(default=False, verbose_name="Exige Dados Técnicos de Tarugo")
+    exige_observacao = models.BooleanField(default=False, verbose_name="Exige Observação / Relato")
+    permite_anexo = models.BooleanField(default=False, verbose_name="Permite Anexo")
+    exige_conclusao = models.BooleanField(default=True, verbose_name="Exige Conclusão / Baixa")
+    ordem_exibicao = models.PositiveIntegerField(default=1, verbose_name="Ordem de Exibição")
+    ativo = models.BooleanField(default=True, verbose_name="Ativo")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Tipo de Atividade Bladder"
+        verbose_name_plural = "Tipos de Atividades Bladder"
+        ordering = ['ordem_exibicao', 'nome']
+
+    def __str__(self):
+        return self.nome
+
+
 class ConfiguracaoEscalaBladder(models.Model):
     """
     Configuração dinâmica da alternância da escala 12x36 (06:00 às 18:00).
@@ -280,6 +321,16 @@ class ProdutoBladder(models.Model):
         related_name='produtos_setor_bladder',
         verbose_name="Vínculo com Catálogo de Vulcanização (Opcional)"
     )
+    estoque_minimo = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Estoque Mínimo",
+        help_text="Estoque mínimo de segurança para alertas semafóricos e geração de OP"
+    )
+    estoque_atual = models.IntegerField(
+        default=0,
+        verbose_name="Estoque Físico Atual",
+        help_text="Saldo físico apurado através do Ledger de movimentações"
+    )
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='ATIVO', verbose_name="Status")
     ativo = models.BooleanField(default=True, verbose_name="Ativo")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -289,6 +340,74 @@ class ProdutoBladder(models.Model):
         verbose_name = "Produto / Modelo de Bladder"
         verbose_name_plural = "Produtos / Modelos de Bladder"
         ordering = ['codigo']
+
+    @property
+    def situacao_estoque(self):
+        """
+        Calcula a situação semafórica conforme regra do cliente:
+        - Mínimo <= 0 ou nulo: 'NAO_CONFIGURADO'
+        - Estoque <= mínimo: 'CRITICO'
+        - Estoque > mínimo e <= 1.5 * mínimo: 'ATENCAO'
+        - Estoque > 1.5 * mínimo: 'NORMAL'
+        """
+        if not self.estoque_minimo or self.estoque_minimo <= 0:
+            return 'NAO_CONFIGURADO'
+        minimo = self.estoque_minimo
+        atual = self.estoque_atual
+        if atual <= minimo:
+            return 'CRITICO'
+        limite_atencao = int(Decimal(str(minimo)) * Decimal('1.5'))
+        if atual <= limite_atencao:
+            return 'ATENCAO'
+        return 'NORMAL'
+
+    @property
+    def situacao_estoque_display(self):
+        labels = {
+            'CRITICO': 'Crítico',
+            'ATENCAO': 'Atenção',
+            'NORMAL': 'Normal',
+            'NAO_CONFIGURADO': 'Não configurado',
+        }
+        return labels.get(self.situacao_estoque, 'Não configurado')
+
+    @property
+    def situacao_estoque_cor(self):
+        cores = {
+            'CRITICO': 'danger',
+            'ATENCAO': 'warning',
+            'NORMAL': 'success',
+            'NAO_CONFIGURADO': 'secondary',
+        }
+        return cores.get(self.situacao_estoque, 'secondary')
+
+    @property
+    def sugestao_op(self):
+        """Sugestão inicial para nova OP: max(0, minimo - atual)."""
+        if self.estoque_minimo and self.estoque_atual < self.estoque_minimo:
+            return max(0, self.estoque_minimo - self.estoque_atual)
+        return 0
+
+    def consumo_medio_diario(self, dias=30):
+        """Calcula a média de consumo diário baseada nas saídas reais dos últimos X dias."""
+        inicio = timezone.now() - datetime.timedelta(days=dias)
+        total_saidas = self.movimentacoes_estoque.filter(
+            tipo='SAIDA',
+            data_hora__gte=inicio
+        ).aggregate(s=models.Sum('quantidade'))['s'] or 0
+        if total_saidas <= 0 or dias <= 0:
+            return Decimal('0.0')
+        return Decimal(str(total_saidas)) / Decimal(str(dias))
+
+    def cobertura_dias(self, dias=30):
+        """
+        Cobertura estimada em dias: Estoque Atual / Consumo Médio Diário.
+        Retorna float arredondado ou None se o consumo for zero/insuficiente.
+        """
+        consumo = self.consumo_medio_diario(dias=dias)
+        if consumo <= 0:
+            return None
+        return round(float(Decimal(str(self.estoque_atual)) / consumo), 1)
 
     @property
     def medida(self):
@@ -371,12 +490,21 @@ class OrdemProducaoBladder(models.Model):
 
     numero_ordem = models.CharField(max_length=40, unique=True, verbose_name="Número da OP")
     processo = models.ForeignKey(ProcessoBladder, on_delete=models.PROTECT, related_name='ordens', verbose_name="Processo")
-    produto = models.ForeignKey(ProdutoBladder, on_delete=models.PROTECT, related_name='ordens', verbose_name="Produto / Modelo")
+    produto = models.ForeignKey(
+        ProdutoBladder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ordens',
+        verbose_name="Produto / Modelo (Opcional)"
+    )
     data_programada = models.DateField(db_index=True, verbose_name="Data Programada")
     turma_prevista = models.CharField(max_length=10, choices=TURMA_CHOICES, verbose_name="Turma Prevista")
     prioridade = models.CharField(max_length=10, choices=PRIORIDADE_CHOICES, default='NORMAL', verbose_name="Prioridade")
 
     quantidade_nova = models.PositiveIntegerField(
+        default=0,
+        blank=True,
         verbose_name="Qtd Nova Solicitada",
         help_text="Necessidade nova planejada pelo líder"
     )
@@ -386,6 +514,8 @@ class OrdemProducaoBladder(models.Model):
         help_text="Saldo pendente incorporado de programações anteriores"
     )
     quantidade_planejada = models.PositiveIntegerField(
+        default=0,
+        blank=True,
         verbose_name="Total Programado a Produzir",
         help_text="Soma da Quantidade Nova com o Saldo Anterior Incorporado"
     )
@@ -772,6 +902,103 @@ class ItemFechamentoTurnoBladder(models.Model):
         return self.get_motivo_display() or ""
 
 
+class AtividadeTurnoBladder(models.Model):
+    """
+    Registro e acompanhamento de atividades operacionais do turno.
+    Permite aos operadores registrar e concluir atividades com um clique,
+    respeitando os campos configurados no TipoAtividadeBladder.
+    """
+    TURMA_CHOICES = [
+        ('TURMA_A', 'Turma A'),
+        ('TURMA_B', 'Turma B'),
+        ('APOIO', 'Apoio Operacional'),
+    ]
+    STATUS_CHOICES = [
+        ('PENDENTE', 'Pendente'),
+        ('CONCLUIDA', 'Concluída'),
+        ('CANCELADA', 'Cancelada'),
+    ]
+
+    tipo_atividade = models.ForeignKey(
+        TipoAtividadeBladder,
+        on_delete=models.PROTECT,
+        related_name='atividades_turno',
+        verbose_name="Tipo de Atividade"
+    )
+    data_turno = models.DateField(default=timezone.localdate, db_index=True, verbose_name="Data do Turno")
+    turma = models.CharField(max_length=10, choices=TURMA_CHOICES, verbose_name="Turma")
+    processo = models.ForeignKey(
+        ProcessoBladder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='atividades_turno',
+        verbose_name="Processo / Linha (Opcional)"
+    )
+    maquina = models.ForeignKey(
+        'maintenance.Machine',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='atividades_turno_bladder',
+        verbose_name="Máquina / Equipamento (Opcional)"
+    )
+    produto = models.ForeignKey(
+        ProdutoBladder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='atividades_turno',
+        verbose_name="Modelo de Bladder (Opcional)"
+    )
+    quantidade = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Quantidade (se aplicável)"
+    )
+    observacao = models.TextField(blank=True, null=True, verbose_name="Observações / Relato")
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDENTE',
+        db_index=True,
+        verbose_name="Situação"
+    )
+    criado_por = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='atividades_turno_bladder_criadas',
+        verbose_name="Criado por"
+    )
+    concluido_por = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='atividades_turno_bladder_concluidas',
+        verbose_name="Concluído por"
+    )
+    concluido_em = models.DateTimeField(null=True, blank=True, verbose_name="Data/Hora da Conclusão")
+    fechamento = models.ForeignKey(
+        FechamentoTurnoBladder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='atividades_operacionais',
+        verbose_name="Fechamento do Turno"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Atividade Operacional do Turno"
+        verbose_name_plural = "Atividades Operacionais do Turno"
+        ordering = ['-data_turno', 'status', 'tipo_atividade__ordem_exibicao']
+
+    def __str__(self):
+        return f"{self.tipo_atividade.nome} ({self.data_turno.strftime('%d/%m/%Y')} - {self.get_turma_display()}) [{self.get_status_display()}]"
+
+
 class SaldoPendenteBladder(models.Model):
     """
     Ledger de rastreabilidade de saldos remanescentes de OPs encerradas como PARCIAL.
@@ -835,6 +1062,151 @@ class SaldoPendenteBladder(models.Model):
 
     def __str__(self):
         return f"Saldo {self.quantidade} un de {self.produto.codigo} (Origem: {self.op_origem.numero_ordem}) [{self.get_status_display()}]"
+
+
+class MovimentacaoEstoqueBladder(models.Model):
+    """
+    Ledger auditável de movimentações de estoque de Bladders Acabados.
+    Controla exclusivamente o estoque físico final de Bladders (sem misturar com compostos ou tarugos).
+    Registra atomicamente entradas conferidas, saídas para vulcanização e ajustes de inventário.
+    """
+    TIPO_CHOICES = [
+        ('ENTRADA', 'Entrada Física'),
+        ('SAIDA', 'Saída para Produção / Vulcanização'),
+        ('AJUSTE', 'Ajuste de Inventário'),
+        ('CARGA_INICIAL', 'Carga Inicial DR-201'),
+    ]
+
+    TURMA_CHOICES = [
+        ('TURMA_A', 'Turma A'),
+        ('TURMA_B', 'Turma B'),
+        ('APOIO', 'Apoio Operacional'),
+        ('LIDERANCA', 'Liderança / PCP'),
+    ]
+
+    produto = models.ForeignKey(
+        ProdutoBladder,
+        on_delete=models.PROTECT,
+        related_name='movimentacoes_estoque',
+        verbose_name="Modelo de Bladder"
+    )
+    tipo = models.CharField(
+        max_length=20,
+        choices=TIPO_CHOICES,
+        db_index=True,
+        verbose_name="Tipo de Movimentação"
+    )
+    quantidade = models.PositiveIntegerField(verbose_name="Quantidade")
+    saldo_anterior = models.IntegerField(verbose_name="Saldo Anterior")
+    saldo_posterior = models.IntegerField(verbose_name="Saldo Posterior")
+    usuario = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='movimentacoes_estoque_bladder',
+        verbose_name="Usuário Responsável"
+    )
+    turma = models.CharField(
+        max_length=15,
+        choices=TURMA_CHOICES,
+        default='TURMA_A',
+        verbose_name="Turma Operacional"
+    )
+    data_hora = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        verbose_name="Data/Hora da Movimentação"
+    )
+    data_turno = models.DateField(
+        default=timezone.localdate,
+        db_index=True,
+        verbose_name="Data do Turno"
+    )
+    destino = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Destino (para Saídas)",
+        help_text="Ex: Vulcanização, Prensa 03, etc."
+    )
+    justificativa = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Justificativa / Motivo (para Ajustes)"
+    )
+    ordem_producao = models.ForeignKey(
+        OrdemProducaoBladder,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='movimentacoes_estoque',
+        verbose_name="OP Vinculada (Opcional)"
+    )
+    lote_etiqueta = models.CharField(
+        max_length=60,
+        blank=True,
+        null=True,
+        verbose_name="Lote / Etiqueta da Peça"
+    )
+    idempotency_key = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        unique=True,
+        db_index=True,
+        verbose_name="Chave de Idempotência"
+    )
+    sincronizado_dr201 = models.BooleanField(
+        default=False,
+        db_index=True,
+        verbose_name="Sincronizado na DR-201",
+        help_text="Indica se a movimentação foi replicada na planilha Google Sheets DR-201"
+    )
+    data_sincronizacao_dr201 = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora Sincronização DR-201"
+    )
+    erro_sincronizacao_dr201 = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Erro na Sincronização DR-201"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Movimentação de Estoque Bladder"
+        verbose_name_plural = "Movimentações de Estoque Bladder"
+        ordering = ['-data_hora', '-id']
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} - {self.quantidade} un de {self.produto.codigo} ({self.saldo_anterior} -> {self.saldo_posterior})"
+
+    @property
+    def tipo_movimentacao(self):
+        return self.tipo
+
+    @property
+    def get_tipo_movimentacao_display(self):
+        return self.get_tipo_display()
+
+    @property
+    def saldo_novo(self):
+        return self.saldo_posterior
+
+    @property
+    def criado_por(self):
+        return self.usuario
+
+    @property
+    def motivo(self):
+        return self.destino or self.justificativa or ""
+
+    def get_motivo_display(self):
+        return self.destino or self.justificativa or "-"
+
+    @property
+    def observacao(self):
+        return self.lote_etiqueta or ""
 
 
 class ApontamentoTurnoBladder(models.Model):
@@ -1146,6 +1518,21 @@ class MensagemPassagemTurnoBladder(models.Model):
         verbose_name="Observação do Repasse"
     )
 
+    # Edição auditável (mantém o mesmo ID ativo)
+    editado_por = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mensagens_turno_bladder_editadas',
+        verbose_name="Editado por"
+    )
+    editado_em = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora da Última Edição"
+    )
+
     created_at = models.DateTimeField(
         auto_now_add=True,
         db_index=True,
@@ -1190,6 +1577,16 @@ class MensagemPassagemTurnoBladder(models.Model):
             return False
         return self.acoes.filter(usuario=user, acao='CIENTE').exists()
 
+    def is_expirada(self, horas=48):
+        """
+        Informativos expiram visualmente da lista ativa do turno após a janela configurada (default 48h).
+        Acompanhamentos abertos nunca expiram enquanto não forem resolvidos ou repassados.
+        """
+        if self.tipo != 'INFORMATIVO':
+            return False
+        limite = timezone.now() - datetime.timedelta(hours=horas)
+        return self.created_at < limite
+
     @property
     def cadeia_historica(self):
         """Retorna a cadeia de mensagens anteriores até a raiz original."""
@@ -1199,6 +1596,36 @@ class MensagemPassagemTurnoBladder(models.Model):
             cadeia.append(atual)
             atual = atual.mensagem_origem
         return list(reversed(cadeia))
+
+
+class HistoricoEdicaoMensagemTurnoBladder(models.Model):
+    """
+    Trilha de auditoria para edições de mensagens de passagem de turno.
+    Preserva o conteúdo anterior, data/hora e o autor da edição,
+    evitando que edições gerem duplicação de recados ativos.
+    """
+    mensagem = models.ForeignKey(
+        MensagemPassagemTurnoBladder,
+        on_delete=models.CASCADE,
+        related_name='historico_edicoes',
+        verbose_name="Mensagem Original"
+    )
+    texto_anterior = models.TextField(verbose_name="Conteúdo Anterior")
+    texto_novo = models.TextField(verbose_name="Conteúdo Novo")
+    usuario = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        verbose_name="Editado por"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Data/Hora da Edição")
+
+    class Meta:
+        verbose_name = "Histórico de Edição de Mensagem"
+        verbose_name_plural = "Históricos de Edições de Mensagens"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Edição em #{self.mensagem_id} por {self.usuario.username} em {self.created_at.strftime('%d/%m/%Y %H:%M')}"
 
 
 class AcaoMensagemTurnoBladder(models.Model):
@@ -1256,4 +1683,65 @@ class AcaoMensagemTurnoBladder(models.Model):
     def __str__(self):
         nome = self.usuario.get_full_name() or self.usuario.username
         return f"{self.get_acao_display()} por {nome} em {self.created_at.strftime('%d/%m/%Y %H:%M')}"
+
+
+class ConfiguracaoWhatsAppBladder(models.Model):
+    """
+    Configuração do envio automático de resumo de estoque de Bladders via WhatsApp.
+    Reutiliza a infraestrutura existente em whatsapp_service/ (Baileys Node.js).
+    Envia de segunda a sexta às 07:30 (sem envios aos fins de semana).
+    """
+    habilitado = models.BooleanField(
+        default=True,
+        verbose_name="Envio Automático Habilitado"
+    )
+    grupo_destino = models.ForeignKey(
+        'maintenance.WhatsAppGroup',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Grupo de WhatsApp de Destino"
+    )
+    numero_destino = models.CharField(
+        max_length=30,
+        blank=True,
+        null=True,
+        verbose_name="Número Individual Alternativo",
+        help_text="Ex: 5531999999999"
+    )
+    horario_envio = models.TimeField(
+        default=datetime.time(7, 30),
+        verbose_name="Horário do Envio (Normalmente 07:30)"
+    )
+    dias_semana = models.CharField(
+        max_length=30,
+        default="0,1,2,3,4",
+        verbose_name="Dias da Semana",
+        help_text="0=Segunda, 1=Terça, 2=Quarta, 3=Quinta, 4=Sexta (sem sáb/dom)"
+    )
+    ultimo_envio = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Data/Hora do Último Envio"
+    )
+    ultimo_status = models.CharField(
+        max_length=30,
+        blank=True,
+        null=True,
+        verbose_name="Status do Último Envio"
+    )
+    ultimo_log = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name="Log do Último Envio"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Configuração de WhatsApp Bladder"
+        verbose_name_plural = "Configurações de WhatsApp Bladder"
+
+    def __str__(self):
+        status = "ATIVO" if self.habilitado else "DESATIVADO"
+        return f"WhatsApp Bladder: {self.horario_envio.strftime('%H:%M')} ({status})"
 

@@ -179,6 +179,79 @@
     </div>
 </div>
 
+<!-- Modal para Ação: EDITAR RECADO (In-place com Histórico) -->
+<div class="modal fade" id="modalEditarRecado" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-dark text-light border border-warning border-opacity-50 shadow-lg">
+            <form method="POST" id="form-editar-recado" action="">
+                {% csrf_token %}
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+
+                <div class="modal-header border-secondary border-opacity-50">
+                    <h5 class="modal-title fw-bold text-warning d-flex align-items-center gap-2">
+                        <i class="bi bi-pencil-square"></i> Editar Recado do Turno
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+
+                <div class="modal-body p-3">
+                    <div class="p-2 mb-3 rounded bg-warning bg-opacity-10 border border-warning border-opacity-25 small text-light">
+                        <i class="bi bi-info-circle text-warning me-1"></i>
+                        A edição atualiza o recado sem duplicá-lo, arquivando a versão anterior no histórico de auditoria.
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6">
+                            <label class="form-label text-secondary small fw-bold mb-1">Tipo</label>
+                            <select name="tipo" class="form-select bg-dark text-light border-secondary" id="edit-recado-tipo" required>
+                                <option value="INFORMATIVO">Informativo</option>
+                                <option value="ACOMPANHAMENTO">Acompanhamento</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label text-secondary small fw-bold mb-1">Prioridade</label>
+                            <select name="prioridade" class="form-select bg-dark text-light border-secondary" id="edit-recado-prioridade" required>
+                                <option value="NORMAL">Normal</option>
+                                <option value="IMPORTANTE">Importante</option>
+                                <option value="URGENTE">Urgente</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-secondary small fw-bold mb-1">Categoria</label>
+                        <select name="categoria" class="form-select bg-dark text-light border-secondary" id="edit-recado-categoria" required>
+                            <option value="PRODUCAO">Produção</option>
+                            <option value="EQUIPAMENTO">Equipamento</option>
+                            <option value="QUALIDADE">Qualidade</option>
+                            <option value="MATERIAL">Material</option>
+                            <option value="SEGURANCA">Segurança</option>
+                            <option value="OUTRO">Outro</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label text-secondary small fw-bold mb-1">Mensagem <span class="text-danger">*</span></label>
+                        <textarea name="mensagem" id="edit-recado-mensagem" class="form-control bg-dark text-light border-secondary" rows="3" required></textarea>
+                    </div>
+
+                    <div class="mb-2">
+                        <label class="form-label text-secondary small fw-bold mb-1">Justificativa da Edição (Opcional)</label>
+                        <input type="text" name="justificativa_edicao" class="form-control bg-dark text-light border-secondary" placeholder="Ex: Detalhe adicional, ajuste de texto...">
+                    </div>
+                </div>
+
+                <div class="modal-footer border-secondary border-opacity-50">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning fw-bold px-4 touch-btn">
+                        <i class="bi bi-check2-circle me-1"></i> Salvar Alterações
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
     function abrirModalRecadoGeral() {
         document.getElementById('recado_ordem_producao_id').value = '';
@@ -233,6 +306,17 @@
         form.action = `/bladder/passagem-turno/${recadoId}/acao/`;
         document.getElementById('txt-repassar-mensagem').innerText = `"${textoResumo}"`;
         var modal = new bootstrap.Modal(document.getElementById('modalRepassarRecado'));
+        modal.show();
+    }
+
+    function abrirModalEditarRecado(recadoId, tipo, prioridade, categoria, mensagem) {
+        const form = document.getElementById('form-editar-recado');
+        form.action = `/bladder/passagem-turno/${recadoId}/editar/`;
+        if (document.getElementById('edit-recado-tipo')) document.getElementById('edit-recado-tipo').value = tipo;
+        if (document.getElementById('edit-recado-prioridade')) document.getElementById('edit-recado-prioridade').value = prioridade;
+        if (document.getElementById('edit-recado-categoria')) document.getElementById('edit-recado-categoria').value = categoria;
+        if (document.getElementById('edit-recado-mensagem')) document.getElementById('edit-recado-mensagem').value = mensagem;
+        var modal = new bootstrap.Modal(document.getElementById('modalEditarRecado'));
         modal.show();
     }
 

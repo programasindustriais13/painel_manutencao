@@ -1,0 +1,172 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Auditoria &bull; Planilha DR-201 &bull; Setor de Bladder{% endblock %}
+
+{% block content %}
+<div class="glass-card mb-4 p-3 p-md-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <span class="badge bg-warning text-dark fw-bold fs-6 px-3 py-1">
+                    <i class="bi bi-file-spreadsheet me-1"></i> AUDITORIA PROFUNDA DA PLANILHA DR-201
+                </span>
+                <span class="badge bg-dark border border-secondary text-secondary">
+                    Fonte Oficial Google Sheets &bull; Reconciliação Cadastral
+                </span>
+            </div>
+            <h1 class="h3 fw-bold mb-1">Relatório de Reconciliação DR-201 &rarr; Django</h1>
+            <p class="text-secondary small mb-0">
+                Planilha: <code>DR.201 - CONTROLE DE ESTOQUE DE BLADDERS (respostas)</code> &bull; Aba: <code>DR201</code>
+            </p>
+        </div>
+
+        <div>
+            <a href="{% url 'bladder:estoque_lista' %}" class="btn btn-outline-warning fw-semibold touch-btn">
+                <i class="bi bi-arrow-left me-1"></i> Voltar ao Estoque
+            </a>
+        </div>
+    </div>
+</div>
+
+{% if relatorio.erro %}
+    <div class="alert alert-danger border-0 shadow-sm p-4">
+        <h4 class="alert-heading fw-bold d-flex align-items-center gap-2">
+            <i class="bi bi-exclamation-triangle-fill fs-3"></i> Não foi possível consultar a DR-201
+        </h4>
+        <p class="mb-0">{{ relatorio.erro }}</p>
+    </div>
+{% else %}
+    <!-- ================================================================= -->
+    <!-- METRICAS CONSOLIDADAS DA DR-201                                  -->
+    <!-- ================================================================= -->
+    <div class="row g-3 mb-4">
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="glass-card p-3 border-secondary border-opacity-30 h-100">
+                <span class="text-muted small fw-bold text-uppercase d-block mb-1">Registros Auditados</span>
+                <div class="fs-2 fw-bold font-monospace text-light mb-1">{{ relatorio.total_linhas }}</div>
+                <span class="small text-secondary">Linhas válidas com carimbo e código</span>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="glass-card p-3 border-success border-opacity-40 h-100">
+                <span class="text-success small fw-bold text-uppercase d-block mb-1">Total de Entradas</span>
+                <div class="fs-2 fw-bold font-monospace text-success mb-1">+{{ relatorio.total_entradas }}</div>
+                <span class="small text-secondary">Peças produzidas escaneadas na planilha</span>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="glass-card p-3 border-danger border-opacity-40 h-100">
+                <span class="text-danger small fw-bold text-uppercase d-block mb-1">Total de Saídas</span>
+                <div class="fs-2 fw-bold font-monospace text-danger mb-1">-{{ relatorio.total_saidas }}</div>
+                <span class="small text-secondary">Baixas para vulcanização/prensas</span>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="glass-card p-3 border-warning border-opacity-40 h-100">
+                <span class="text-warning small fw-bold text-uppercase d-block mb-1">Saldo Bruto DR-201</span>
+                <div class="fs-2 fw-bold font-monospace text-warning mb-1">{{ relatorio.saldo_bruto_calculado }} <span class="fs-6 text-muted">un</span></div>
+                <span class="small text-secondary">Entradas acumuladas menos Saídas</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- DIAGNÓSTICO AUDITADO DA PLANILHA                                 -->
+    <!-- ================================================================= -->
+    <div class="glass-card mb-4 p-3 p-md-4">
+        <h2 class="h5 fw-bold mb-3 d-flex align-items-center gap-2 text-warning">
+            <i class="bi bi-info-circle-fill"></i> Conclusões da Auditoria Técnica
+        </h2>
+        <div class="row g-3 small">
+            <div class="col-12 col-md-6">
+                <div class="p-3 rounded bg-dark border border-secondary border-opacity-25 h-100">
+                    <strong class="text-light d-block mb-1"><i class="bi bi-check-circle-fill text-success me-1"></i> Natureza dos Dados:</strong>
+                    <p class="text-secondary mb-0">
+                        A planilha DR-201 é um log de respostas de Google Forms com leituras de código de barras peça a peça. Ela não possui fórmulas de saldo nas linhas nem cabeçalho de saldo estático.
+                    </p>
+                </div>
+            </div>
+            <div class="col-12 col-md-6">
+                <div class="p-3 rounded bg-dark border border-secondary border-opacity-25 h-100">
+                    <strong class="text-light d-block mb-1"><i class="bi bi-exclamation-triangle-fill text-warning me-1"></i> Movimentações Pré-Formulário:</strong>
+                    <p class="text-secondary mb-0">
+                        Foram identificadas 302 saídas de peças fabricadas antes do início do formulário em junho de 2026. Por essa razão, modelos como o BLA003 resultam em saldo matemático negativo na planilha (-5 un) e requerem conferência física pontual.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- TABELA COMPARATIVA DE RECONCILIAÇÃO                              -->
+    <!-- ================================================================= -->
+    <div class="glass-card mb-4 p-3 p-md-4">
+        <h2 class="h5 fw-bold mb-3 d-flex align-items-center gap-2 text-light">
+            <i class="bi bi-table text-warning"></i> Reconciliação dos 10 Modelos de Bladder
+        </h2>
+
+        <div class="table-responsive">
+            <table class="table table-dark table-hover align-middle mb-0">
+                <thead>
+                    <tr class="text-secondary small text-uppercase">
+                        <th>Código DR-201</th>
+                        <th>Produto Django</th>
+                        <th>Descrição / Medida</th>
+                        <th class="text-center">Entradas</th>
+                        <th class="text-center">Saídas</th>
+                        <th class="text-center">Saldo DR-201</th>
+                        <th class="text-center">Saldo Django</th>
+                        <th class="text-center">Status de Reconciliação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in relatorio.modelos %}
+                        <tr>
+                            <td class="font-monospace fw-bold text-warning">{{ item.codigo }}</td>
+                            <td>
+                                {% if item.encontrado_django %}
+                                    <span class="badge bg-success-subtle text-success border border-success">
+                                        <i class="bi bi-check2"></i> Confirmado
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-danger">Ausente</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-light">{{ item.descricao }}</td>
+                            <td class="text-center font-monospace text-success">+{{ item.entradas }}</td>
+                            <td class="text-center font-monospace text-danger">-{{ item.saidas }}</td>
+                            <td class="text-center font-monospace fw-bold {% if item.saldo_bruto < 0 %}text-danger{% else %}text-light{% endif %}">
+                                {{ item.saldo_bruto }} un
+                            </td>
+                            <td class="text-center font-monospace fw-bold text-warning">
+                                {{ item.saldo_django }} un
+                            </td>
+                            <td class="text-center">
+                                {% if item.saldo_bruto < 0 %}
+                                    <span class="badge bg-danger" title="Saldo negativo na planilha devido a consumo de estoque legado">
+                                        <i class="bi bi-exclamation-triangle-fill"></i> Inventário Pendente
+                                    </span>
+                                {% elif item.encontrado_django %}
+                                    <span class="badge bg-success">
+                                        <i class="bi bi-check-circle-fill"></i> Reconciliado
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-secondary">Não Cadastrado</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    {% empty %}
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">Nenhum modelo auditado.</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}
+

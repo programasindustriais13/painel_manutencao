@@ -17,6 +17,11 @@ from .models import (
     HistoricoProgramacaoBladder,
     MensagemPassagemTurnoBladder,
     AcaoMensagemTurnoBladder,
+    TipoAtividadeBladder,
+    AtividadeTurnoBladder,
+    MovimentacaoEstoqueBladder,
+    HistoricoEdicaoMensagemTurnoBladder,
+    ConfiguracaoWhatsAppBladder,
 )
 
 
@@ -68,11 +73,47 @@ class PerfilOperacionalBladderAdmin(admin.ModelAdmin):
     status_grupo_operadores.short_description = "Status do Grupo"
 
 
+@admin.register(TipoAtividadeBladder)
+class TipoAtividadeBladderAdmin(admin.ModelAdmin):
+    list_display = ('codigo', 'nome', 'categoria', 'exige_quantidade', 'exige_modelo', 'exige_conclusao', 'ordem_exibicao', 'ativo')
+    list_filter = ('categoria', 'ativo', 'exige_quantidade', 'exige_modelo')
+    search_fields = ('codigo', 'nome', 'descricao')
+    ordering = ('ordem_exibicao', 'nome')
+
+
 @admin.register(ProdutoBladder)
 class ProdutoBladderAdmin(admin.ModelAdmin):
-    list_display = ('codigo', 'descricao', 'matriz_extrusao', 'peso_tarugo_kg', 'peso_vulcanizado_kg', 'status', 'ativo')
+    list_display = ('codigo', 'descricao', 'estoque_atual', 'estoque_minimo', 'get_situacao', 'peso_tarugo_kg', 'peso_vulcanizado_kg', 'status', 'ativo')
+    list_editable = ('estoque_minimo',)
     list_filter = ('status', 'ativo', 'matriz_extrusao')
     search_fields = ('codigo', 'descricao', 'nomenclatura_antiga')
+
+    def get_situacao(self, obj):
+        return obj.situacao_estoque_display
+    get_situacao.short_description = "Situação Estoque"
+
+
+@admin.register(AtividadeTurnoBladder)
+class AtividadeTurnoBladderAdmin(admin.ModelAdmin):
+    list_display = ('tipo_atividade', 'data_turno', 'turma', 'processo', 'quantidade', 'status', 'concluido_por', 'concluido_em')
+    list_filter = ('turma', 'status', 'data_turno', 'tipo_atividade')
+    search_fields = ('tipo_atividade__nome', 'observacao', 'criado_por__username')
+    date_hierarchy = 'data_turno'
+
+
+@admin.register(MovimentacaoEstoqueBladder)
+class MovimentacaoEstoqueBladderAdmin(admin.ModelAdmin):
+    list_display = ('data_hora', 'tipo', 'produto', 'quantidade', 'saldo_anterior', 'saldo_posterior', 'turma', 'usuario', 'destino')
+    list_filter = ('tipo', 'turma', 'data_turno')
+    search_fields = ('produto__codigo', 'destino', 'justificativa', 'usuario__username', 'lote_etiqueta')
+    date_hierarchy = 'data_hora'
+    readonly_fields = ('data_hora', 'saldo_anterior', 'saldo_posterior', 'created_at')
+
+
+@admin.register(ConfiguracaoWhatsAppBladder)
+class ConfiguracaoWhatsAppBladderAdmin(admin.ModelAdmin):
+    list_display = ('horario_envio', 'habilitado', 'grupo_destino', 'numero_destino', 'dias_semana', 'ultimo_envio', 'ultimo_status')
+    list_filter = ('habilitado',)
 
 
 @admin.register(RecursoBladder)
@@ -141,6 +182,12 @@ class FechamentoTurnoBladderAdmin(admin.ModelAdmin):
     inlines = [ItemFechamentoTurnoInline]
 
 
+class HistoricoEdicaoMensagemTurnoInline(admin.TabularInline):
+    model = HistoricoEdicaoMensagemTurnoBladder
+    extra = 0
+    readonly_fields = ('texto_anterior', 'texto_novo', 'usuario', 'created_at')
+
+
 class AcaoMensagemTurnoInline(admin.TabularInline):
     model = AcaoMensagemTurnoBladder
     extra = 0
@@ -153,13 +200,13 @@ class MensagemPassagemTurnoBladderAdmin(admin.ModelAdmin):
         'id', 'prioridade', 'tipo', 'categoria',
         'data_turno_origem', 'turma_origem',
         'data_turno_destino', 'turma_destino',
-        'autor', 'status', 'created_at'
+        'autor', 'status', 'created_at', 'editado_em'
     )
     list_filter = ('tipo', 'categoria', 'prioridade', 'status', 'turma_origem', 'turma_destino')
     search_fields = ('mensagem', 'autor__username', 'autor__first_name', 'ordem_producao__numero_ordem')
     date_hierarchy = 'data_turno_origem'
-    raw_id_fields = ('autor', 'ordem_producao', 'processo', 'maquina', 'produto', 'mensagem_origem', 'resolvido_por', 'repassado_por')
-    inlines = [AcaoMensagemTurnoInline]
+    raw_id_fields = ('autor', 'ordem_producao', 'processo', 'maquina', 'produto', 'mensagem_origem', 'resolvido_por', 'repassado_por', 'editado_por')
+    inlines = [AcaoMensagemTurnoInline, HistoricoEdicaoMensagemTurnoInline]
 
 
 @admin.register(AcaoMensagemTurnoBladder)

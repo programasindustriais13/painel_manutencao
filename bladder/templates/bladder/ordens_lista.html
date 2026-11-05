@@ -11,14 +11,34 @@
         </p>
     </div>
     {% if is_lider %}
-        <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning fw-bold d-flex align-items-center gap-2">
-            <i class="bi bi-plus-circle-fill"></i> Nova Programação
+        <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning fw-bold d-flex align-items-center gap-2 px-3 py-2 shadow-sm touch-btn">
+            <i class="bi bi-plus-circle-fill fs-5"></i> + Nova Ordem de Produção
         </a>
     {% endif %}
 </div>
 
-<!-- Filtros -->
+<!-- Filtros Rápidos & Detalhados -->
 <div class="glass-card mb-4">
+    <!-- Pílulas de Atalho -->
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-25">
+        <span class="small text-secondary fw-semibold me-1">Atalhos rápidos:</span>
+        <a href="{% url 'bladder:ordens_lista' %}" class="btn btn-sm {% if not filtro_especial and not status_selecionado %}btn-warning fw-bold text-dark{% else %}btn-outline-secondary text-light{% endif %}">
+            Todas as OPs
+        </a>
+        <a href="{% url 'bladder:ordens_lista' %}?filtro=atrasadas" class="btn btn-sm {% if filtro_especial == 'atrasadas' %}btn-danger fw-bold{% else %}btn-outline-danger{% endif %}">
+            <i class="bi bi-exclamation-octagon-fill me-1"></i> OPs Atrasadas
+        </a>
+        <a href="{% url 'bladder:ordens_lista' %}?status=PENDENTE" class="btn btn-sm {% if status_selecionado == 'PENDENTE' %}btn-warning fw-bold text-dark{% else %}btn-outline-secondary text-light{% endif %}">
+            Programadas
+        </a>
+        <a href="{% url 'bladder:ordens_lista' %}?status=PARCIAL" class="btn btn-sm {% if status_selecionado == 'PARCIAL' %}btn-warning fw-bold text-dark{% else %}btn-outline-secondary text-light{% endif %}">
+            Pendências / Parciais
+        </a>
+        <a href="{% url 'bladder:ordens_lista' %}?status=CONCLUIDA" class="btn btn-sm {% if status_selecionado == 'CONCLUIDA' %}btn-success fw-bold{% else %}btn-outline-secondary text-light{% endif %}">
+            Concluídas
+        </a>
+    </div>
+
     <form method="get" class="row g-2 align-items-end">
         <div class="col-6 col-md-2">
             <label class="form-label small">Status</label>
@@ -116,7 +136,7 @@
                                 {% endif %}
                             </td>
                             <td>
-                                <span class="font-monospace fw-semibold text-light">{{ op.produto.codigo }}</span>
+                                <span class="font-monospace fw-semibold text-light">{{ op.produto.codigo|default:"—" }}</span>
                                 {% if op.produto.descricao %}
                                     <small class="text-muted d-block" style="font-size: 0.72rem;">{{ op.produto.descricao|truncatechars:22 }}</small>
                                 {% endif %}

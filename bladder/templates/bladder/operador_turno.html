@@ -1,24 +1,59 @@
 {% extends "bladder/base_bladder.html" %}
 
-{% block title %}Chão de Fábrica &bull; Setor de Bladder{% endblock %}
+{% block title %}Turno Operacional &bull; Setor de Bladder{% endblock %}
 
 {% block extra_css %}
 <style>
+    /* Estilos do Ambiente Turno (Otimizado para Operador e Tablet) */
+    .turno-nav-tabs .nav-link {
+        font-size: 1.05rem;
+        font-weight: 600;
+        padding: 0.85rem 1.4rem;
+        border-radius: 10px 10px 0 0;
+        color: #64748B;
+        border: 1px solid transparent;
+        transition: all 0.2s ease;
+    }
+    .turno-nav-tabs .nav-link.active {
+        color: #0F172A;
+        background-color: var(--dark-card, #FFFFFF);
+        border-color: #CBD5E1 #CBD5E1 transparent #CBD5E1;
+        font-weight: 700;
+        box-shadow: 0 -2px 8px rgba(0,0,0,0.03);
+    }
+    body.theme-dark .turno-nav-tabs .nav-link {
+        color: #94A3B8;
+    }
+    body.theme-dark .turno-nav-tabs .nav-link.active {
+        color: #F8FAFC;
+        background-color: #131B2A;
+        border-color: rgba(255,255,255,0.12) rgba(255,255,255,0.12) transparent rgba(255,255,255,0.12);
+    }
+
     .op-card-board {
-        background: #111827;
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
         border-radius: 12px;
         transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    }
+    body.theme-dark .op-card-board {
+        background: #111827;
+        border-color: rgba(255, 255, 255, 0.12);
     }
     .op-card-board:hover {
-        border-color: rgba(245, 158, 11, 0.6);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        border-color: #F59E0B;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
     }
     .op-metric-box {
-        background: rgba(0, 0, 0, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
         border-radius: 8px;
-        padding: 0.75rem 0.85rem;
+        padding: 0.85rem;
+    }
+    body.theme-dark .op-metric-box {
+        background: rgba(0, 0, 0, 0.45);
+        border-color: rgba(255, 255, 255, 0.08);
     }
     .metric-value {
         font-family: 'JetBrains Mono', monospace;
@@ -26,126 +61,172 @@
         line-height: 1.1;
     }
     .touch-btn {
-        min-height: 44px;
+        min-height: 48px;
         font-size: 0.95rem;
-        letter-spacing: 0.4px;
+        letter-spacing: 0.3px;
     }
     .touch-header-btn {
-        min-height: 44px;
+        min-height: 48px;
         padding: 0.5rem 1.25rem;
     }
-    /* Adaptações de Responsividade: Tablet Retrato, Paisagem e Desktop */
-    @media (max-width: 767.98px) {
-        .op-metric-box {
-            padding: 0.6rem 0.75rem;
-        }
+    .quick-action-bar {
+        position: sticky;
+        top: 65px;
+        z-index: 1020;
+        background: var(--dark-card, #FFFFFF);
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
     }
-    @media (min-width: 768px) and (max-width: 1199.98px) {
-        /* Tablet Retrato e Tablet Paisagem: ~2 cards por linha com altura contida */
-        .op-card-board {
-            min-height: 190px;
-        }
+    body.theme-dark .quick-action-bar {
+        background: #131B2A;
+        border-color: rgba(255, 255, 255, 0.1);
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
     }
-    .modal-dialog-scrollable .modal-body {
-        max-height: calc(85vh - 130px);
-        overflow-y: auto;
+    .animate-pulse {
+        animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+        0% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.04); opacity: 0.88; }
+        100% { transform: scale(1); opacity: 1; }
     }
 </style>
 {% endblock %}
 
 {% block content %}
-<!-- Cabeçalho do Chão de Fábrica &bull; Quadro Operacional do Turno -->
-<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4 p-3 glass-card border-warning border-opacity-25">
-    <div>
-        <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-            <span class="badge bg-warning text-dark fw-bold fs-6 px-2 py-1">
-                <i class="bi bi-tablet me-1"></i> CHÃO DE FÁBRICA &bull; QUADRO OPERACIONAL
-            </span>
-            <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-2 py-1">
-                {{ turma_hoje_display }}
-            </span>
-            {% if perfil_operacional %}
-                <span class="badge bg-dark border border-warning text-warning fs-6 px-2 py-1">
-                    <i class="bi bi-people-fill"></i> Equipe: {{ perfil_operacional.get_turma_display }}
+<!-- ===================================================================== -->
+<!-- CABEÇALHO DO AMBIENTE TURNO                                          -->
+<!-- ===================================================================== -->
+<div class="glass-card mb-3 p-3 p-md-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <span class="badge bg-warning text-dark fw-bold fs-6 px-3 py-1.5">
+                    <i class="bi bi-person-workspace me-1"></i> AMBIENTE TURNO
                 </span>
-            {% endif %}
-            {% if is_apoio %}
-                <span class="badge bg-success fs-6 px-2 py-1">
-                    <i class="bi bi-person-badge"></i> {{ apoio_obj.papel }}
+                <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-3 py-1.5">
+                    {{ turma_hoje_display }}
                 </span>
+                {% if perfil_operacional %}
+                    <span class="badge bg-dark border border-warning text-warning fs-6 px-3 py-1.5">
+                        <i class="bi bi-people-fill me-1"></i> Equipe: {{ perfil_operacional.get_turma_display }}
+                    </span>
+                {% endif %}
+                {% if is_apoio %}
+                    <span class="badge bg-success fs-6 px-3 py-1.5">
+                        <i class="bi bi-person-badge me-1"></i> {{ apoio_obj.papel }}
+                    </span>
+                {% endif %}
+                {% if fechamento_hoje %}
+                    <span class="badge bg-success text-light fs-6 px-3 py-1.5">
+                        <i class="bi bi-check-circle-fill me-1"></i> Turno Encerrado
+                    </span>
+                {% else %}
+                    <span class="badge bg-warning text-dark fs-6 px-3 py-1.5">
+                        <i class="bi bi-hourglass-split me-1"></i> Turno em Andamento
+                    </span>
+                {% endif %}
+            </div>
+            <h1 class="h4 fw-bold mb-1">Setor de Bladder &bull; {{ hoje|date:"l, d/m/Y"|capfirst }}</h1>
+            <div class="small text-secondary">
+                Operador conectado: <strong class="text-dark">{{ request.user.get_full_name|default:request.user.username }}</strong>
+                {% if is_lider %}&bull; <span class="badge bg-dark text-warning">Acesso Líder / Supervisão</span>{% endif %}
+            </div>
+        </div>
+
+        <!-- Botões de Ação Rápida no Topo (Seção 8) -->
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <button type="button" class="btn btn-outline-primary fw-bold d-flex align-items-center gap-2 touch-header-btn" data-bs-toggle="modal" data-bs-target="#modalNovaAtividade" title="Registrar atividade de apoio/chão de fábrica">
+                <i class="bi bi-plus-circle-fill"></i> + Atividade
+            </button>
+            <button type="button" class="btn btn-outline-info text-dark fw-bold d-flex align-items-center gap-2 touch-header-btn" data-bs-toggle="modal" data-bs-target="#modalMovimentoEstoqueRapido" title="Registrar entrada ou saída de Bladders acabados">
+                <i class="bi bi-boxes"></i> + Mov. Estoque
+            </button>
+            <button type="button" class="btn btn-warning fw-bold d-flex align-items-center gap-2 touch-header-btn" onclick="abrirModalRecadoGeral()" title="Deixar recado para a próxima equipe">
+                <i class="bi bi-chat-square-text-fill"></i> + Deixar Recado
+            </button>
+            {% if fechamento_hoje %}
+                <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-success fw-bold d-flex align-items-center gap-2 touch-header-btn" title="Turno já encerrado. Clique para revisar">
+                    <i class="bi bi-check2-all"></i> Turno Fechado
+                </a>
+            {% else %}
+                <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-danger fw-bold d-flex align-items-center gap-2 touch-header-btn" title="Encerrar o turno e apontar produção">
+                    <i class="bi bi-door-closed-fill"></i> Fechar Turno
+                </a>
             {% endif %}
         </div>
-        <h1 class="h4 fw-bold text-light mb-0">Programação de Bladder &bull; {{ hoje|date:"d/m/Y" }}</h1>
-    </div>
-    <div class="d-flex align-items-center gap-3">
-        <div class="text-end d-none d-sm-block">
-            <span class="small text-muted d-block">Operador Conectado</span>
-            <span class="fw-bold text-light fs-6">{{ request.user.first_name|default:request.user.username }}</span>
-        </div>
-        <!-- Botão Único de Fechamento do Turno no Topo -->
-        {% if fechamento_hoje %}
-            <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-outline-success fw-bold d-flex align-items-center gap-2 touch-header-btn" title="Turno já encerrado">
-                <i class="bi bi-check-circle-fill"></i> Turno Encerrado
-            </a>
-        {% else %}
-            <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-warning fw-bold d-flex align-items-center gap-2 touch-header-btn">
-                <i class="bi bi-door-closed-fill"></i> FECHAR TURNO
-            </a>
-        {% endif %}
     </div>
 </div>
 
 <!-- ===================================================================== -->
-<!-- PAINEL COMPACTO: PASSAGEM DO TURNO ANTERIOR                           -->
+<!-- AS TRÊS ABAS PRINCIPAIS DO TURNO (SEÇÃO 8)                           -->
 <!-- ===================================================================== -->
-<div class="mb-4">
-    <div class="glass-card p-3 border-opacity-30 {% if recados_urgentes > 0 %}border-danger shadow-sm{% else %}border-secondary{% endif %}">
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2 pb-2 border-bottom border-secondary border-opacity-25">
-            <div class="d-flex flex-wrap align-items-center gap-2">
-                <span class="badge {% if recados_urgentes > 0 %}bg-danger animate-pulse{% elif total_recados > 0 %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-3 py-1">
-                    <i class="bi bi-arrow-left-right me-1"></i> PASSAGEM DO TURNO ANTERIOR
+<ul class="nav nav-tabs turno-nav-tabs mb-4" id="turnoTabs" role="tablist">
+    <!-- ABA 1: RECADOS RECEBIDOS -->
+    <li class="nav-item" role="presentation">
+        <button class="nav-link {% if recados_urgentes > 0 %}active{% elif not ordens and total_recados > 0 %}active{% endif %}" id="tab-recados-btn" data-bs-toggle="tab" data-bs-target="#tab-recados" type="button" role="tab" aria-controls="tab-recados" aria-selected="{% if recados_urgentes > 0 %}true{% else %}false{% endif %}">
+            <i class="bi bi-chat-square-text-fill me-1"></i> Recados Recebidos
+            {% if total_recados > 0 %}
+                <span class="badge {% if recados_urgentes > 0 %}bg-danger animate-pulse{% else %}bg-warning text-dark{% endif %} ms-1 rounded-pill">
+                    {{ total_recados }}
                 </span>
-                {% if total_recados > 0 %}
-                    <span class="badge bg-dark border border-secondary text-light fs-6">
-                        {{ total_recados }} recado{{ total_recados|pluralize }}
-                        {% if recados_pendentes_ciencia > 0 %}
-                            &bull; <span class="text-warning">{{ recados_pendentes_ciencia }} não lido{{ recados_pendentes_ciencia|pluralize }}</span>
-                        {% endif %}
-                    </span>
-                    {% if recados_urgentes > 0 %}
-                        <span class="badge bg-danger text-light fs-6">
-                            <i class="bi bi-exclamation-triangle-fill"></i> {{ recados_urgentes }} urgente{{ recados_urgentes|pluralize }}
+            {% endif %}
+        </button>
+    </li>
+
+    <!-- ABA 2: ATIVIDADES DO TURNO (Default) -->
+    <li class="nav-item" role="presentation">
+        <button class="nav-link {% if recados_urgentes == 0 and ordens or recados_urgentes == 0 and not ordens and total_recados == 0 %}active{% endif %}" id="tab-atividades-btn" data-bs-toggle="tab" data-bs-target="#tab-atividades" type="button" role="tab" aria-controls="tab-atividades" aria-selected="{% if recados_urgentes == 0 %}true{% else %}false{% endif %}">
+            <i class="bi bi-list-task me-1"></i> Atividades do Turno
+            <span class="badge bg-secondary ms-1 rounded-pill">
+                {{ ordens|length|add:atividades_operacionais|length }}
+            </span>
+        </button>
+    </li>
+
+    <!-- ABA 3: HISTÓRICO -->
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-historico-btn" data-bs-toggle="tab" data-bs-target="#tab-historico" type="button" role="tab" aria-controls="tab-historico" aria-selected="false">
+            <i class="bi bi-clock-history me-1"></i> Histórico
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content" id="turnoTabsContent">
+    <!-- ================================================================= -->
+    <!-- ABA 1: RECADOS RECEBIDOS                                         -->
+    <!-- ================================================================= -->
+    <div class="tab-pane fade {% if recados_urgentes > 0 %}show active{% elif not ordens and total_recados > 0 %}show active{% endif %}" id="tab-recados" role="tabpanel" aria-labelledby="tab-recados-btn">
+        <div class="glass-card mb-4 p-3 p-md-4">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-20">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                    <h2 class="h5 fw-bold mb-0">Comunicações e Passagem da Equipe Anterior</h2>
+                    {% if recados_pendentes_ciencia > 0 %}
+                        <span class="badge bg-warning text-dark">
+                            {{ recados_pendentes_ciencia }} aguardando confirmação de ciência
                         </span>
                     {% endif %}
-                {% else %}
-                    <span class="badge bg-dark border border-secondary text-muted">Nenhum recado recebido para hoje</span>
-                {% endif %}
-            </div>
-            <div class="d-flex flex-wrap align-items-center gap-2">
-                {% if total_recados > 0 %}
-                    <button class="btn btn-sm btn-outline-secondary text-light" type="button" data-bs-toggle="collapse" data-bs-target="#collapseRecadosTurno" aria-expanded="true" aria-controls="collapseRecadosTurno">
-                        <i class="bi bi-chevron-expand me-1"></i> Expandir / Recolher
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-secondary btn-sm fw-semibold">
+                        <i class="bi bi-list-check"></i> Ver Recados Criados
+                    </a>
+                    <button type="button" class="btn btn-warning btn-sm fw-bold" onclick="abrirModalRecadoGeral()">
+                        <i class="bi bi-chat-square-text-fill"></i> + Novo Recado
                     </button>
-                {% endif %}
-                <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-warning btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" title="Ver recados criados para o próximo turno">
-                    <i class="bi bi-list-check"></i> VER RECADOS CRIADOS
-                </a>
-                <button type="button" class="btn btn-warning btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" onclick="abrirModalRecadoGeral()">
-                    <i class="bi bi-chat-square-text-fill"></i> + DEIXAR RECADO PARA O PRÓXIMO TURNO
-                </button>
+                </div>
             </div>
-        </div>
 
-        {% if total_recados > 0 %}
-            <div class="collapse show" id="collapseRecadosTurno">
-                <div class="row g-2 pt-1">
+            {% if recados_recebidos %}
+                <div class="row g-3">
                     {% for recado in recados_recebidos %}
-                        <div class="col-12 {% if total_recados > 1 %}col-lg-6{% endif %}">
-                            <div class="p-3 rounded border {% if recado.prioridade == 'URGENTE' %}border-danger bg-danger bg-opacity-10{% elif recado.prioridade == 'IMPORTANTE' %}border-warning border-opacity-50 bg-black bg-opacity-30{% else %}border-secondary border-opacity-40 bg-black bg-opacity-20{% endif %} {% if recado.usuario_ciente %}opacity-75{% endif %} h-100 d-flex flex-column justify-content-between">
+                        <div class="col-12 col-lg-6">
+                            <div class="p-3 rounded border {% if recado.prioridade == 'URGENTE' %}border-danger bg-danger bg-opacity-10{% elif recado.prioridade == 'IMPORTANTE' %}border-warning bg-warning bg-opacity-10{% else %}border-secondary border-opacity-25 bg-light bg-opacity-50{% endif %} h-100 d-flex flex-column justify-content-between shadow-sm">
                                 <div>
+                                    <!-- Badges -->
                                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
                                         <div class="d-flex flex-wrap align-items-center gap-1">
-                                            <!-- Prioridade -->
                                             {% if recado.prioridade == 'URGENTE' %}
                                                 <span class="badge bg-danger fw-bold"><i class="bi bi-exclamation-octagon-fill"></i> URGENTE</span>
                                             {% elif recado.prioridade == 'IMPORTANTE' %}
@@ -154,24 +235,21 @@
                                                 <span class="badge bg-secondary">NORMAL</span>
                                             {% endif %}
 
-                                            <!-- Tipo -->
-                                            <span class="badge {% if recado.tipo == 'ACOMPANHAMENTO' %}bg-primary{% else %}bg-dark border border-secondary text-light{% endif %}">
+                                            <span class="badge {% if recado.tipo == 'ACOMPANHAMENTO' %}bg-primary{% else %}bg-dark text-light{% endif %}">
                                                 {{ recado.get_tipo_display }}
                                             </span>
 
-                                            <!-- Categoria -->
-                                            <span class="badge bg-dark border border-warning border-opacity-25 text-warning">
+                                            <span class="badge bg-dark border border-warning text-warning">
                                                 {{ recado.get_categoria_display }}
                                             </span>
 
                                             {% if recado.mensagem_origem %}
-                                                <span class="badge bg-info bg-opacity-25 text-info border border-info border-opacity-25" title="Recado repassado de turno anterior">
+                                                <span class="badge bg-info text-dark" title="Recado repassado de turno anterior">
                                                     <i class="bi bi-arrow-repeat"></i> Repassado
                                                 </span>
                                             {% endif %}
                                         </div>
 
-                                        <!-- Status do Recado -->
                                         <div>
                                             {% if recado.status == 'RESOLVIDA' %}
                                                 <span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Resolvido</span>
@@ -181,10 +259,10 @@
                                         </div>
                                     </div>
 
-                                    <!-- Contexto Operacional (se houver) -->
+                                    <!-- Contexto da OP / Máquina -->
                                     {% if recado.ordem_producao or recado.processo or recado.maquina or recado.produto %}
-                                        <div class="small text-warning text-opacity-90 fw-semibold mb-2 d-flex flex-wrap align-items-center gap-2 bg-black bg-opacity-40 px-2 py-1 rounded">
-                                            <i class="bi bi-gear-fill"></i>
+                                        <div class="small fw-semibold mb-2 p-2 rounded bg-dark bg-opacity-10 text-dark border border-secondary border-opacity-20 d-flex flex-wrap align-items-center gap-2">
+                                            <i class="bi bi-gear-fill text-warning"></i>
                                             {% if recado.maquina %}<span>{{ recado.maquina.nome }}</span>{% endif %}
                                             {% if recado.processo %}<span>&bull; {{ recado.processo.nome }}</span>{% endif %}
                                             {% if recado.produto %}<span>&bull; {{ recado.produto.codigo_com_medida }}</span>{% endif %}
@@ -193,20 +271,20 @@
                                     {% endif %}
 
                                     <!-- Mensagem -->
-                                    <div class="text-light fs-6 mb-2" style="white-space: pre-line;">{{ recado.mensagem }}</div>
+                                    <div class="fs-6 mb-3 p-2 rounded bg-white border border-secondary border-opacity-20 text-dark" style="white-space: pre-line;">{{ recado.mensagem }}</div>
                                 </div>
 
-                                <!-- Rodapé do Card: Autoria e Ações -->
-                                <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex flex-wrap justify-content-between align-items-center gap-2">
-                                    <div class="small text-muted">
-                                        <i class="bi bi-person"></i> <strong class="text-light">{{ recado.autor.get_full_name|default:recado.autor.username }}</strong> &bull;
+                                <!-- Rodapé do Card com Ações -->
+                                <div class="pt-2 border-top border-secondary border-opacity-25 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                                    <div class="small text-secondary">
+                                        <i class="bi bi-person"></i> <strong>{{ recado.autor.get_full_name|default:recado.autor.username }}</strong> &bull;
                                         {{ recado.get_turma_origem_display }} &bull; {{ recado.data_turno_origem|date:"d/m" }} às {{ recado.created_at|date:"H:i" }}
                                     </div>
 
                                     <div class="d-flex align-items-center gap-2">
-                                        <!-- Ciência individual -->
+                                        <!-- Botão CIENTE -->
                                         {% if recado.usuario_ciente %}
-                                            <span class="badge bg-success-subtle text-success border border-success py-1 px-2 small">
+                                            <span class="badge bg-success-subtle text-success border border-success py-2 px-3 fw-bold">
                                                 <i class="bi bi-check2-all"></i> Ciente
                                             </span>
                                         {% else %}
@@ -214,7 +292,7 @@
                                                 {% csrf_token %}
                                                 <input type="hidden" name="acao" value="CIENTE">
                                                 <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
-                                                <button type="submit" class="btn btn-outline-success btn-sm fw-bold px-3 py-1 touch-btn">
+                                                <button type="submit" class="btn btn-outline-success fw-bold px-3 touch-btn">
                                                     <i class="bi bi-check2"></i> CIENTE
                                                 </button>
                                             </form>
@@ -222,11 +300,18 @@
 
                                         <!-- Ações de Acompanhamento -->
                                         {% if recado.tipo == 'ACOMPANHAMENTO' and recado.status == 'ABERTA' %}
-                                            <button type="button" class="btn btn-success btn-sm fw-bold px-2 py-1 touch-btn" onclick="abrirModalResolverRecado('{{ recado.id }}', '{{ recado.mensagem|escapejs }}')">
-                                                <i class="bi bi-check-lg"></i> RESOLVIDO
+                                            <button type="button" class="btn btn-success fw-bold px-3 touch-btn" onclick="abrirModalResolverRecado('{{ recado.id }}', '{{ recado.mensagem|escapejs }}')">
+                                                <i class="bi bi-check-lg"></i> RESOLVER
                                             </button>
-                                            <button type="button" class="btn btn-info btn-sm fw-bold px-2 py-1 touch-btn" onclick="abrirModalRepassarRecado('{{ recado.id }}', '{{ recado.mensagem|escapejs }}')">
+                                            <button type="button" class="btn btn-info text-dark fw-bold px-3 touch-btn" onclick="abrirModalRepassarRecado('{{ recado.id }}', '{{ recado.mensagem|escapejs }}')">
                                                 <i class="bi bi-arrow-repeat"></i> REPASSAR
+                                            </button>
+                                        {% endif %}
+
+                                        <!-- Edição permitida ao próprio autor no mesmo turno -->
+                                        {% if recado.autor == request.user and recado.data_turno_origem == hoje %}
+                                            <button type="button" class="btn btn-outline-secondary btn-sm touch-btn" onclick="abrirModalEditarRecado('{{ recado.id }}', '{{ recado.tipo }}', '{{ recado.prioridade }}', '{{ recado.categoria }}', '{{ recado.mensagem|escapejs }}')" title="Editar mensagem mantendo histórico">
+                                                <i class="bi bi-pencil-square"></i>
                                             </button>
                                         {% endif %}
                                     </div>
@@ -235,404 +320,553 @@
                         </div>
                     {% endfor %}
                 </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="bi bi-check-circle-fill text-success fs-1 d-block mb-3"></i>
+                    <h4 class="fw-bold">Nenhum recado pendente!</h4>
+                    <p class="text-secondary small">A equipe do turno anterior não deixou recados pendentes para hoje.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- ABA 2: ATIVIDADES DO TURNO                                       -->
+    <!-- ================================================================= -->
+    <div class="tab-pane fade {% if recados_urgentes == 0 and ordens or recados_urgentes == 0 and not ordens and total_recados == 0 %}show active{% endif %}" id="tab-atividades" role="tabpanel" aria-labelledby="tab-atividades-btn">
+
+        <!-- SEÇÃO A: ORDENS DE PRODUÇÃO PROGRAMADAS -->
+        <div class="mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h2 class="h5 fw-bold mb-0 d-flex align-items-center gap-2">
+                        <i class="bi bi-disc-fill text-warning"></i> Ordens de Produção do Turno ({{ ordens|length }})
+                    </h2>
+                    <span class="small text-secondary">Identificação rápida com Ficha Técnica detalhada</span>
+                </div>
+                {% if is_lider %}
+                    <a href="{% url 'bladder:ordem_nova' %}" class="btn btn-warning btn-sm fw-bold">
+                        <i class="bi bi-plus-circle-fill"></i> Nova OP
+                    </a>
+                {% endif %}
             </div>
-        {% endif %}
-    </div>
-</div>
 
-<!-- Fila de Atividades Programadas para o Turno (Responsivo: 1 col mobile, 2 col tablet, 2 a 3 col desktop) -->
-<div class="mb-4">
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h5 fw-bold text-light mb-0 d-flex align-items-center gap-2">
-            <i class="bi bi-list-task text-warning"></i> Atividades do Turno ({{ ordens|length }})
-        </h2>
-        <span class="small text-muted">Identificação rápida &bull; Ficha Técnica para consulta detalhada</span>
-    </div>
-
-    {% if ordens %}
-        <div class="row g-3">
-            {% for op in ordens %}
-                <div class="col-12 col-md-6 col-xxl-4">
-                    <div class="op-card-board p-3 d-flex flex-column justify-content-between h-100">
-                        <!-- Topo do Card: Identificação curta da OP, Processo/Equipamento, Prioridade e Status -->
-                        <div>
-                            <div class="d-flex justify-content-between align-items-start mb-2">
+            {% if ordens %}
+                <div class="row g-3">
+                    {% for op in ordens %}
+                        <div class="col-12 col-md-6 col-xxl-4">
+                            <div class="op-card-board p-3 d-flex flex-column justify-content-between h-100">
                                 <div>
-                                    <!-- Menor destaque: Identificação Curta da OP -->
-                                    <span class="fs-6 fw-bold font-monospace text-warning px-2 py-0.5 rounded bg-black bg-opacity-40 border border-warning border-opacity-25" title="Identificador Oficial: {{ op.numero_ordem }}">
-                                        {{ op.numero_ordem_curto }}
-                                    </span>
-                                    <!-- Destaque secundário: Processo e Equipamento -->
-                                    <div class="text-secondary small mt-1">
-                                        <i class="bi bi-gear-wide-connected text-muted"></i>
-                                        <span class="text-light fw-semibold">{{ op.processo.nome }}</span>
-                                        {% if op.processo.maquina %}
-                                            <span class="text-muted">({{ op.processo.maquina.nome }})</span>
-                                        {% endif %}
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div>
+                                            <span class="fs-6 fw-bold font-monospace text-warning px-2 py-0.5 rounded bg-dark border border-warning border-opacity-25" title="Identificador Oficial: {{ op.numero_ordem }}">
+                                                {{ op.numero_ordem_curto }}
+                                            </span>
+                                            <div class="text-secondary small mt-1">
+                                                <i class="bi bi-gear-wide-connected"></i>
+                                                <strong class="text-dark">{{ op.processo.nome }}</strong>
+                                                {% if op.processo.maquina %}
+                                                    <span>({{ op.processo.maquina.nome }})</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="text-end">
+                                            <span class="badge {% if op.prioridade == 'URGENTE' %}bg-danger{% elif op.prioridade == 'ALTA' %}bg-warning text-dark{% else %}bg-secondary{% endif %} px-2 py-1">
+                                                {{ op.get_prioridade_display }}
+                                            </span>
+                                            <div class="small mt-1">
+                                                <span class="badge {% if op.status_visual == 'CONCLUÍDA' %}bg-success{% elif op.status_visual == 'PARCIAL / PENDÊNCIA' %}bg-warning text-dark{% elif op.status_visual == 'NÃO REALIZADA / PENDÊNCIA' %}bg-danger text-light{% elif op.status_visual == 'CANCELADA' %}bg-secondary{% else %}bg-primary{% endif %}">
+                                                    {{ op.status_visual }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Modelo e Meta -->
+                                    <div class="op-metric-box my-2">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <span class="text-muted small d-block">Modelo do Bladder</span>
+                                                <span class="fs-3 fw-bold text-warning font-monospace">{{ op.produto.codigo|default:"GERAL" }}</span>
+                                                <span class="text-dark small d-block fw-semibold">{{ op.produto.descricao|default:op.processo.nome }}</span>
+                                            </div>
+                                            <div class="text-end">
+                                                <span class="text-muted small d-block">Meta do Turno</span>
+                                                <span class="metric-value text-dark fs-2">{{ op.quantidade_planejada }} <span class="fs-6 text-muted font-monospace">un</span></span>
+                                                {% if op.saldo_anterior_incorporado > 0 %}
+                                                    <span class="small text-info d-block fw-semibold">(+{{ op.saldo_anterior_incorporado }} saldo inc.)</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                                <div class="text-end">
-                                    <!-- Menor destaque: Prioridade e Situação -->
-                                    <span class="badge {% if op.prioridade == 'URGENTE' %}bg-danger{% elif op.prioridade == 'ALTA' %}bg-warning text-dark{% else %}bg-dark text-muted border border-secondary border-opacity-50{% endif %} px-2 py-1">
-                                        {{ op.get_prioridade_display }}
-                                    </span>
-                                    <div class="small mt-1">
-                                        <span class="badge {% if op.status_visual == 'CONCLUÍDA' %}bg-success{% elif op.status_visual == 'PARCIAL / PENDÊNCIA' %}bg-warning text-dark{% elif op.status_visual == 'NÃO REALIZADA / PENDÊNCIA' %}bg-danger text-light{% elif op.status_visual == 'CANCELADA' %}bg-secondary{% else %}bg-primary{% endif %}">
-                                            {{ op.status_visual }}
+
+                                <!-- Botões FICHA TÉCNICA e DEIXAR RECADO -->
+                                <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex gap-2">
+                                    <button type="button" class="btn btn-outline-warning flex-grow-1 fw-bold touch-btn" data-bs-toggle="modal" data-bs-target="#modalDetalhes{{ op.pk }}" title="Ficha Técnica &bull; Ver Especificações">
+                                        <i class="bi bi-file-earmark-text-fill"></i> FICHA TÉCNICA
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary px-3 fw-bold touch-btn" onclick="abrirModalRecadoContextual('{{ op.id }}', '{{ op.processo.id|default:'' }}', '{{ op.processo.maquina.id|default:'' }}', '{{ op.produto.id|default:'' }}', '{{ op.numero_ordem_curto }}', '{{ op.produto.codigo_com_medida|escapejs }}', '{{ op.processo.nome|default:''|escapejs }}', '{{ op.processo.maquina.nome|default:''|escapejs }}')" title="Deixar Recado desta Atividade para o Próximo Turno">
+                                        <i class="bi bi-chat-left-text"></i> RECADO
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- MODAL FICHA TÉCNICA (Especificação Técnica ET.029 Completa) -->
+                        <div class="modal fade" id="modalDetalhes{{ op.pk }}" tabindex="-1" aria-labelledby="modalLabel{{ op.pk }}" aria-hidden="true">
+                            <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+                                <div class="modal-content border border-warning shadow-lg">
+                                    <div class="modal-header border-bottom pb-2">
+                                        <div>
+                                            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                                                <span class="badge bg-warning text-dark fw-bold">FICHA TÉCNICA</span>
+                                                <span class="font-monospace text-warning fw-bold fs-6">{{ op.produto.codigo }}</span>
+                                                <span class="badge bg-light text-dark border">Especificações Técnicas (ET.029)</span>
+                                            </div>
+                                            <h5 class="modal-title fw-bold mb-0" id="modalLabel{{ op.pk }}">
+                                                {{ op.produto.descricao }}
+                                            </h5>
+                                            <div class="small text-muted mt-1">
+                                                Identificação Oficial: <span class="text-warning font-monospace fw-semibold">{{ op.numero_ordem }}</span> &bull;
+                                                {{ op.data_programada|date:"d/m/Y" }} &bull; {{ op.get_turma_prevista_display }}
+                                            </div>
+                                        </div>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                                    </div>
+                                    <div class="modal-body p-3">
+                                        <!-- 1. IDENTIFICAÇÃO -->
+                                        <div class="mb-4">
+                                            <h6 class="fw-bold text-warning border-bottom pb-2 mb-3 d-flex align-items-center gap-2">
+                                                <i class="bi bi-info-circle-fill"></i> 1. Identificação Geral
+                                            </h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered align-middle mb-0 small">
+                                                    <tbody>
+                                                        <tr>
+                                                            <td class="text-muted w-35">Código do Bladder:</td>
+                                                            <td class="fw-bold font-monospace text-warning">{{ op.produto.codigo }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Modelo / Descrição:</td>
+                                                            <td class="fw-semibold">{{ op.produto.descricao }}</td>
+                                                        </tr>
+                                                        {% if op.produto.nomenclatura_antiga %}
+                                                            <tr>
+                                                                <td class="text-muted">Nomenclatura Antiga:</td>
+                                                                <td>{{ op.produto.nomenclatura_antiga }}</td>
+                                                            </tr>
+                                                        {% endif %}
+                                                        <tr>
+                                                            <td class="text-muted">Identificação da OP:</td>
+                                                            <td class="fw-bold font-monospace text-primary">{{ op.numero_ordem }}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Processo:</td>
+                                                            <td>{{ op.processo.nome }} ({{ op.processo.get_tipo_display }})</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Equipamento:</td>
+                                                            <td>{% if op.processo.maquina %}{{ op.processo.maquina.nome }}{% else %}{{ op.processo.nome }}{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Meta do Turno:</td>
+                                                            <td class="fw-bold font-monospace">{{ op.quantidade_planejada }} un</td>
+                                                        </tr>
+                                                        {% if op.consumo_teorico_planejado_kg %}
+                                                            <tr>
+                                                                <td class="text-muted">Consumo Teórico Calculado:</td>
+                                                                <td class="font-monospace text-info">{{ op.consumo_teorico_planejado_kg }} kg de composto</td>
+                                                            </tr>
+                                                        {% endif %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+
+                                        <!-- 2. TARUGO -->
+                                        <div class="mb-4">
+                                            <h6 class="fw-bold text-warning border-bottom pb-2 mb-3 d-flex align-items-center gap-2">
+                                                <i class="bi bi-circle-square"></i> 2. Tarugo
+                                            </h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered align-middle mb-0 small">
+                                                    <tbody>
+                                                        <tr>
+                                                            <td class="text-muted w-35">Peso do Tarugo:</td>
+                                                            <td class="font-monospace">{% if op.produto.peso_tarugo_kg %}<strong>{{ op.produto.peso_tarugo_kg }} kg</strong>{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Diâmetro do Tarugo:</td>
+                                                            <td class="font-monospace">{% if op.produto.diametro_tarugo_mm %}<strong>{{ op.produto.diametro_tarugo_mm }} mm</strong>{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+
+                                        <!-- 3. EXTRUSÃO -->
+                                        <div class="mb-4">
+                                            <h6 class="fw-bold text-warning border-bottom pb-2 mb-3 d-flex align-items-center gap-2">
+                                                <i class="bi bi-arrows-collapse"></i> 3. Parâmetros de Extrusão
+                                            </h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered align-middle mb-0 small">
+                                                    <tbody>
+                                                        <tr>
+                                                            <td class="text-muted w-35">Matriz de Extrusão:</td>
+                                                            <td class="font-monospace text-warning fw-bold">{% if op.produto.matriz_extrusao %}{{ op.produto.matriz_extrusao }}{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Comprimento de Extrusão:</td>
+                                                            <td class="font-monospace">{% if op.produto.comprimento_extrusao_cm %}{{ op.produto.comprimento_extrusao_cm }} cm{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Comprimento Chanfrado:</td>
+                                                            <td class="font-monospace">{% if op.produto.comprimento_chanfrado_cm %}{{ op.produto.comprimento_chanfrado_cm }} cm{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+
+                                        <!-- 4. VULCANIZAÇÃO -->
+                                        <div class="mb-4">
+                                            <h6 class="fw-bold text-warning border-bottom pb-2 mb-3 d-flex align-items-center gap-2">
+                                                <i class="bi bi-fire"></i> 4. Parâmetros de Vulcanização
+                                            </h6>
+                                            <div class="table-responsive">
+                                                <table class="table table-sm table-bordered align-middle mb-0 small">
+                                                    <tbody>
+                                                        <tr>
+                                                            <td class="text-muted w-35">Tempo de Vulcanização:</td>
+                                                            <td class="font-monospace text-warning fw-bold">{% if op.produto.tempo_vulcanizacao_min %}{{ op.produto.tempo_vulcanizacao_min }} min{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Peso Vulcanizado Acabado:</td>
+                                                            <td class="font-monospace">{% if op.produto.peso_vulcanizado_kg %}{{ op.produto.peso_vulcanizado_kg }} kg{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Circunferência no Centro:</td>
+                                                            <td class="font-monospace">{% if op.produto.circunferencia_centro_mm %}{{ op.produto.circunferencia_centro_mm }} mm{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td class="text-muted">Altura do Bladder:</td>
+                                                            <td class="font-monospace">{% if op.produto.altura_cm %}{{ op.produto.altura_cm }} cm{% else %}<span class="text-muted fst-italic">Não cadastrado</span>{% endif %}</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+
+                                        <!-- 5. FERRAMENTAL E OBSERVAÇÕES -->
+                                        <div class="mb-2">
+                                            <h6 class="fw-bold text-warning border-bottom pb-2 mb-3 d-flex align-items-center gap-2">
+                                                <i class="bi bi-tools"></i> 5. Ferramental e Instruções
+                                            </h6>
+                                            {% if op.recursos_observacoes %}
+                                                <div class="p-2.5 rounded bg-light border mb-2 small">
+                                                    <strong>Instruções de Ferramental:</strong> {{ op.recursos_observacoes }}
+                                                </div>
+                                            {% endif %}
+                                            {% if op.observacoes %}
+                                                <div class="p-2.5 rounded bg-light border small">
+                                                    <strong>Observações Gerais:</strong> {{ op.observacoes }}
+                                                </div>
+                                            {% endif %}
+                                            {% if not op.recursos_observacoes and not op.observacoes %}
+                                                <span class="text-muted small fst-italic">Nenhuma observação especial cadastrada.</span>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer d-flex justify-content-between align-items-center">
+                                        <span class="small text-muted"><i class="bi bi-shield-check text-success"></i> Visualização técnica exclusivamente para consulta.</span>
+                                        <button type="button" class="btn btn-secondary px-4 touch-btn" data-bs-dismiss="modal">Fechar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="glass-card text-center py-4 mb-4">
+                    <i class="bi bi-calendar-check text-success fs-1 d-block mb-2"></i>
+                    <h5 class="fw-bold">Nenhuma ordem de produção programada para este turno.</h5>
+                    <p class="text-secondary small mb-0">Use o botão "+ Atividade" abaixo para apontar extrusão, limpeza, manutenção ou corte.</p>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- SEÇÃO B: ATIVIDADES OPERACIONAIS DO TURNO (Extrusão, Limpeza, etc.) -->
+        <div class="mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <div>
+                    <h2 class="h5 fw-bold mb-0 d-flex align-items-center gap-2">
+                        <i class="bi bi-tools text-primary"></i> Atividades Operacionais do Turno ({{ atividades_operacionais|length }})
+                    </h2>
+                    <span class="small text-secondary">Acompanhamento e conclusão com 1 toque</span>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm fw-bold touch-btn" data-bs-toggle="modal" data-bs-target="#modalNovaAtividade">
+                    <i class="bi bi-plus-circle-fill"></i> + Registrar Atividade
+                </button>
+            </div>
+
+            {% if atividades_operacionais %}
+                <div class="row g-3">
+                    {% for ativ in atividades_operacionais %}
+                        <div class="col-12 col-md-6 col-lg-4">
+                            <div class="p-3 rounded border {% if ativ.status == 'CONCLUIDA' %}border-success bg-success bg-opacity-10{% else %}border-warning bg-white shadow-sm{% endif %} h-100 d-flex flex-column justify-content-between">
+                                <div>
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <span class="badge {% if ativ.tipo.codigo == 'EXTRUSAO' %}bg-primary{% elif ativ.tipo.codigo == 'LIMPEZA' %}bg-info text-dark{% elif ativ.tipo.codigo == 'MANUTENCAO' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                            {{ ativ.tipo.nome }}
+                                        </span>
+                                        <span class="badge {% if ativ.status == 'CONCLUIDA' %}bg-success{% else %}bg-warning text-dark{% endif %}">
+                                            {{ ativ.get_status_display }}
                                         </span>
                                     </div>
-                                </div>
-                            </div>
 
-                            <!-- Modelo do Bladder e Meta de Produção (Maior Destaque Visual) -->
-                            <div class="op-metric-box my-2">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <span class="text-muted small d-block">Código do Bladder</span>
-                                        <!-- Maior Destaque 1: Código do Bladder -->
-                                        <span class="fs-3 fw-bold text-warning font-monospace">{{ op.produto.codigo }}</span>
-                                        <!-- Destaque Secundário: Modelo/Descrição -->
-                                        <span class="text-light small d-block">{{ op.produto.descricao }}</span>
-                                    </div>
-                                    <div class="text-end">
-                                        <span class="text-muted small d-block">Meta do Turno</span>
-                                        <!-- Maior Destaque 2: Meta do Turno -->
-                                        <span class="metric-value text-warning fs-2">{{ op.quantidade_planejada }} <span class="fs-6 text-muted font-monospace">un</span></span>
-                                        {% if op.saldo_anterior_incorporado > 0 %}
-                                            <span class="small text-info d-block fw-semibold">(+{{ op.saldo_anterior_incorporado }} saldo inc.)</span>
-                                        {% endif %}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                                    <h6 class="fw-bold text-dark mb-1">{{ ativ.titulo }}</h6>
 
-                        <!-- Botões FICHA TÉCNICA e DEIXAR RECADO (Área de toque confortável para Tablet) -->
-                        <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex gap-2">
-                            <button type="button" class="btn btn-outline-warning flex-grow-1 fw-bold py-2 d-flex align-items-center justify-content-center gap-2 touch-btn" data-bs-toggle="modal" data-bs-target="#modalDetalhes{{ op.pk }}" title="Ficha Técnica &bull; Ver Detalhes Técnicos">
-                                <i class="bi bi-file-earmark-text-fill"></i> FICHA TÉCNICA
-                            </button>
-                            <button type="button" class="btn btn-outline-light px-3 fw-bold py-2 d-flex align-items-center justify-content-center gap-1 touch-btn" onclick="abrirModalRecadoContextual('{{ op.id }}', '{{ op.processo.id|default:'' }}', '{{ op.processo.maquina.id|default:'' }}', '{{ op.produto.id|default:'' }}', '{{ op.numero_ordem_curto }}', '{{ op.produto.codigo_com_medida|escapejs }}', '{{ op.processo.nome|default:''|escapejs }}', '{{ op.processo.maquina.nome|default:''|escapejs }}')" title="Deixar Recado desta Atividade para o Próximo Turno">
-                                <i class="bi bi-chat-left-text"></i> <span class="d-none d-sm-inline">RECADO</span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                                    {% if ativ.maquina %}
+                                        <div class="small text-secondary mb-1">
+                                            <i class="bi bi-cpu"></i> {{ ativ.maquina.nome }}
+                                        </div>
+                                    {% endif %}
 
-
-                <!-- Modal de Ficha Técnica da OP (Consulta Exclusiva Organizada por Grupos Técnicos Reais) -->
-                <div class="modal fade" id="modalDetalhes{{ op.pk }}" tabindex="-1" aria-labelledby="modalLabel{{ op.pk }}" aria-hidden="true">
-                    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
-                        <div class="modal-content bg-dark text-light border border-warning border-opacity-50 shadow-lg">
-                            <div class="modal-header border-secondary border-opacity-50 pb-2">
-                                <div>
-                                    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-                                        <span class="badge bg-warning text-dark fw-bold">FICHA TÉCNICA</span>
-                                        <span class="font-monospace text-warning fw-bold fs-6">{{ op.produto.codigo }}</span>
-                                        <span class="badge bg-dark border border-secondary text-secondary">Especificações Técnicas do Modelo (ET.029)</span>
-                                    </div>
-                                    <h5 class="modal-title fw-bold text-light mb-0" id="modalLabel{{ op.pk }}">
-                                        {{ op.produto.descricao }}
-                                    </h5>
-                                    <div class="small text-secondary mt-1">
-                                        Identificação Oficial: <span class="text-warning font-monospace fw-semibold">{{ op.numero_ordem }}</span> &bull; 
-                                        {{ op.data_programada|date:"d/m/Y" }} &bull; {{ op.get_turma_prevista_display }}
-                                    </div>
-                                </div>
-                                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
-                            </div>
-                            <div class="modal-body p-3">
-                                <!-- 6.1 IDENTIFICAÇÃO -->
-                                <div class="mb-4">
-                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
-                                        <i class="bi bi-info-circle-fill"></i> 1. Identificação Geral
-                                    </h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
-                                            <tbody>
-                                                <tr>
-                                                    <td class="text-muted w-35">Código do Bladder:</td>
-                                                    <td class="fw-bold font-monospace text-warning">{{ op.produto.codigo }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Modelo / Descrição:</td>
-                                                    <td class="text-light">{{ op.produto.descricao }}</td>
-                                                </tr>
-                                                {% if op.produto.nomenclatura_antiga %}
-                                                    <tr>
-                                                        <td class="text-muted">Nomenclatura Antiga:</td>
-                                                        <td class="text-light">{{ op.produto.nomenclatura_antiga }}</td>
-                                                    </tr>
-                                                {% endif %}
-                                                <tr>
-                                                    <td class="text-muted">Identificação Completa da OP:</td>
-                                                    <td class="fw-bold font-monospace text-info">{{ op.numero_ordem }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Processo Operacional:</td>
-                                                    <td class="text-light">{{ op.processo.nome }} ({{ op.processo.get_tipo_display }})</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Equipamento / Máquina:</td>
-                                                    <td class="text-light">
-                                                        {% if op.processo.maquina %}
-                                                            {{ op.processo.maquina.nome }}
-                                                        {% else %}
-                                                            {{ op.processo.nome }}
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Turma Programada:</td>
-                                                    <td class="text-light">{{ op.get_turma_prevista_display }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Data Programada:</td>
-                                                    <td class="text-light">{{ op.data_programada|date:"d/m/Y" }}</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Meta do Turno:</td>
-                                                    <td class="fw-bold text-light font-monospace">
-                                                        {{ op.quantidade_planejada }} un
-                                                        {% if op.saldo_anterior_incorporado > 0 %}
-                                                            <span class="text-info fw-normal">({{ op.quantidade_nova }} nova + {{ op.saldo_anterior_incorporado }} saldo inc.)</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                {% if op.consumo_teorico_planejado_kg %}
-                                                    <tr>
-                                                        <td class="text-muted">Consumo Teórico Calculado:</td>
-                                                        <td class="font-monospace text-info">{{ op.consumo_teorico_planejado_kg }} kg de composto</td>
-                                                    </tr>
-                                                {% endif %}
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                    {% if ativ.observacao %}
+                                        <div class="small text-muted mb-2">{{ ativ.observacao }}</div>
+                                    {% endif %}
                                 </div>
 
-                                <!-- 6.2 TARUGO -->
-                                <div class="mb-4">
-                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
-                                        <i class="bi bi-circle-square"></i> 2. Tarugo
-                                    </h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
-                                            <tbody>
-                                                <tr>
-                                                    <td class="text-muted w-35">Peso do Tarugo:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.peso_tarugo_kg %}
-                                                            <strong>{{ op.produto.peso_tarugo_kg }} kg</strong>
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Diâmetro do Tarugo:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.diametro_tarugo_mm %}
-                                                            <strong>{{ op.produto.diametro_tarugo_mm }} mm</strong>
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Comprimento do Tarugo:</td>
-                                                    <td class="text-muted fst-italic">Não cadastrado</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Composto / Material:</td>
-                                                    <td class="text-light">
-                                                        {% for r in op.recursos_alocados.all %}
-                                                            {% if r.categoria == 'COMPOSTO' %}
-                                                                <span class="badge bg-secondary me-1">{{ r.nome }}</span>
-                                                            {% endif %}
-                                                        {% empty %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endfor %}
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <div class="pt-2 border-top border-secondary border-opacity-25 d-flex justify-content-between align-items-center">
+                                    <span class="small text-muted">
+                                        {{ ativ.criado_por.get_full_name|default:ativ.criado_por.username }} &bull; {{ ativ.created_at|date:"H:i" }}
+                                    </span>
 
-                                <!-- 6.3 EXTRUSÃO -->
-                                <div class="mb-4">
-                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
-                                        <i class="bi bi-arrows-collapse"></i> 3. Parâmetros de Extrusão
-                                    </h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
-                                            <tbody>
-                                                <tr>
-                                                    <td class="text-muted w-35">Matriz de Extrusão:</td>
-                                                    <td class="font-monospace text-warning fw-bold">
-                                                        {% if op.produto.matriz_extrusao %}
-                                                            {{ op.produto.matriz_extrusao }}
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic fw-normal">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Comprimento de Extrusão:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.comprimento_extrusao_cm %}
-                                                            {{ op.produto.comprimento_extrusao_cm }} cm
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Comprimento Chanfrado:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.comprimento_chanfrado_cm %}
-                                                            {{ op.produto.comprimento_chanfrado_cm }} cm
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Velocidade de Extrusão:</td>
-                                                    <td class="text-muted fst-italic">Não cadastrado</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Temperaturas de Extrusão:</td>
-                                                    <td class="text-muted fst-italic">Não cadastrado</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-
-                                <!-- 6.4 VULCANIZAÇÃO -->
-                                <div class="mb-4">
-                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
-                                        <i class="bi bi-fire"></i> 4. Parâmetros de Vulcanização
-                                    </h6>
-                                    <div class="table-responsive">
-                                        <table class="table table-dark table-sm table-bordered align-middle mb-0 small">
-                                            <tbody>
-                                                <tr>
-                                                    <td class="text-muted w-35">Tempo de Vulcanização:</td>
-                                                    <td class="font-monospace text-warning fw-bold">
-                                                        {% if op.produto.tempo_vulcanizacao_min %}
-                                                            {{ op.produto.tempo_vulcanizacao_min }} min
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic fw-normal">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Peso Vulcanizado Acabado:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.peso_vulcanizado_kg %}
-                                                            {{ op.produto.peso_vulcanizado_kg }} kg
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Circunferência no Centro:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.circunferencia_centro_mm %}
-                                                            {{ op.produto.circunferencia_centro_mm }} mm
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Altura do Bladder:</td>
-                                                    <td class="font-monospace text-light">
-                                                        {% if op.produto.altura_cm %}
-                                                            {{ op.produto.altura_cm }} cm
-                                                        {% else %}
-                                                            <span class="text-muted fst-italic">Não cadastrado</span>
-                                                        {% endif %}
-                                                    </td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Temperatura de Cura:</td>
-                                                    <td class="text-muted fst-italic">Não cadastrado</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Pressão / Vácuo:</td>
-                                                    <td class="text-muted fst-italic">Não cadastrado</td>
-                                                </tr>
-                                                <tr>
-                                                    <td class="text-muted">Cavidades:</td>
-                                                    <td class="text-muted fst-italic">Não cadastrado</td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-
-                                <!-- 6.5 INSTRUÇÕES ESPECIAIS E FERRAMENTAL -->
-                                <div class="mb-2">
-                                    <h6 class="fw-bold text-warning border-bottom border-warning border-opacity-25 pb-2 mb-3 d-flex align-items-center gap-2">
-                                        <i class="bi bi-tools"></i> 5. Instruções Especiais e Ferramental
-                                    </h6>
-                                    <div class="mb-3">
-                                        <span class="text-muted small d-block mb-1 fw-semibold">Recursos e Ferramentas Alocados:</span>
-                                        {% if op.recursos_alocados.all %}
-                                            <div class="d-flex flex-wrap gap-2 mb-2">
-                                                {% for r in op.recursos_alocados.all %}
-                                                    <span class="badge bg-secondary text-light p-2">
-                                                        <i class="bi bi-tag-fill text-warning me-1"></i> {{ r.nome }} ({{ r.codigo }})
-                                                    </span>
-                                                {% endfor %}
-                                            </div>
+                                    <!-- Ação 1 toque de Concluir ou Retomar -->
+                                    <form method="POST" action="{% url 'bladder:atividade_operacional_concluir' ativ.id %}" class="d-inline">
+                                        {% csrf_token %}
+                                        {% if ativ.status == 'CONCLUIDA' %}
+                                            <input type="hidden" name="acao" value="RETOMAR">
+                                            <button type="submit" class="btn btn-outline-secondary btn-sm touch-btn" title="Reabrir atividade">
+                                                <i class="bi bi-arrow-counterclockwise"></i> Reabrir
+                                            </button>
                                         {% else %}
-                                            <span class="text-muted small fst-italic d-block mb-2">Nenhum recurso extra alocado especificamente.</span>
+                                            <input type="hidden" name="acao" value="CONCLUIR">
+                                            <button type="submit" class="btn btn-success fw-bold px-3 touch-btn" title="Concluir atividade em 1 toque">
+                                                <i class="bi bi-check-lg"></i> Concluir
+                                            </button>
                                         {% endif %}
-                                    </div>
-
-                                    {% if op.recursos_observacoes %}
-                                        <div class="p-2.5 rounded bg-black bg-opacity-40 border border-secondary border-opacity-50 small text-light mb-2">
-                                            <strong class="text-warning"><i class="bi bi-info-circle me-1"></i> Instruções de Ferramental:</strong> {{ op.recursos_observacoes }}
-                                        </div>
-                                    {% endif %}
-
-                                    {% if op.observacoes %}
-                                        <div class="p-2.5 rounded bg-black bg-opacity-40 border border-secondary border-opacity-50 small text-light">
-                                            <strong class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i> Observações Gerais / Cuidados:</strong> {{ op.observacoes }}
-                                        </div>
-                                    {% endif %}
-
-                                    {% if not op.recursos_observacoes and not op.observacoes %}
-                                        <span class="text-muted small fst-italic">Nenhuma instrução especial ou observação cadastrada para esta OP.</span>
-                                    {% endif %}
+                                    </form>
                                 </div>
                             </div>
-                            <div class="modal-footer border-secondary border-opacity-50 d-flex justify-content-between align-items-center">
-                                <span class="small text-muted">
-                                    <i class="bi bi-shield-check text-success"></i> Visualização técnica exclusivamente para consulta.
+                        </div>
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="glass-card text-center py-4">
+                    <p class="text-secondary small mb-2">Nenhuma atividade operacional (extrusão, limpeza, manutenção) aberta para hoje.</p>
+                    <button type="button" class="btn btn-outline-primary btn-sm fw-semibold touch-btn" data-bs-toggle="modal" data-bs-target="#modalNovaAtividade">
+                        <i class="bi bi-plus-lg"></i> Iniciar Atividade Operacional
+                    </button>
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- SEÇÃO C: SALDO DE BLADDERS ACABADOS EM ESTOQUE (10 MODELOS) -->
+        <div class="mb-4">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <div>
+                    <h2 class="h5 fw-bold mb-0 d-flex align-items-center gap-2">
+                        <i class="bi bi-boxes text-info"></i> Saldo de Bladders Acabados em Estoque
+                    </h2>
+                    <span class="small text-secondary">Posição física disponível para consumo / vulcanização</span>
+                </div>
+                <button type="button" class="btn btn-outline-info text-dark btn-sm fw-bold touch-btn" data-bs-toggle="modal" data-bs-target="#modalMovimentoEstoqueRapido">
+                    <i class="bi bi-arrow-left-right me-1"></i> + Registrar Entrada / Saída
+                </button>
+            </div>
+
+            <div class="row g-2 g-md-3">
+                {% for item in resumo_estoque %}
+                    <div class="col-6 col-md-4 col-xl-2">
+                        <div class="p-2.5 rounded border bg-white shadow-sm text-center h-100 d-flex flex-column justify-content-between">
+                            <div>
+                                <span class="font-monospace fw-bold fs-6 text-dark d-block">{{ item.codigo }}</span>
+                                <span class="small text-muted d-block text-truncate" title="{{ item.descricao }}">{{ item.medida|default:item.descricao }}</span>
+                            </div>
+                            <div class="my-2">
+                                <span class="fs-3 fw-bold font-monospace {% if item.situacao == 'CRITICO' %}text-danger{% elif item.situacao == 'ATENCAO' %}text-warning{% elif item.situacao == 'NORMAL' %}text-success{% else %}text-secondary{% endif %}">
+                                    {{ item.estoque_atual }}
                                 </span>
-                                <button type="button" class="btn btn-secondary px-4 fw-semibold" data-bs-dismiss="modal">
-                                    Fechar
-                                </button>
+                                <span class="small text-muted">un</span>
+                            </div>
+                            <div>
+                                <span class="badge w-100 {% if item.situacao == 'CRITICO' %}bg-danger{% elif item.situacao == 'ATENCAO' %}bg-warning text-dark{% elif item.situacao == 'NORMAL' %}bg-success{% else %}bg-secondary{% endif %}" style="font-size: 0.72rem;">
+                                    {{ item.situacao_display }}
+                                </span>
                             </div>
                         </div>
                     </div>
+                {% empty %}
+                    <div class="col-12">
+                        <p class="text-muted small text-center">Nenhum modelo de Bladder cadastrado.</p>
+                    </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- ================================================================= -->
+    <!-- ABA 3: HISTÓRICO                                                 -->
+    <!-- ================================================================= -->
+    <div class="tab-pane fade" id="tab-historico" role="tabpanel" aria-labelledby="tab-historico-btn">
+        <div class="row g-4">
+            <!-- Movimentações de Estoque do Turno -->
+            <div class="col-12 col-lg-6">
+                <div class="glass-card p-3 p-md-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
+                        <h3 class="h6 fw-bold mb-0 d-flex align-items-center gap-2">
+                            <i class="bi bi-boxes text-info"></i> Movimentações de Estoque do Dia
+                        </h3>
+                        <button type="button" class="btn btn-outline-info text-dark btn-sm fw-bold touch-btn" data-bs-toggle="modal" data-bs-target="#modalMovimentoEstoqueRapido">
+                            + Movimentar
+                        </button>
+                    </div>
+
+                    {% if movimentacoes_turno %}
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0 small">
+                                <thead>
+                                    <tr class="text-muted">
+                                        <th>Hora</th>
+                                        <th>Tipo</th>
+                                        <th>Produto</th>
+                                        <th>Qtd</th>
+                                        <th>Operador</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for mov in movimentacoes_turno %}
+                                        <tr>
+                                            <td>{{ mov.data_hora|date:"H:i" }}</td>
+                                            <td>
+                                                <span class="badge {% if mov.tipo_movimentacao == 'ENTRADA' %}bg-success{% elif mov.tipo_movimentacao == 'SAIDA' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+                                                    {{ mov.get_tipo_movimentacao_display }}
+                                                </span>
+                                            </td>
+                                            <td class="font-monospace fw-bold">{{ mov.produto.codigo }}</td>
+                                            <td class="fw-bold">{{ mov.quantidade }}</td>
+                                            <td>{{ mov.criado_por.get_full_name|default:mov.criado_por.username }}</td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <p class="text-secondary small text-center py-4">Nenhuma movimentação de estoque de Bladders registrada hoje.</p>
+                    {% endif %}
                 </div>
-            {% endfor %}
+            </div>
+
+            <!-- Histórico de Recados da Escala -->
+            <div class="col-12 col-lg-6">
+                <div class="glass-card p-3 p-md-4 h-100">
+                    <div class="d-flex justify-content-between align-items-center mb-3 pb-2 border-bottom">
+                        <h3 class="h6 fw-bold mb-0 d-flex align-items-center gap-2">
+                            <i class="bi bi-chat-left-dots text-warning"></i> Histórico Recente de Comunicação
+                        </h3>
+                        <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-secondary btn-sm fw-semibold">
+                            Ver Todos
+                        </a>
+                    </div>
+
+                    {% if recados_historico %}
+                        <div class="list-group list-group-flush">
+                            {% for r in recados_historico|slice:":8" %}
+                                <div class="list-group-item px-0 py-2 border-secondary border-opacity-20 bg-transparent">
+                                    <div class="d-flex justify-content-between align-items-center mb-1">
+                                        <span class="badge bg-dark border border-warning text-warning small">{{ r.get_categoria_display }}</span>
+                                        <span class="small text-muted">{{ r.created_at|date:"d/m H:i" }}</span>
+                                    </div>
+                                    <div class="small text-dark fw-semibold" style="white-space: pre-line;">{{ r.mensagem|truncatechars:120 }}</div>
+                                    <div class="small text-muted mt-1">
+                                        De: {{ r.autor.get_full_name|default:r.autor.username }} ({{ r.get_turma_origem_display }})
+                                        &bull; Para: {{ r.get_turma_destino_display }}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p class="text-secondary small text-center py-4">Nenhum histórico de recados registrado recentemente.</p>
+                    {% endif %}
+                </div>
+            </div>
         </div>
-    {% else %}
-        <div class="glass-card text-center py-5">
-            <i class="bi bi-calendar-check text-success fs-1 d-block mb-3"></i>
-            <h4 class="fw-bold text-light">Nenhuma programação para este turno!</h4>
-            <p class="text-secondary small">Não há ordens de produção programadas para a data de hoje neste turno.</p>
-        </div>
-    {% endif %}
+    </div>
 </div>
 
+<!-- ===================================================================== -->
+<!-- MODAL 1: REGISTRAR ATIVIDADE OPERACIONAL                              -->
+<!-- ===================================================================== -->
+<div class="modal fade" id="modalNovaAtividade" tabindex="-1" aria-labelledby="modalNovaAtividadeLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-white text-dark border border-primary shadow-lg">
+            <form method="POST" action="{% url 'bladder:atividade_operacional_criar' %}">
+                {% csrf_token %}
+                <div class="modal-header bg-light border-bottom">
+                    <h5 class="modal-title fw-bold text-primary d-flex align-items-center gap-2" id="modalNovaAtividadeLabel">
+                        <i class="bi bi-tools"></i> Registrar Atividade Operacional
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body p-3 p-md-4">
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">Tipo de Atividade <span class="text-danger">*</span></label>
+                        {{ form_atividade.tipo_atividade }}
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-bold">Máquina / Equipamento (Opcional)</label>
+                            {{ form_atividade.maquina }}
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-bold">Processo / Linha (Opcional)</label>
+                            {{ form_atividade.processo }}
+                        </div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-md-8">
+                            <label class="form-label small fw-bold">Modelo de Bladder (Se aplicável)</label>
+                            {{ form_atividade.produto }}
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-bold">Quantidade (Se aplicável)</label>
+                            {{ form_atividade.quantidade }}
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">Observações / Detalhes</label>
+                        {{ form_atividade.observacao }}
+                    </div>
+                </div>
+                <div class="modal-footer bg-light border-top">
+                    <button type="button" class="btn btn-outline-secondary touch-btn" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary fw-bold px-4 touch-btn">
+                        <i class="bi bi-check-lg me-1"></i> Iniciar Atividade
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- MODAL 2: MOVIMENTAÇÃO DE ESTOQUE E INTEGRAÇÃO DR-201                   -->
+<!-- ===================================================================== -->
+{% include "bladder/includes/modal_movimentacao_estoque.html" with modal_id="modalMovimentoEstoqueRapido" %}
+
+<!-- Inclusão dos Modais de Passagem de Turno (Criar, Resolver, Repassar, Editar) -->
 {% include "bladder/includes/modal_mensagem_turno.html" %}
 {% endblock %}
-

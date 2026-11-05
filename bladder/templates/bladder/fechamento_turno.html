@@ -225,6 +225,57 @@
                     </div>
 
                     <!-- ============================================================== -->
+                    <!-- SEÇÃO: RESUMO DE ATIVIDADES E MOVIMENTAÇÃO DE ESTOQUE          -->
+                    <!-- ============================================================== -->
+                    {% if atividades_turno or movimentacoes_turno %}
+                    <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
+                        <div class="row g-3">
+                            {% if atividades_turno %}
+                            <div class="col-12 col-md-6">
+                                <h6 class="small text-secondary fw-bold text-uppercase mb-2">
+                                    <i class="bi bi-tools text-primary"></i> Atividades Operacionais do Turno ({{ atividades_turno|length }})
+                                </h6>
+                                <div class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20">
+                                    {% for a in atividades_turno %}
+                                        <div class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2 px-3 d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <span class="badge bg-primary me-1">{{ a.tipo.nome }}</span>
+                                                <strong class="text-light">{{ a.titulo }}</strong>
+                                            </div>
+                                            <span class="badge {% if a.status == 'CONCLUIDA' %}bg-success{% else %}bg-warning text-dark{% endif %}">
+                                                {{ a.get_status_display }}
+                                            </span>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+
+                            {% if movimentacoes_turno %}
+                            <div class="col-12 col-md-6">
+                                <h6 class="small text-secondary fw-bold text-uppercase mb-2">
+                                    <i class="bi bi-boxes text-info"></i> Movimentações de Estoque no Turno ({{ movimentacoes_turno|length }})
+                                </h6>
+                                <div class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20">
+                                    {% for m in movimentacoes_turno %}
+                                        <div class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2 px-3 d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <span class="badge {% if m.tipo_movimentacao == 'ENTRADA' %}bg-success{% elif m.tipo_movimentacao == 'SAIDA' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1">
+                                                    {{ m.get_tipo_movimentacao_display }}
+                                                </span>
+                                                <strong class="font-monospace text-warning">{{ m.produto.codigo }}</strong>
+                                            </div>
+                                            <span class="fw-bold font-monospace">{{ m.quantidade }} un</span>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <!-- ============================================================== -->
                     <!-- SEÇÃO: PASSAGEM PARA O PRÓXIMO TURNO                           -->
                     <!-- ============================================================== -->
                     <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">

@@ -7,6 +7,10 @@ from .models import (
     ProdutoBladder,
     RecursoBladder,
     ApontamentoTurnoBladder,
+    TipoAtividadeBladder,
+    AtividadeTurnoBladder,
+    MovimentacaoEstoqueBladder,
+    MensagemPassagemTurnoBladder,
 )
 
 
@@ -40,6 +44,8 @@ class OrdemProducaoBladderForm(forms.ModelForm):
         self.fields['processo'].queryset = ProcessoBladder.objects.filter(ativo=True)
         self.fields['produto'].queryset = ProdutoBladder.objects.filter(ativo=True)
         self.fields['produto'].label_from_instance = lambda obj: obj.codigo_com_medida
+        self.fields['produto'].required = False
+        self.fields['quantidade_nova'].required = False
         self.fields['recursos_alocados'].queryset = RecursoBladder.objects.filter(ativo=True)
         self.fields['prioridade'].required = False
         self.fields['prioridade'].initial = 'NORMAL'
@@ -48,8 +54,10 @@ class OrdemProducaoBladderForm(forms.ModelForm):
 
     def clean_quantidade_nova(self):
         qtd = self.cleaned_data.get('quantidade_nova')
-        if not qtd or qtd <= 0:
-            raise forms.ValidationError("A quantidade nova solicitada deve ser maior que zero.")
+        if qtd is None:
+            return 0
+        if qtd < 0:
+            raise forms.ValidationError("A quantidade nova solicitada não pode ser negativa.")
         return qtd
 
     def clean_prioridade(self):
@@ -202,4 +210,222 @@ class MensagemPassagemTurnoForm(forms.Form):
         if not m:
             raise forms.ValidationError("A mensagem não pode ser vazia.")
         return m
+
+
+class EditarMensagemPassagemTurnoForm(forms.Form):
+    """Formulário para edição in-place de mensagem de Passagem de Turno."""
+    tipo = forms.ChoiceField(
+        label="Tipo de Recado",
+        choices=[
+            ('INFORMATIVO', 'Informativo (Apenas dar ciência)'),
+            ('ACOMPANHAMENTO', 'Acompanhamento (Pede ação / verificação)'),
+        ],
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    categoria = forms.ChoiceField(
+        label="Categoria",
+        choices=[
+            ('PRODUCAO', 'Produção'),
+            ('EQUIPAMENTO', 'Equipamento'),
+            ('QUALIDADE', 'Qualidade'),
+            ('MATERIAL', 'Material'),
+            ('SEGURANCA', 'Segurança'),
+            ('OUTRO', 'Outro'),
+        ],
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    prioridade = forms.ChoiceField(
+        label="Prioridade",
+        choices=[
+            ('NORMAL', 'Normal'),
+            ('IMPORTANTE', 'Importante'),
+            ('URGENTE', 'Urgente'),
+        ],
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+    mensagem = forms.CharField(
+        label="Mensagem Atualizada",
+        widget=forms.Textarea(attrs={
+            'class': 'form-control',
+            'rows': 3,
+            'placeholder': 'Atualize o conteúdo do recado operacional...'
+        }),
+        required=True
+    )
+
+    def clean_mensagem(self):
+        m = self.cleaned_data.get('mensagem', '').strip()
+        if not m:
+            raise forms.ValidationError("A mensagem não pode ser vazia.")
+        return m
+
+
+class MovimentacaoEstoqueForm(forms.Form):
+    """Formulário para Entrada ou Saída de Bladders Acabados no estoque integrado à DR-201."""
+    TIPO_CHOICES = [
+        ('SAIDA', 'Saída de bladder para produção'),
+        ('ENTRADA', 'Entrada de bladder para estoque'),
+    ]
+
+    produto = forms.ModelChoiceField(
+        queryset=ProdutoBladder.objects.filter(ativo=True, codigo__startswith='BLA').order_by('codigo'),
+        label="Modelo de Bladder",
+        widget=forms.Select(attrs={'class': 'form-select select-mov-produto'})
+    )
+    tipo = forms.ChoiceField(
+        choices=TIPO_CHOICES,
+        label="Tipo de Operação",
+        initial='SAIDA',
+        widget=forms.Select(attrs={'class': 'form-select select-mov-tipo'})
+    )
+    quantidade = forms.IntegerField(
+        label="Quantidade (un)",
+        min_value=1,
+        initial=1,
+        widget=forms.NumberInput(attrs={'class': 'form-control form-control-lg text-center font-monospace input-qtd-modal', 'placeholder': '1', 'min': '1', 'value': '1'})
+    )
+    destino = forms.CharField(
+        label="Responsável pela Retirada",
+        initial="",
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control input-responsavel-retirada', 'placeholder': 'Nome de quem retirou (ex: Edilson, Rodrigo, Ivanildo...)'})
+    )
+    lote_etiqueta = forms.CharField(
+        label="Lote / Etiqueta da Peça",
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control font-monospace input-lote-item', 'placeholder': 'Ex: 7586193161'})
+    )
+    observacao = forms.CharField(
+        label="Observações (Opcional)",
+        required=False,
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Observações complementares da movimentação...'})
+    )
+    data_turno = forms.DateField(
+        label="Data",
+        required=False,
+        widget=forms.DateInput(attrs={'class': 'form-control', 'type': 'date'})
+    )
+    turno = forms.ChoiceField(
+        choices=[('MANHÃ', 'MANHÃ'), ('NOITE', 'NOITE')],
+        label="Turno",
+        required=False,
+        widget=forms.Select(attrs={'class': 'form-select'})
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['produto'].label_from_instance = lambda obj: f"{obj.codigo_com_medida} (Saldo: {obj.estoque_atual} un)"
+
+    @property
+    def tipo_movimentacao(self):
+        return self['tipo']
+
+    @property
+    def motivo(self):
+        return self['destino']
+
+    @property
+    def responsavel_retirada(self):
+        return self['destino']
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if not cleaned_data.get('destino') and self.data.get('responsavel_retirada'):
+            cleaned_data['destino'] = self.data.get('responsavel_retirada')
+        elif not cleaned_data.get('destino') and self.data.get('motivo'):
+            cleaned_data['destino'] = self.data.get('motivo')
+
+        if not cleaned_data.get('lote_etiqueta') and self.data.get('lotes'):
+            lotes_list = self.data.getlist('lotes')
+            if lotes_list:
+                cleaned_data['lote_etiqueta'] = lotes_list[0]
+
+        if not cleaned_data.get('tipo') and self.data.get('tipo_movimentacao'):
+            cleaned_data['tipo'] = self.data.get('tipo_movimentacao')
+        return cleaned_data
+
+
+class AjusteEstoqueForm(forms.Form):
+    """Formulário para Ajuste formal de Inventário (Líder)."""
+    produto = forms.ModelChoiceField(
+        queryset=ProdutoBladder.objects.filter(ativo=True, codigo__startswith='BLA').order_by('codigo'),
+        label="Modelo do Bladder",
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        required=True
+    )
+    novo_saldo = forms.IntegerField(
+        label="Novo Saldo Físico Contado (un)",
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-control form-control-lg text-center font-monospace'})
+    )
+    justificativa = forms.CharField(
+        label="Justificativa do Ajuste (Obrigatória)",
+        widget=forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'placeholder': 'Descreva detalhadamente o motivo do ajuste (ex: contagem física de inventário, refugo descartado)...'}),
+        required=True
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['produto'].label_from_instance = lambda obj: f"{obj.codigo_com_medida} (Saldo: {obj.estoque_atual} un)"
+
+    def clean_justificativa(self):
+        j = self.cleaned_data.get('justificativa', '').strip()
+        if len(j) < 5:
+            raise forms.ValidationError("Informe uma justificativa com no mínimo 5 caracteres.")
+        return j
+
+
+class ConfigurarMinimoEstoqueForm(forms.Form):
+    """Formulário para configurar estoque mínimo de segurança."""
+    produto = forms.ModelChoiceField(
+        queryset=ProdutoBladder.objects.filter(ativo=True, codigo__startswith='BLA').order_by('codigo'),
+        label="Modelo do Bladder",
+        widget=forms.Select(attrs={'class': 'form-select'}),
+        required=True
+    )
+    estoque_minimo = forms.IntegerField(
+        label="Estoque Mínimo de Segurança (un)",
+        min_value=0,
+        widget=forms.NumberInput(attrs={'class': 'form-control text-center font-monospace'})
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['produto'].label_from_instance = lambda obj: f"{obj.codigo_com_medida} (Mínimo atual: {obj.estoque_minimo} un)"
+
+
+class AtividadeOperacionalForm(forms.ModelForm):
+    """Formulário para registro de atividade operacional flexível no turno."""
+    class Meta:
+        model = AtividadeTurnoBladder
+        fields = [
+            'tipo_atividade',
+            'processo',
+            'maquina',
+            'produto',
+            'quantidade',
+            'observacao',
+        ]
+        widgets = {
+            'tipo_atividade': forms.Select(attrs={'class': 'form-select', 'id': 'select-tipo-atividade'}),
+            'processo': forms.Select(attrs={'class': 'form-select'}),
+            'maquina': forms.Select(attrs={'class': 'form-select'}),
+            'produto': forms.Select(attrs={'class': 'form-select'}),
+            'quantidade': forms.NumberInput(attrs={'class': 'form-control', 'min': '1', 'placeholder': 'Se aplicável'}),
+            'observacao': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': 'Observações operacionais...'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['tipo_atividade'].queryset = TipoAtividadeBladder.objects.filter(ativo=True)
+        self.fields['processo'].queryset = ProcessoBladder.objects.filter(ativo=True)
+        self.fields['processo'].required = False
+        from maintenance.models import Machine
+        self.fields['maquina'].queryset = Machine.objects.all().order_by('nome')
+        self.fields['maquina'].required = False
+        self.fields['produto'].queryset = ProdutoBladder.objects.filter(ativo=True)
+        self.fields['produto'].label_from_instance = lambda obj: obj.codigo_com_medida
+        self.fields['produto'].required = False
+        self.fields['quantidade'].required = False
+        self.fields['observacao'].required = False
 

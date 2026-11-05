@@ -73,7 +73,7 @@
 
                 <div class="row g-3">
                     <div class="col-12 col-md-6">
-                        <label class="form-label" for="{{ form.produto.id_for_label }}">Produto / Modelo de Bladder *</label>
+                        <label class="form-label" for="{{ form.produto.id_for_label }}">Produto / Modelo de Bladder (Opcional)</label>
                         {{ form.produto }}
                         {% if form.produto.errors %}<div class="text-danger small mt-1">{{ form.produto.errors }}</div>{% endif %}
                     </div>
@@ -92,7 +92,7 @@
                         {% if form.data_programada.errors %}<div class="text-danger small mt-1">{{ form.data_programada.errors }}</div>{% endif %}
                     </div>
                     <div class="col-12 col-md-4">
-                        <label class="form-label" for="{{ form.quantidade_nova.id_for_label }}">Nova Quantidade Solicitada *</label>
+                        <label class="form-label" for="{{ form.quantidade_nova.id_for_label }}">Nova Quantidade Solicitada (Opcional)</label>
                         {{ form.quantidade_nova }}
                         <div class="form-text text-muted">Demanda nova inserida pelo líder.</div>
                         {% if form.quantidade_nova.errors %}<div class="text-danger small mt-1">{{ form.quantidade_nova.errors }}</div>{% endif %}

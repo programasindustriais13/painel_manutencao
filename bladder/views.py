@@ -25,6 +25,11 @@ from .models import (
     HistoricoProgramacaoBladder,
     MensagemPassagemTurnoBladder,
     AcaoMensagemTurnoBladder,
+    TipoAtividadeBladder,
+    AtividadeTurnoBladder,
+    MovimentacaoEstoqueBladder,
+    HistoricoEdicaoMensagemTurnoBladder,
+    ConfiguracaoWhatsAppBladder,
 )
 from .forms import (
     OrdemProducaoBladderForm,
@@ -33,11 +38,17 @@ from .forms import (
     ApontamentoTurnoForm,
     CorrecaoApontamentoForm,
     MensagemPassagemTurnoForm,
+    EditarMensagemPassagemTurnoForm,
+    MovimentacaoEstoqueForm,
+    AjusteEstoqueForm,
+    ConfigurarMinimoEstoqueForm,
+    AtividadeOperacionalForm,
 )
 from .decorators import (
     lider_bladder_required,
     operador_ou_lider_bladder_required,
     user_is_lider_bladder,
+    user_is_operador_bladder,
 )
 from .services import (
     obter_configuracao_escala_ativa,
@@ -53,10 +64,23 @@ from .services import (
     executar_fechamento_turno,
     calcular_proximo_turno_operacional,
     criar_mensagem_passagem_turno,
+    editar_mensagem_passagem_turno,
     registrar_ciencia_mensagem_turno,
     resolver_mensagem_acompanhamento,
     repassar_mensagem_acompanhamento,
     obter_mensagens_recebidas_turno,
+    registrar_entrada_estoque,
+    registrar_saida_estoque,
+    registrar_movimentacao_multipla_estoque,
+    registrar_ajuste_estoque,
+    obter_resumo_estoque_bladders,
+    auditar_planilha_dr201,
+    sincronizar_movimentacoes_pendentes_dr201,
+    obter_atividades_operacionais_turno,
+    criar_atividade_operacional_turno,
+    concluir_atividade_operacional_turno,
+    gerar_texto_resumo_estoque_whatsapp,
+    enviar_resumo_whatsapp_estoque,
 )
 
 
@@ -282,6 +306,9 @@ def dashboard(request):
 
     percentual_cumprimento_dia = round((realizado_dia / planejado_dia) * 100, 1) if planejado_dia > 0 else 0
 
+    # Resumo do estoque de bladders acabados para o dashboard do líder
+    resumo_estoque = obter_resumo_estoque_bladders()
+
     context = {
         'hoje': hoje,
         'turma_hoje': turma_hoje,
@@ -312,6 +339,13 @@ def dashboard(request):
         'total_pecas_pendentes_motivos': total_pecas_pendentes_motivos,
         'peso_teorico_planejado': round(peso_teorico_planejado, 3),
         'peso_teorico_realizado': round(peso_teorico_realizado, 3),
+        'total_estoque': resumo_estoque['total_estoque'],
+        'total_criticos': resumo_estoque['total_criticos'],
+        'total_atencao': resumo_estoque['total_atencao'],
+        'total_normais': resumo_estoque['total_normais'],
+        'resumo_estoque': resumo_estoque['itens'],
+        'theme_class': 'theme-light',
+        'is_lider_view': True,
         'is_lider': user_is_lider_bladder(request.user),
     }
     return render(request, 'bladder/dashboard.html', context)
@@ -321,9 +355,12 @@ def dashboard(request):
 @operador_ou_lider_bladder_required
 def operador_turno(request):
     """
-    Quadro Operacional do Turno para Chão de Fábrica (Tablet Industrial).
-    Visão limpa, compacta e orientada à consulta técnica das programações do turno.
-    Não exige apontamentos contínuos durante a execução.
+    Ambiente Principal do Operador / Chão de Fábrica (Tablet Industrial).
+    Experiência simplificada, em tema claro (branco/cinza claro, botões grandes, contraste semafórico).
+    Organizado em 3 Abas Principais:
+    1. Recados Recebidos (Passagem de turno com CIENTE, RESOLVIDO, REPASSAR)
+    2. Atividades do Turno (OPs de produção + Atividades operacionais simples)
+    3. Histórico (Concluídas e resolvidas)
     """
     data_param = request.GET.get('data')
     if data_param:
@@ -361,12 +398,35 @@ def operador_turno(request):
         status='CONCLUIDO'
     ).select_related('operador').first()
 
-    # Mensagens de passagem de turno recebidas para o turno de hoje
-    recados_recebidos = obter_mensagens_recebidas_turno(data_turno=hoje, turma=turma_hoje, usuario=request.user)
+    # Mensagens de passagem de turno recebidas para o turno de hoje (ativas, não repassadas)
+    recados_recebidos = obter_mensagens_recebidas_turno(
+        data_turno=hoje,
+        turma=turma_hoje,
+        usuario=request.user,
+        apenas_ativas=True
+    )
     total_recados = len(recados_recebidos)
     recados_pendentes_ciencia = sum(1 for r in recados_recebidos if not getattr(r, 'usuario_ciente', False))
     recados_urgentes = sum(1 for r in recados_recebidos if r.prioridade == 'URGENTE')
+
+    # Atividades operacionais do dia
+    atividades_operacionais = obter_atividades_operacionais_turno(hoje, turma_hoje)
+    atividades_pendentes = [a for a in atividades_operacionais if a.status == 'PENDENTE']
+    atividades_concluidas = [a for a in atividades_operacionais if a.status == 'CONCLUIDA']
+
+    # Histórico de recados resolvidos e passados
+    recados_historico = MensagemPassagemTurnoBladder.objects.filter(
+        Q(data_turno_destino=hoje, turma_destino=turma_hoje) |
+        Q(data_turno_origem=hoje, turma_origem=turma_hoje)
+    ).select_related('autor', 'resolvido_por', 'repassado_por', 'produto').order_by('-created_at')[:30]
+
+    # Estoque atual para consulta rápida do operador
+    resumo_estoque = obter_resumo_estoque_bladders()
+    movimentacoes_turno = MovimentacaoEstoqueBladder.objects.filter(data_hora__date=hoje).select_related('produto', 'usuario').order_by('-data_hora')[:20]
+
     form_recado = MensagemPassagemTurnoForm()
+    form_atividade = AtividadeOperacionalForm()
+    form_mov_estoque = MovimentacaoEstoqueForm()
 
     context = {
         'hoje': hoje,
@@ -381,7 +441,18 @@ def operador_turno(request):
         'total_recados': total_recados,
         'recados_pendentes_ciencia': recados_pendentes_ciencia,
         'recados_urgentes': recados_urgentes,
+        'atividades_operacionais': atividades_operacionais,
+        'atividades_pendentes': atividades_pendentes,
+        'atividades_concluidas': atividades_concluidas,
+        'recados_historico': recados_historico,
+        'resumo_estoque': resumo_estoque['itens'],
+        'produtos': [i['produto'] for i in resumo_estoque['itens']],
+        'movimentacoes_turno': movimentacoes_turno,
         'form_recado': form_recado,
+        'form_atividade': form_atividade,
+        'form_mov_estoque': form_mov_estoque,
+        'theme_class': 'theme-light',
+        'is_operador_view': True,
         'is_lider': user_is_lider_bladder(request.user),
     }
     return render(request, 'bladder/operador_turno.html', context)
@@ -461,12 +532,30 @@ def fechamento_turno(request):
                 itens_dados=itens_dados,
                 observacoes=observacoes_gerais
             )
+            # Vincula atividades operacionais concluídas no turno a este fechamento
+            AtividadeTurnoBladder.objects.filter(
+                data_turno=hoje,
+                turma=turma_hoje,
+                fechamento__isnull=True
+            ).update(fechamento=fechamento)
+
             messages.success(request, f"Fechamento do turno ({turma_hoje_display}) realizado com sucesso! Todas as {len(ordens)} OPs foram auditadas.")
             return redirect('bladder:operador')
         except (ValueError, PermissionError) as e:
             messages.error(request, f"Erro no fechamento: {str(e)}")
 
     categorias_desvio = CategoriaDesvioBladder.objects.filter(ativo=True).order_by('ordem', 'nome')
+
+    # Atividades operacionais do turno
+    atividades_operacionais = obter_atividades_operacionais_turno(hoje, turma_hoje)
+
+    # Movimentações de estoque do turno (físico acabado)
+    movimentacoes_estoque = MovimentacaoEstoqueBladder.objects.filter(
+        data_turno=hoje,
+        turma=turma_hoje
+    ).select_related('produto', 'usuario').order_by('-data_hora')
+    total_entradas_estoque = movimentacoes_estoque.filter(tipo='ENTRADA').aggregate(s=Sum('quantidade'))['s'] or 0
+    total_saidas_estoque = movimentacoes_estoque.filter(tipo='SAIDA').aggregate(s=Sum('quantidade'))['s'] or 0
 
     # Passagem para o próximo turno (seção informativa e acompanhamentos pendentes)
     recados_criados_turno = MensagemPassagemTurnoBladder.objects.filter(
@@ -489,9 +578,15 @@ def fechamento_turno(request):
         'fechamento_existente': fechamento_existente,
         'motivo_choices': ItemFechamentoTurnoBladder.MOTIVO_CHOICES,
         'categorias_desvio': categorias_desvio,
+        'atividades_operacionais': atividades_operacionais,
+        'movimentacoes_estoque': movimentacoes_estoque,
+        'total_entradas_estoque': total_entradas_estoque,
+        'total_saidas_estoque': total_saidas_estoque,
         'recados_criados_turno': recados_criados_turno,
         'acompanhamentos_abertos': acompanhamentos_abertos,
         'form_recado': MensagemPassagemTurnoForm(),
+        'theme_class': 'theme-light',
+        'is_operador_view': True,
     }
     return render(request, 'bladder/fechamento_turno.html', context)
 
@@ -585,14 +680,28 @@ def ordens_lista(request):
 
     # Filtros
     status = request.GET.get('status')
+    filtro_rapido = request.GET.get('filtro')
     processo_id = request.GET.get('processo')
     produto_id = request.GET.get('produto')
     turma = request.GET.get('turma')
     data_ini = request.GET.get('data_ini')
     data_fim = request.GET.get('data_fim')
 
-    if status:
+    hoje = timezone.localdate()
+    agora = timezone.localtime(timezone.now())
+    config_escala = obter_configuracao_escala_ativa()
+    hora_fim_config = config_escala.hora_fim if (config_escala and config_escala.hora_fim) else datetime.time(18, 0)
+    dt_limite_hoje = timezone.make_aware(datetime.datetime.combine(hoje, hora_fim_config), timezone.get_current_timezone())
+    turno_encerrado_hoje = agora > dt_limite_hoje
+
+    if filtro_rapido == 'atrasadas':
+        if turno_encerrado_hoje:
+            qs = qs.filter(status__in=['PENDENTE', 'EM_EXECUCAO'], data_programada__lte=hoje)
+        else:
+            qs = qs.filter(status__in=['PENDENTE', 'EM_EXECUCAO'], data_programada__lt=hoje)
+    elif status:
         qs = qs.filter(status=status)
+
     if processo_id:
         qs = qs.filter(processo_id=processo_id)
     if produto_id:
@@ -607,9 +716,16 @@ def ordens_lista(request):
     processos = ProcessoBladder.objects.filter(ativo=True)
     produtos = ProdutoBladder.objects.filter(ativo=True)
 
+    if turno_encerrado_hoje:
+        total_atrasadas = OrdemProducaoBladder.objects.filter(status__in=['PENDENTE', 'EM_EXECUCAO'], data_programada__lte=hoje).count()
+    else:
+        total_atrasadas = OrdemProducaoBladder.objects.filter(status__in=['PENDENTE', 'EM_EXECUCAO'], data_programada__lt=hoje).count()
+
     context = {
         'ordens': qs[:100],
         'total_registros': qs.count(),
+        'total_atrasadas': total_atrasadas,
+        'filtro_rapido': filtro_rapido,
         'processos': processos,
         'produtos': produtos,
         'status_selecionado': status,
@@ -618,6 +734,8 @@ def ordens_lista(request):
         'turma_selecionada': turma,
         'data_ini': data_ini,
         'data_fim': data_fim,
+        'theme_class': 'theme-light',
+        'is_lider_view': True,
         'is_lider': user_is_lider_bladder(request.user),
     }
     return render(request, 'bladder/ordens_lista.html', context)
@@ -637,7 +755,7 @@ def ordem_nova(request):
                     saldos_ids_raw = request.POST.getlist('saldos_selecionados')
                     if saldos_ids_raw:
                         saldos_selecionados_ids = [int(sid) for sid in saldos_ids_raw if str(sid).isdigit()]
-                    else:
+                    elif form.cleaned_data.get('produto'):
                         # Se o líder escolheu incorporar pendências mas não filtrou IDs individuais (incorporar todas do produto)
                         saldos_selecionados_ids = list(
                             obter_saldos_pendentes_produto(form.cleaned_data['produto'].id).values_list('id', flat=True)
@@ -670,14 +788,26 @@ def ordem_nova(request):
                 initial['data_programada'] = datetime.datetime.strptime(data_param, '%Y-%m-%d').date()
             except ValueError:
                 pass
-        produto_param = request.GET.get('produto')
+        produto_param = request.GET.get('produto') or request.GET.get('produto_id')
         if produto_param and produto_param.isdigit():
             initial['produto'] = int(produto_param)
+        qtd_param = request.GET.get('qtd') or request.GET.get('quantidade')
+        if qtd_param and qtd_param.isdigit():
+            initial['quantidade_nova'] = int(qtd_param)
+
         form = OrdemProducaoBladderForm(initial=initial)
+
+    data_ref = form.initial.get('data_programada') or timezone.localdate()
+    turma_calculada, _, _ = calcular_turma_do_dia(data_ref)
+    turma_calculada_display = "Turma A" if turma_calculada == 'TURMA_A' else ("Turma B" if turma_calculada == 'TURMA_B' else turma_calculada)
 
     context = {
         'form': form,
         'titulo': "Nova Programação de Bladder",
+        'turma_calculada_display': turma_calculada_display,
+        'data_ref': data_ref,
+        'theme_class': 'theme-light',
+        'is_lider_view': True,
     }
     return render(request, 'bladder/ordem_form.html', context)
 
@@ -2005,5 +2135,374 @@ def recados_criados_lista(request):
         'form_mensagem': MensagemPassagemTurnoForm(),
     }
     return render(request, 'bladder/recados_criados_lista.html', context)
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def passagem_turno_editar(request, pk):
+    """
+    Edição de recado existente em-place pelo autor ou líder.
+    Mantém o mesmo registro ativo e grava o texto anterior em HistoricoEdicaoMensagemTurnoBladder,
+    eliminando duplicações indesejadas na interface.
+    """
+    msg = get_object_or_404(MensagemPassagemTurnoBladder, pk=pk)
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/operador/'
+
+    if request.method == 'POST':
+        form = EditarMensagemPassagemTurnoForm(request.POST)
+        if form.is_valid():
+            try:
+                editar_mensagem_passagem_turno(
+                    mensagem_id=msg.id,
+                    usuario=request.user,
+                    novo_texto=form.cleaned_data['mensagem'],
+                    novo_tipo=form.cleaned_data.get('tipo'),
+                    nova_categoria=form.cleaned_data.get('categoria'),
+                    nova_prioridade=form.cleaned_data.get('prioridade'),
+                )
+                messages.success(request, "Recado operacional atualizado com sucesso!")
+            except (ValueError, PermissionError) as e:
+                messages.error(request, str(e))
+        else:
+            for field, errs in form.errors.items():
+                for err in errs:
+                    messages.error(request, err)
+
+    return redirect(next_url)
+
+
+# ==============================================================================
+# VIEWS DO NOVO ESTOQUE DE BLADDERS ACABADOS
+# ==============================================================================
+
+@login_required
+@operador_ou_lider_bladder_required
+def estoque_lista(request):
+    """
+    Ambiente de Gestão e Consulta de Estoque de Bladders Acabados.
+    Apresenta semáforo (Crítico, Atenção, Normal, Não configurado), cobertura em dias,
+    movimentações recentes e botões de ação (Entrada, Saída, Ajuste e Gerar OP).
+    """
+    resumo = obter_resumo_estoque_bladders()
+
+    # Filtro opcional por situação (CRITICO, ATENCAO, NORMAL, NAO_CONFIGURADO)
+    situacao_filtro = request.GET.get('situacao', '').strip().upper()
+    itens = resumo['itens']
+    if situacao_filtro:
+        itens = [i for i in itens if i['situacao'] == situacao_filtro]
+
+    # Últimas 30 movimentações no Ledger
+    movimentacoes = MovimentacaoEstoqueBladder.objects.select_related(
+        'produto', 'usuario', 'ordem_producao'
+    ).order_by('-data_hora')[:30]
+
+    form_mov = MovimentacaoEstoqueForm()
+    form_ajuste = AjusteEstoqueForm()
+    form_minimo = ConfigurarMinimoEstoqueForm()
+    produtos = [i['produto'] for i in itens]
+    pendentes_sync_dr201 = MovimentacaoEstoqueBladder.objects.filter(
+        tipo__in=['ENTRADA', 'SAIDA'],
+        sincronizado_dr201=False
+    ).count()
+
+    context = {
+        'resumo': resumo,
+        'itens': itens,
+        'produtos': produtos,
+        'movimentacoes': movimentacoes,
+        'situacao_filtro': situacao_filtro,
+        'form_mov': form_mov,
+        'form_ajuste': form_ajuste,
+        'form_minimo': form_minimo,
+        'pendentes_sync_dr201': pendentes_sync_dr201,
+        'is_lider': user_is_lider_bladder(request.user),
+        'theme_class': 'theme-light',
+        'is_lider_view': user_is_lider_bladder(request.user),
+    }
+    return render(request, 'bladder/estoque_lista.html', context)
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def estoque_movimentar(request):
+    """
+    Registra entrada ou saída física de bladders acabados.
+    Suporta movimentações individuais e múltiplas (1 linha e 1 lote por peça).
+    Protegido contra duplo clique/reenvio e estoque negativo.
+    Replicado de forma assíncrona na planilha DR-201 via Google Sheets API.
+    """
+    if request.method != 'POST':
+        return redirect('bladder:estoque_lista')
+
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/estoque/'
+
+    try:
+        produto_id = request.POST.get('produto')
+        if not produto_id:
+            messages.error(request, "Selecione o modelo do Bladder.")
+            return redirect(next_url)
+
+        produto = ProdutoBladder.objects.get(pk=produto_id, ativo=True)
+        tipo = request.POST.get('tipo', 'SAIDA').strip().upper()
+
+        try:
+            quantidade = int(request.POST.get('quantidade', 1))
+            if quantidade < 1:
+                quantidade = 1
+        except (ValueError, TypeError):
+            quantidade = 1
+
+        responsavel_retirada = request.POST.get('responsavel_retirada', '').strip()
+        destino = responsavel_retirada or request.POST.get('destino', '').strip()
+        observacao = request.POST.get('observacao', '').strip()
+        data_turno_raw = request.POST.get('data_turno')
+        turno_escolhido = request.POST.get('turno', '').strip().upper()
+
+        data_turno = None
+        if data_turno_raw:
+            try:
+                data_turno = datetime.datetime.strptime(data_turno_raw, '%Y-%m-%d').date()
+            except ValueError:
+                data_turno = None
+
+        if not data_turno:
+            data_turno = timezone.localdate()
+
+        if not turno_escolhido:
+            hora_atual = timezone.localtime().hour
+            turno_escolhido = 'MANHÃ' if 6 <= hora_atual < 18 else 'NOITE'
+
+        turma_atual, _, _ = calcular_turma_do_dia(data_turno)
+
+        # Lotes: lista com 1 lote por peça
+        lotes = request.POST.getlist('lotes')
+        if not lotes:
+            # Fallback para campo único se vier de formulário tradicional
+            lote_etiqueta = request.POST.get('lote_etiqueta', '').strip()
+            if lote_etiqueta:
+                lotes = [lote_etiqueta]
+
+        movs, saldo_final = registrar_movimentacao_multipla_estoque(
+            produto=produto,
+            tipo=tipo,
+            quantidade=quantidade,
+            usuario=request.user,
+            lotes=lotes,
+            destino=destino,
+            justificativa=observacao,
+            data_turno=data_turno,
+            turno_str=turno_escolhido,
+            turma=turma_atual,
+            disparar_sync=True
+        )
+
+        total_movs = len(movs)
+        if tipo == 'SAIDA':
+            quem = f" para {destino}" if destino else ""
+            messages.success(
+                request,
+                f"Saída de {total_movs} un de {produto.codigo}{quem} registrada com sucesso! "
+                f"Saldo restante: {saldo_final} un. (Adicionado à DR-201)"
+            )
+        else:
+            messages.success(
+                request,
+                f"Entrada física de {total_movs} un de {produto.codigo} confirmada com sucesso! "
+                f"Novo saldo: {saldo_final} un. (Adicionado à DR-201)"
+            )
+
+    except (ValueError, PermissionError) as e:
+        messages.error(request, str(e))
+    except Exception as e:
+        messages.error(request, f"Erro ao processar movimentação: {e}")
+
+    return redirect(next_url)
+
+
+@login_required
+@lider_bladder_required
+def estoque_ajuste(request, produto_id=None):
+    """
+    Ajuste auditado de inventário realizado pelo líder do setor.
+    Registra saldo anterior, novo saldo e motivo.
+    """
+    if request.method != 'POST':
+        return redirect('bladder:estoque_lista')
+
+    form = AjusteEstoqueForm(request.POST)
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/estoque/'
+
+    if form.is_valid():
+        produto = form.cleaned_data.get('produto')
+        if not produto and produto_id:
+            produto = get_object_or_404(ProdutoBladder, pk=produto_id)
+
+        if not produto:
+            messages.error(request, "Selecione o modelo do Bladder para ajuste.")
+            return redirect(next_url)
+
+        novo_saldo = form.cleaned_data['novo_saldo']
+        justificativa = form.cleaned_data['justificativa']
+        hoje = timezone.localdate()
+        turma_atual, _, _ = calcular_turma_do_dia(hoje)
+
+        try:
+            mov = registrar_ajuste_estoque(
+                produto=produto,
+                novo_saldo=novo_saldo,
+                usuario=request.user,
+                turma=turma_atual,
+                justificativa=justificativa,
+            )
+            messages.success(request, f"Ajuste de inventário concluído para {produto.codigo}! Saldo ajustado de {mov.saldo_anterior} para {mov.saldo_posterior} un.")
+        except (ValueError, PermissionError) as e:
+            messages.error(request, str(e))
+    else:
+        for fld, errs in form.errors.items():
+            for err in errs:
+                messages.error(request, err)
+
+    return redirect(next_url)
+
+
+@login_required
+@lider_bladder_required
+def estoque_configurar_minimo(request, produto_id=None):
+    """Configura o estoque mínimo de segurança de um modelo."""
+    if request.method != 'POST':
+        return redirect('bladder:estoque_lista')
+
+    form = ConfigurarMinimoEstoqueForm(request.POST)
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/estoque/'
+
+    if form.is_valid():
+        produto = form.cleaned_data.get('produto')
+        if not produto and produto_id:
+            produto = get_object_or_404(ProdutoBladder, pk=produto_id)
+
+        if not produto:
+            messages.error(request, "Selecione o modelo do Bladder para configurar o estoque mínimo.")
+            return redirect(next_url)
+
+        novo_minimo = form.cleaned_data['estoque_minimo']
+        produto.estoque_minimo = novo_minimo
+        produto.save(update_fields=['estoque_minimo', 'updated_at'])
+        messages.success(request, f"Estoque mínimo de {produto.codigo} atualizado para {novo_minimo} un.")
+    else:
+        for fld, errs in form.errors.items():
+            for err in errs:
+                messages.error(request, err)
+
+    return redirect(next_url)
+
+
+@login_required
+@lider_bladder_required
+def estoque_gerar_op(request, produto_id):
+    """
+    Ação rápida 'GERAR OP' a partir do estoque para modelo crítico ou com déficit.
+    Calcula a sugestão inicial (mínimo - estoque atual) e redireciona para o formulário de OP.
+    """
+    produto = get_object_or_404(ProdutoBladder, pk=produto_id)
+    sugestao = produto.sugestao_op
+    if sugestao <= 0:
+        sugestao = 10  # sugestão mínima de lote padrão se já estiver no mínimo
+
+    return redirect(f"/bladder/ordens/nova/?produto_id={produto.id}&qtd={sugestao}")
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def estoque_auditoria_dr201(request):
+    """Rota de auditoria DR-201 descontinuada a pedido do cliente. Redireciona para o estoque."""
+    return redirect('bladder:estoque_lista')
+
+
+@login_required
+@lider_bladder_required
+def estoque_sincronizar_dr201(request):
+    """
+    Sincroniza manualmente movimentações pendentes com a planilha Google Sheets DR-201.
+    Ação exclusiva da liderança para contingência ou pós-queda de conexão.
+    """
+    resultado = sincronizar_movimentacoes_pendentes_dr201()
+    total = resultado['total']
+    sucessos = resultado['sucessos']
+    falhas = resultado['falhas']
+
+    if total == 0:
+        messages.info(request, "Todas as movimentações já estão 100% sincronizadas com a DR-201.")
+    elif falhas == 0:
+        messages.success(request, f"Sincronização com a DR-201 concluída com sucesso! {sucessos} movimentação(ões) replicada(s).")
+    else:
+        messages.warning(request, f"Sincronização parcial com a DR-201: {sucessos} sucesso(s), {falhas} falha(s). Verifique a conexão com o Google Sheets.")
+
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/estoque/'
+    return redirect(next_url)
+
+
+# ==============================================================================
+# ATIVIDADES OPERACIONAIS DO TURNO (AÇÕES)
+# ==============================================================================
+
+@login_required
+@operador_ou_lider_bladder_required
+def atividade_operacional_criar(request):
+    """Registra uma atividade operacional simples no turno."""
+    if request.method != 'POST':
+        return redirect('bladder:operador')
+
+    form = AtividadeOperacionalForm(request.POST)
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/operador/'
+
+    if form.is_valid():
+        hoje = timezone.localdate()
+        turma_atual, _, _ = calcular_turma_do_dia(hoje)
+        try:
+            atv = criar_atividade_operacional_turno(
+                tipo_atividade=form.cleaned_data['tipo_atividade'],
+                usuario=request.user,
+                data_turno=hoje,
+                turma=turma_atual,
+                processo=form.cleaned_data.get('processo'),
+                maquina=form.cleaned_data.get('maquina'),
+                produto=form.cleaned_data.get('produto'),
+                quantidade=form.cleaned_data.get('quantidade'),
+                observacao=form.cleaned_data.get('observacao'),
+            )
+            messages.success(request, f"Atividade '{atv.tipo_atividade.nome}' registrada com sucesso no turno!")
+        except (ValueError, PermissionError) as e:
+            messages.error(request, str(e))
+    else:
+        for fld, errs in form.errors.items():
+            for err in errs:
+                messages.error(request, err)
+
+    return redirect(next_url)
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def atividade_operacional_concluir(request, pk):
+    """Conclui uma atividade operacional com um clique."""
+    if request.method != 'POST':
+        return redirect('bladder:operador')
+
+    obs = request.POST.get('observacao', '').strip()
+    next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/operador/'
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest'
+
+    try:
+        atv = concluir_atividade_operacional_turno(atividade_id=pk, usuario=request.user, observacao=obs)
+        msg_txt = f"Atividade '{atv.tipo_atividade.nome}' concluída com sucesso!"
+        if is_ajax:
+            return JsonResponse({'success': True, 'message': msg_txt, 'id': atv.id})
+        messages.success(request, msg_txt)
+    except (ValueError, PermissionError) as e:
+        if is_ajax:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        messages.error(request, str(e))
+
+    return redirect(next_url)
 
 

@@ -4302,3 +4302,61 @@ Status: 100% HOMOLOGADO E APROVADO (GREEN)
    - Total de testes validados pelo QA: 436 testes executados e 100% aprovados sem falhas.
    - Script de deploy testado e validado em ambos os modos `-CheckOnly` e `-DryRun`.
 ================================================================================
+
+================================================================================
+SEÇÃO 15: REESTRUTURAÇÃO DO MÓDULO BLADDER, ESTOQUE DR-201 E INTEGRAÇÕES (05/11/2026)
+================================================================================
+
+1. RESUMO EXECUTIVO:
+   - Reestruturação completa do app `bladder` baseada na avaliação do chefe do Setor.
+   - Controle de estoque físico de Bladders Acabados no Django, reconciliado com a base DR-201.
+   - Ambientes visuais integrados: Tema Escuro para Líder e Tema Claro para Operador.
+   - Ambiente Turno em 3 abas principais (Recados Recebidos, Atividades do Turno, Histórico).
+   - Atividades operacionais flexíveis (extrusão, corte, limpeza, manutenção) com conclusão em 1 toque.
+   - Edição in-place de mensagens de passagem de turno com histórico de auditoria.
+   - Automação de resumo de estoque para WhatsApp via Baileys em modo simulação/dry-run.
+   - Restrição de testes automatizados cumprida: status `IMPLEMENTADA — AGUARDANDO TESTES`.
+   - Governança: 100% no banco `default`, zero escritas no `scada`, backup local prévio.
+
+2. NOVOS MODELOS E CAMPOS (bladder/models.py):
+   - `TipoAtividadeBladder`: Cadastro de categorias operacionais (extrusão, limpeza, etc.).
+   - `AtividadeTurnoBladder`: Registro de tarefas rápidas do chão de fábrica.
+   - `MovimentacaoEstoqueBladder`: Ledger de Bladders acabados (Entrada, Saída, Ajuste).
+   - `HistoricoEdicaoMensagemTurnoBladder`: Histórico de edições de recados.
+   - `ConfiguracaoWhatsAppBladder`: Parametrização para envio diário de resumo.
+   - `ProdutoBladder`: Adicionados `estoque_minimo`, `estoque_atual`, semáforo e cobertura em dias.
+   - `MensagemPassagemTurnoBladder`: Adicionados `editado_por`, `editado_em`.
+
+3. MIGRAÇÕES APLICADAS:
+   - `bladder/migrations/0006_tipoatividadebladder_and_more.py` (aplicada no banco `default`).
+
+4. COMANDOS DE GERENCIAMENTO (bladder/management/commands/):
+   - `popular_tipos_atividade_bladder.py`: Seed dos 6 tipos operacionais padrão.
+   - `importar_estoque_dr201.py`: Auditoria e importação dos saldos do Google Sheets DR-201.
+   - `enviar_resumo_estoque_bladder.py`: Compilação e envio do resumo de estoque WhatsApp.
+
+5. ROTAS E VIEWS (bladder/views.py & urls.py):
+   - `/bladder/estoque/`: Painel de controle de estoque com semáforo e ledger.
+   - `/bladder/estoque/movimentar/`: Registro de entrada e saída.
+   - `/bladder/estoque/ajuste/`: Ajuste físico de inventário (exclusivo Líder).
+   - `/bladder/estoque/configurar-minimo/`: Edição de estoque mínimo.
+   - `/bladder/estoque/gerar-op/<id>/`: Redirecionamento assistido para Nova OP.
+   - `/bladder/estoque/auditoria-dr201/`: Tela de conciliação técnica com a DR-201.
+   - `/bladder/atividade/criar/` & `/bladder/atividade/<id>/concluir/`: Gestão de atividades.
+   - `/bladder/passagem-turno/<id>/editar/`: Edição in-place com auditoria.
+
+6. TEMPLATES E TEMAS VISUAIS:
+   - `base_bladder.html`: Tema escuro (Líder) e tema claro (Operador) com alternador no topo.
+   - `operador_turno.html`: Experiência em 3 abas, botões touch >= 48px e ações rápidas.
+   - `estoque_lista.html`: Visão consolidada dos 10 modelos e ledger auditável.
+   - `estoque_auditoria_dr201.html`: Relatório comparativo com a planilha Google Sheets.
+   - `fechamento_turno.html`: Encerramento com resumo de atividades e estoque.
+   - `ordens_lista.html`: Botão "+ Nova OP" interno e filtro de OPs atrasadas.
+   - `dashboard.html`: KPIs integrados de estoque e link direto para o painel.
+
+7. VERIFICAÇÕES DE INTEGRIDADE:
+   - `manage.py check`: 0 erros (0 silenced).
+   - `manage.py makemigrations --check --dry-run`: No changes detected.
+   - `git diff --check`: 0 erros de formatação.
+   - Testes automatizados suspensos para rodada posterior (status: IMPLEMENTADA — AGUARDANDO TESTES).
+================================================================================

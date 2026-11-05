@@ -1,0 +1,451 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Controle de Estoque &bull; Setor de Bladder{% endblock %}
+
+{% block extra_css %}
+<style>
+    .kpi-card {
+        border-radius: 12px;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .kpi-card:hover {
+        transform: translateY(-2px);
+    }
+    .status-badge-critico {
+        background-color: #DC2626;
+        color: #FFFFFF;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        animation: pulseCritico 2s infinite;
+    }
+    .status-badge-atencao {
+        background-color: #F59E0B;
+        color: #0F172A;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }
+    .status-badge-normal {
+        background-color: #10B981;
+        color: #FFFFFF;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+    @keyframes pulseCritico {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+        100% { transform: scale(1); }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ===================================================================== -->
+<!-- CABEÇALHO DA GESTÃO DE ESTOQUE                                       -->
+<!-- ===================================================================== -->
+<div class="glass-card mb-4 p-3 p-md-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+        <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                <span class="badge bg-warning text-dark fw-bold fs-6 px-3 py-1">
+                    <i class="bi bi-boxes me-1"></i> GESTÃO DE ESTOQUE DE BLADDERS
+                </span>
+                <span class="badge bg-dark border border-secondary text-secondary">
+                    Controle Django &bull; Ledger Auditável
+                </span>
+            </div>
+            <h1 class="h3 fw-bold mb-1">Painel de Estoque de Bladders Acabados</h1>
+            <p class="text-secondary small mb-0">
+                10 modelos catalogados conforme ET.029 &bull; Reconciliado com a base histórica DR-201
+            </p>
+        </div>
+
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            {% if is_lider and pendentes_sync_dr201 > 0 %}
+                <a href="{% url 'bladder:estoque_sincronizar_dr201' %}" class="btn btn-warning fw-semibold touch-btn shadow-sm" title="Sincronizar movimentações pendentes com a planilha Google Sheets DR-201">
+                    <i class="bi bi-cloud-arrow-up-fill me-1"></i> Sincronizar DR-201 ({{ pendentes_sync_dr201 }})
+                </a>
+            {% endif %}
+            <button type="button" class="btn btn-outline-info text-dark fw-semibold touch-btn" data-bs-toggle="modal" data-bs-target="#modalMovimentarEstoque">
+                <i class="bi bi-arrow-left-right me-1"></i> + Movimentação
+            </button>
+            {% if is_lider %}
+                <button type="button" class="btn btn-outline-warning fw-semibold touch-btn" data-bs-toggle="modal" data-bs-target="#modalAjusteEstoque">
+                    <i class="bi bi-sliders me-1"></i> Ajuste de Inventário
+                </button>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- CARDS KPI DE ESTOQUE (SEÇÃO 11)                                      -->
+<!-- ===================================================================== -->
+<div class="row g-3 mb-4">
+    <!-- Card Total de Peças -->
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="glass-card kpi-card p-3 border-secondary border-opacity-30 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-muted small fw-bold text-uppercase">Estoque Total</span>
+                <div class="p-2 rounded bg-primary bg-opacity-20 text-primary">
+                    <i class="bi bi-box-seam fs-5"></i>
+                </div>
+            </div>
+            <div class="fs-2 fw-bold font-monospace text-light mb-1">{{ resumo.total_pecas }} <span class="fs-6 text-muted">un</span></div>
+            <span class="small text-secondary">Soma física dos 10 modelos</span>
+        </div>
+    </div>
+
+    <!-- Card Crítico (Vermelho) -->
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="glass-card kpi-card p-3 border-danger border-opacity-40 h-100 {% if resumo.criticos > 0 %}bg-danger bg-opacity-10{% endif %}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-danger small fw-bold text-uppercase">Modelos Críticos</span>
+                <div class="p-2 rounded bg-danger bg-opacity-20 text-danger">
+                    <i class="bi bi-exclamation-octagon-fill fs-5"></i>
+                </div>
+            </div>
+            <div class="fs-2 fw-bold font-monospace text-danger mb-1">{{ resumo.criticos }} <span class="fs-6 text-muted">modelos</span></div>
+            <span class="small text-secondary">Abaixo do estoque mínimo &bull; Requer OP</span>
+        </div>
+    </div>
+
+    <!-- Card Atenção (Amarelo) -->
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="glass-card kpi-card p-3 border-warning border-opacity-40 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-warning small fw-bold text-uppercase">Em Atenção</span>
+                <div class="p-2 rounded bg-warning bg-opacity-20 text-warning">
+                    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
+                </div>
+            </div>
+            <div class="fs-2 fw-bold font-monospace text-warning mb-1">{{ resumo.atencao }} <span class="fs-6 text-muted">modelos</span></div>
+            <span class="small text-secondary">Próximos do limite mínimo</span>
+        </div>
+    </div>
+
+    <!-- Card Normal (Verde) -->
+    <div class="col-12 col-sm-6 col-xl-3">
+        <div class="glass-card kpi-card p-3 border-success border-opacity-40 h-100">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="text-success small fw-bold text-uppercase">Em Nível Normal</span>
+                <div class="p-2 rounded bg-success bg-opacity-20 text-success">
+                    <i class="bi bi-check-circle-fill fs-5"></i>
+                </div>
+            </div>
+            <div class="fs-2 fw-bold font-monospace text-success mb-1">{{ resumo.normais }} <span class="fs-6 text-muted">modelos</span></div>
+            <span class="small text-secondary">Estoque com cobertura segura</span>
+        </div>
+    </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- TABELA PRINCIPAL DE MODELOS (CATÁLOGO ET.029)                        -->
+<!-- ===================================================================== -->
+<div class="glass-card mb-4 p-3 p-md-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-25">
+        <h2 class="h5 fw-bold mb-0 d-flex align-items-center gap-2">
+            <i class="bi bi-table text-warning"></i> Situação Individual dos 10 Modelos
+        </h2>
+        <span class="small text-secondary">
+            Semáforo automático com base no estoque mínimo configurado
+        </span>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-dark table-hover align-middle mb-0">
+            <thead>
+                <tr class="text-secondary small text-uppercase">
+                    <th>Código</th>
+                    <th>Descrição / Medida</th>
+                    <th class="d-none d-lg-table-cell">Nomenclatura Antiga</th>
+                    <th class="text-center">Estoque Mínimo</th>
+                    <th class="text-center">Estoque Atual</th>
+                    <th class="text-center">Situação</th>
+                    <th class="text-center d-none d-md-table-cell">Cobertura</th>
+                    <th class="text-end">Ações Operacionais</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for prod in produtos %}
+                    <tr class="{% if prod.situacao_estoque == 'CRITICO' %}table-danger bg-opacity-10{% endif %}">
+                        <!-- Código -->
+                        <td>
+                            <span class="font-monospace fw-bold text-warning fs-6">{{ prod.codigo }}</span>
+                        </td>
+
+                        <!-- Descrição / Medida -->
+                        <td>
+                            <strong class="text-light d-block">{{ prod.descricao }}</strong>
+                            {% if prod.altura_cm or prod.peso_vulcanizado_kg %}
+                                <span class="small text-muted">
+                                    {% if prod.altura_cm %}Alt: {{ prod.altura_cm }} cm{% endif %}
+                                    {% if prod.peso_vulcanizado_kg %}&bull; Peso: {{ prod.peso_vulcanizado_kg }} kg{% endif %}
+                                </span>
+                            {% endif %}
+                        </td>
+
+                        <!-- Nomenclatura Antiga -->
+                        <td class="d-none d-lg-table-cell text-muted small">
+                            {{ prod.nomenclatura_antiga|default:"-" }}
+                        </td>
+
+                        <!-- Estoque Mínimo -->
+                        <td class="text-center font-monospace">
+                            <span class="badge bg-dark border border-secondary text-light fs-6">
+                                {{ prod.estoque_minimo }} un
+                            </span>
+                            {% if is_lider %}
+                                <button type="button" class="btn btn-link btn-sm text-secondary p-0 ms-1 text-decoration-none" onclick="abrirModalMinimo('{{ prod.id }}', '{{ prod.codigo }}', '{{ prod.estoque_minimo }}')" title="Editar estoque mínimo">
+                                    <i class="bi bi-pencil-fill" style="font-size: 0.75rem;"></i>
+                                </button>
+                            {% endif %}
+                        </td>
+
+                        <!-- Estoque Atual -->
+                        <td class="text-center font-monospace">
+                            <span class="fs-5 fw-bold {% if prod.situacao_estoque == 'CRITICO' %}text-danger{% elif prod.situacao_estoque == 'ATENCAO' %}text-warning{% else %}text-success{% endif %}">
+                                {{ prod.estoque_atual }}
+                            </span>
+                            <span class="small text-muted">un</span>
+                        </td>
+
+                        <!-- Situação Semafórica -->
+                        <td class="text-center">
+                            <span class="badge px-3 py-1.5 status-badge-{{ prod.situacao_estoque|lower }}">
+                                {% if prod.situacao_estoque == 'CRITICO' %}
+                                    <i class="bi bi-exclamation-octagon-fill me-1"></i> CRÍTICO
+                                {% elif prod.situacao_estoque == 'ATENCAO' %}
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i> ATENÇÃO
+                                {% else %}
+                                    <i class="bi bi-check-circle-fill me-1"></i> NORMAL
+                                {% endif %}
+                            </span>
+                        </td>
+
+                        <!-- Cobertura em Dias -->
+                        <td class="text-center d-none d-md-table-cell">
+                            {% with cob=prod.cobertura_dias %}
+                                {% if cob is not None %}
+                                    <span class="badge bg-dark border border-secondary text-light font-monospace">
+                                        {{ cob }} dia{{ cob|pluralize }}
+                                    </span>
+                                {% else %}
+                                    <span class="text-muted small">-</span>
+                                {% endif %}
+                            {% endwith %}
+                        </td>
+
+                        <!-- Ações -->
+                        <td class="text-end">
+                            <div class="d-inline-flex align-items-center gap-1">
+                                <!-- Botão GERAR OP destacado para itens críticos -->
+                                {% if prod.situacao_estoque == 'CRITICO' %}
+                                    <a href="{% url 'bladder:estoque_gerar_op' prod.id %}" class="btn btn-danger btn-sm fw-bold px-2 py-1 shadow-sm" title="Gerar Ordem de Produção imediatamente para repor estoque">
+                                        <i class="bi bi-plus-circle-fill me-1"></i> GERAR OP
+                                    </a>
+                                {% endif %}
+
+                                <button type="button" class="btn btn-outline-info btn-sm px-2 py-1" onclick="abrirModalMovimentarIndividual('{{ prod.id }}', '{{ prod.codigo }}')" title="Registrar Entrada/Saída">
+                                    <i class="bi bi-arrow-left-right"></i>
+                                </button>
+
+                                {% if is_lider %}
+                                    <button type="button" class="btn btn-outline-warning btn-sm px-2 py-1" onclick="abrirModalAjusteIndividual('{{ prod.id }}', '{{ prod.codigo }}', '{{ prod.estoque_atual }}')" title="Ajuste de Inventário">
+                                        <i class="bi bi-sliders"></i>
+                                    </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% empty %}
+                    <tr>
+                        <td colspan="8" class="text-center py-4 text-muted">Nenhum produto cadastrado no catálogo.</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- TABELA DE MOVIMENTAÇÕES RECENTES (LEDGER AUDITÁVEL)                  -->
+<!-- ===================================================================== -->
+<div class="glass-card mb-4 p-3 p-md-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-25">
+        <h2 class="h5 fw-bold mb-0 d-flex align-items-center gap-2">
+            <i class="bi bi-journal-text text-info"></i> Ledger de Movimentações Recentes
+        </h2>
+        <span class="small text-secondary">
+            Rastreabilidade completa de todas as alterações físicas no estoque
+        </span>
+    </div>
+
+    {% if movimentacoes %}
+        <div class="table-responsive">
+            <table class="table table-dark table-sm table-hover align-middle mb-0 small">
+                <thead>
+                    <tr class="text-secondary text-uppercase">
+                        <th>Data / Hora</th>
+                        <th>Tipo</th>
+                        <th>Produto</th>
+                        <th class="text-center">Quantidade</th>
+                        <th class="text-center">Saldo Anterior</th>
+                        <th class="text-center">Novo Saldo</th>
+                        <th>Destino / Motivo</th>
+                        <th>Responsável</th>
+                        <th class="text-center">DR-201</th>
+                        <th>Observação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for mov in movimentacoes %}
+                        <tr>
+                            <td class="font-monospace text-muted">{{ mov.data_hora|date:"d/m/Y H:i" }}</td>
+                            <td>
+                                <span class="badge {% if mov.tipo_movimentacao == 'ENTRADA' %}bg-success{% elif mov.tipo_movimentacao == 'SAIDA' %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+                                    {{ mov.get_tipo_movimentacao_display }}
+                                </span>
+                            </td>
+                            <td class="font-monospace fw-bold text-warning">{{ mov.produto.codigo }}</td>
+                            <td class="text-center font-monospace fw-bold">
+                                {% if mov.tipo_movimentacao == 'ENTRADA' %}+{% elif mov.tipo_movimentacao == 'SAIDA' %}-{% endif %}{{ mov.quantidade }}
+                            </td>
+                            <td class="text-center font-monospace text-muted">{{ mov.saldo_anterior }}</td>
+                            <td class="text-center font-monospace fw-bold text-light">{{ mov.saldo_posterior|default:mov.saldo_novo }}</td>
+                            <td><span class="badge bg-dark border border-secondary text-secondary">{{ mov.destino|default:mov.justificativa|default:"-" }}</span></td>
+                            <td>{{ mov.usuario.first_name|default:mov.usuario.username }}</td>
+                            <td class="text-center">
+                                {% if mov.sincronizado_dr201 %}
+                                    <span class="badge bg-success" title="Replicado na planilha DR-201 em {{ mov.data_sincronizacao_dr201|date:'d/m H:i' }}">
+                                        <i class="bi bi-cloud-check-fill"></i> OK
+                                    </span>
+                                {% elif mov.tipo in 'ENTRADA,SAIDA' %}
+                                    <span class="badge bg-warning text-dark" title="Pendente de sincronização com o Google Sheets: {{ mov.erro_sincronizacao_dr201|default:'Aguardando envio' }}">
+                                        <i class="bi bi-cloud-arrow-up"></i> Pendente
+                                    </span>
+                                {% else %}
+                                    <span class="badge bg-secondary">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted">{{ mov.lote_etiqueta|default:mov.observacao|default:"-"|truncatechars:45 }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="text-secondary small text-center py-4 mb-0">Nenhuma movimentação registrada no ledger até o momento.</p>
+    {% endif %}
+</div>
+
+<!-- ===================================================================== -->
+<!-- MODAL DE MOVIMENTAÇÃO DE BLADDERS ACABADOS (INTEGRAÇÃO OFICIAL DR-201) -->
+<!-- ===================================================================== -->
+{% include "bladder/includes/modal_movimentacao_estoque.html" with modal_id="modalMovimentarEstoque" %}
+
+<!-- ===================================================================== -->
+<!-- MODAL: AJUSTE DE INVENTÁRIO (LÍDER ONLY)                              -->
+<!-- ===================================================================== -->
+{% if is_lider %}
+<div class="modal fade" id="modalAjusteEstoque" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-white text-dark border border-warning shadow-lg">
+            <form method="POST" action="{% url 'bladder:estoque_ajuste' %}">
+                {% csrf_token %}
+                <div class="modal-header bg-light border-bottom">
+                    <h5 class="modal-title fw-bold text-dark d-flex align-items-center gap-2">
+                        <i class="bi bi-sliders text-warning"></i> Ajuste Físico de Inventário
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="p-2 mb-3 rounded bg-warning bg-opacity-10 border border-warning border-opacity-25 small text-dark">
+                        <i class="bi bi-info-circle text-warning me-1"></i>
+                        O ajuste substitui o saldo físico atual pelo novo valor de contagem e gera uma movimentação de conciliação auditada.
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-dark small fw-bold">Modelo do Bladder <span class="text-danger">*</span></label>
+                        {{ form_ajuste.produto }}
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label text-dark small fw-bold">Novo Saldo Físico Contado (un) <span class="text-danger">*</span></label>
+                        {{ form_ajuste.novo_saldo }}
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label text-dark small fw-bold">Justificativa do Ajuste <span class="text-danger">*</span></label>
+                        {{ form_ajuste.justificativa }}
+                    </div>
+                </div>
+                <div class="modal-footer bg-light border-top">
+                    <button type="button" class="btn btn-outline-secondary touch-btn" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning fw-bold px-4 touch-btn">
+                        <i class="bi bi-check2-circle me-1"></i> Gravar Ajuste
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ===================================================================== -->
+<!-- MODAL: CONFIGURAR ESTOQUE MÍNIMO                                     -->
+<!-- ===================================================================== -->
+<div class="modal fade" id="modalConfigurarMinimo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content bg-white text-dark border border-secondary shadow-lg">
+            <form method="POST" action="{% url 'bladder:estoque_configurar_minimo' %}">
+                {% csrf_token %}
+                <div class="modal-header bg-light border-bottom">
+                    <h5 class="modal-title fw-bold text-dark d-flex align-items-center gap-2">
+                        <i class="bi bi-shield-lock text-warning"></i> Configurar Estoque Mínimo
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+                <div class="modal-body p-3">
+                    <div class="mb-3">
+                        <label class="form-label text-dark small fw-bold">Modelo do Bladder</label>
+                        {{ form_minimo.produto }}
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label text-dark small fw-bold">Novo Estoque Mínimo (un) <span class="text-danger">*</span></label>
+                        {{ form_minimo.estoque_minimo }}
+                    </div>
+                </div>
+                <div class="modal-footer bg-light border-top">
+                    <button type="button" class="btn btn-outline-secondary touch-btn" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-warning fw-bold px-4 touch-btn">
+                        <i class="bi bi-check2 me-1"></i> Salvar Mínimo
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+    function abrirModalMovimentarIndividual(prodId, prodCodigo) {
+        const select = document.querySelector('#modalMovimentarEstoque select[name="produto"]');
+        if (select) select.value = prodId;
+        var modal = new bootstrap.Modal(document.getElementById('modalMovimentarEstoque'));
+        modal.show();
+    }
+
+    function abrirModalAjusteIndividual(prodId, prodCodigo, saldoAtual) {
+        const select = document.querySelector('#modalAjusteEstoque select[name="produto"]');
+        if (select) select.value = prodId;
+        var modal = new bootstrap.Modal(document.getElementById('modalAjusteEstoque'));
+        modal.show();
+    }
+
+    function abrirModalMinimo(prodId, prodCodigo, minimoAtual) {
+        const select = document.querySelector('#modalConfigurarMinimo select[name="produto"]');
+        const input = document.querySelector('#modalConfigurarMinimo input[name="estoque_minimo"]');
+        if (select) select.value = prodId;
+        if (input) input.value = minimoAtual;
+        var modal = new bootstrap.Modal(document.getElementById('modalConfigurarMinimo'));
+        modal.show();
+    }
+</script>
+{% endblock %}
+

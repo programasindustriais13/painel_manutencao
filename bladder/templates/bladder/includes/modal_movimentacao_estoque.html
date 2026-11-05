@@ -1,0 +1,216 @@
+<!-- ===================================================================== -->
+<!-- MODAL DE MOVIMENTAÇÃO DE BLADDERS ACABADOS (INTEGRAÇÃO OFICIAL DR-201) -->
+<!-- ===================================================================== -->
+<div class="modal fade" id="{{ modal_id|default:'modalMovimentoEstoqueRapido' }}" tabindex="-1" aria-labelledby="{{ modal_id|default:'modalMovimentoEstoqueRapido' }}Label" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-white text-dark border border-info shadow-lg">
+            <form method="POST" action="{% url 'bladder:estoque_movimentar' %}" id="form-movimentar-{{ modal_id|default:'padrao' }}">
+                {% csrf_token %}
+                <input type="hidden" name="next_url" value="{{ request.get_full_path }}">
+
+                <div class="modal-header bg-light border-bottom">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-boxes text-info fs-4"></i>
+                        <div>
+                            <h5 class="modal-title fw-bold text-dark mb-0" id="{{ modal_id|default:'modalMovimentoEstoqueRapido' }}Label">
+                                Movimentação de Bladders Acabados
+                            </h5>
+                            <span class="text-secondary small">Alimenta o estoque Django e replica automaticamente cada peça na planilha DR-201</span>
+                        </div>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                </div>
+
+                <div class="modal-body p-3 p-md-4">
+                    <!-- Faixa de Identificação Operacional (Campos da DR-201) -->
+                    <div class="p-2 mb-3 rounded bg-light border d-flex flex-wrap align-items-center justify-content-between gap-2 small">
+                        <div>
+                            <span class="text-muted fw-bold">RESPONSÁVEL BLADDER:</span>
+                            <span class="badge bg-primary text-white fw-bold px-2 py-1 ms-1">
+                                <i class="bi bi-person-fill me-1"></i>{{ request.user.first_name|default:request.user.username|upper }}
+                            </span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <span class="text-muted fw-bold">DATA:</span>
+                            <input type="date" name="data_turno" class="form-control form-control-sm text-center font-monospace" style="width: 145px;" value="{% now 'Y-m-d' %}">
+                            <span class="text-muted fw-bold ms-2">TURNO:</span>
+                            <select name="turno" class="form-select form-select-sm" style="width: 115px;">
+                                <option value="MANHÃ" {% now "H" as hora %}{% if hora >= "06" and hora < "18" %}selected{% endif %}>MANHÃ</option>
+                                <option value="NOITE" {% now "H" as hora %}{% if hora < "06" or hora >= "18" %}selected{% endif %}>NOITE</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Linha 1: Modelo do Bladder e Tipo de Operação -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-bold">Modelo do Bladder <span class="text-danger">*</span></label>
+                            {% if form_mov_estoque.produto %}
+                                {{ form_mov_estoque.produto }}
+                            {% elif form_mov.produto %}
+                                {{ form_mov.produto }}
+                            {% else %}
+                                <select name="produto" class="form-select select-mov-produto" required>
+                                    <option value="">Selecione o modelo...</option>
+                                    {% for p in produtos %}
+                                        <option value="{{ p.id }}">{{ p.codigo_com_medida }} (Saldo: {{ p.estoque_atual }} un)</option>
+                                    {% endfor %}
+                                </select>
+                            {% endif %}
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label small fw-bold">Tipo de Operação <span class="text-danger">*</span></label>
+                            <select name="tipo" class="form-select select-tipo-op" onchange="atualizarTipoOperacaoModal(this, '{{ modal_id|default:'modalMovimentoEstoqueRapido' }}')">
+                                <option value="SAIDA" selected>Saída de bladder para produção (Vulcanização)</option>
+                                <option value="ENTRADA">Entrada de bladder para estoque (Fabricado)</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Linha 2: Responsável pela Retirada (Destino) e Quantidade -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-12 col-md-8 campo-retirada-box">
+                            <label class="form-label small fw-bold label-responsavel-retirada">
+                                Responsável pela Retirada <span class="text-danger campo-obrigatorio-retirada">*</span>
+                            </label>
+                            <!-- VEM EM BRANCO POR PADRÃO CONFORME DIRETRIZ -->
+                            <input type="text" name="responsavel_retirada" class="form-control input-responsavel-retirada" placeholder="Nome de quem retirou (ex: Edilson, Rodrigo, Ivanildo...)" value="">
+                            <span class="text-secondary small d-block mt-1 label-dica-retirada">
+                                Digite o nome do operador da vulcanização/produção que pegou as peças.
+                            </span>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label class="form-label small fw-bold">Quantidade de Peças <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <button type="button" class="btn btn-outline-secondary" onclick="alterarQtdModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}', -1)">-</button>
+                                <input type="number" name="quantidade" class="form-control text-center font-monospace fs-5 fw-bold input-qtd-modal" value="1" min="1" max="50" onchange="atualizarLotesModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}')" oninput="atualizarLotesModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}')">
+                                <button type="button" class="btn btn-outline-secondary" onclick="alterarQtdModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}', 1)">+</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Seção Dinâmica de Lotes / Etiquetas (1 Campo por Peça) -->
+                    <div class="mb-3 p-3 rounded border bg-light">
+                        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-1">
+                            <label class="form-label small fw-bold mb-0 text-dark">
+                                <i class="bi bi-upc-scan text-info me-1"></i>
+                                Número do Lote / Código de Barras por Peça <span class="text-danger">*</span>
+                            </label>
+                            <span class="badge bg-secondary badge-qtd-lotes">1 peça = 1 linha na DR-201</span>
+                        </div>
+                        <p class="text-secondary small mb-2">
+                            Bipe ou digite o número do lote/etiqueta de cada peça. Na DR-201 será criada <strong>uma linha individual para cada peça</strong> com seu respectivo lote.
+                        </p>
+
+                        <!-- Container dinâmico com inputs de lotes -->
+                        <div class="container-inputs-lotes">
+                            <div class="mb-2 input-group">
+                                <span class="input-group-text font-monospace small bg-white text-muted">Peça 1</span>
+                                <input type="text" name="lotes" class="form-control font-monospace input-lote-item" placeholder="Bipe ou digite o lote da peça 1 (ex: 7586193161)" autocomplete="off">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Linha 3: Observações (Preenchimento Real da DR-201) -->
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">Observações (Opcional)</label>
+                        <input type="text" name="observacao" class="form-control" placeholder="Observações complementares da movimentação...">
+                        <span class="text-secondary small d-block mt-1">
+                            Este texto será enviado para a coluna de Observações na DR-201. Deixe em branco se não houver observações.
+                        </span>
+                    </div>
+                </div>
+
+                <div class="modal-footer bg-light border-top">
+                    <button type="button" class="btn btn-outline-secondary touch-btn" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-info text-dark fw-bold px-4 touch-btn">
+                        <i class="bi bi-save-fill me-1"></i> Gravar e Atualizar DR-201
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    function alterarQtdModal(modalId, delta) {
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+        const inputQtd = modal.querySelector('.input-qtd-modal');
+        if (!inputQtd) return;
+        let val = parseInt(inputQtd.value, 10) || 1;
+        val = Math.max(1, Math.min(50, val + delta));
+        inputQtd.value = val;
+        atualizarLotesModal(modalId);
+    }
+
+    function atualizarLotesModal(modalId) {
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+        const inputQtd = modal.querySelector('.input-qtd-modal');
+        const container = modal.querySelector('.container-inputs-lotes');
+        const badge = modal.querySelector('.badge-qtd-lotes');
+        if (!inputQtd || !container) return;
+
+        let qtd = parseInt(inputQtd.value, 10) || 1;
+        qtd = Math.max(1, Math.min(50, qtd));
+
+        if (badge) {
+            badge.textContent = `${qtd} peça${qtd > 1 ? 's' : ''} = ${qtd} linha${qtd > 1 ? 's' : ''} na DR-201`;
+        }
+
+        // Salvar valores já digitados antes de recriar
+        const inputsAtuais = container.querySelectorAll('.input-lote-item');
+        const valoresSalvos = [];
+        inputsAtuais.forEach(inp => valoresSalvos.push(inp.value));
+
+        // Recriar inputs
+        container.innerHTML = '';
+        for (let i = 0; i < qtd; i++) {
+            const div = document.createElement('div');
+            div.className = 'mb-2 input-group';
+            const valExistente = valoresSalvos[i] || '';
+            div.innerHTML = `
+                <span class="input-group-text font-monospace small bg-white text-muted">Peça ${i + 1}</span>
+                <input type="text" name="lotes" class="form-control font-monospace input-lote-item" placeholder="Bipe ou digite o lote da peça ${i + 1} (ex: 7586193161)" value="${valExistente}" autocomplete="off">
+            `;
+            container.appendChild(div);
+        }
+
+        // Suporte a leitor de código de barras: ao apertar Enter em um input, pula para o próximo
+        const novosInputs = container.querySelectorAll('.input-lote-item');
+        novosInputs.forEach((inp, idx) => {
+            inp.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (idx + 1 < novosInputs.length) {
+                        novosInputs[idx + 1].focus();
+                    }
+                }
+            });
+        });
+    }
+
+    function atualizarTipoOperacaoModal(select, modalId) {
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+        const isSaida = select.value === 'SAIDA';
+        const label = modal.querySelector('.label-responsavel-retirada');
+        const input = modal.querySelector('.input-responsavel-retirada');
+        const dica = modal.querySelector('.label-dica-retirada');
+
+        if (isSaida) {
+            if (label) label.innerHTML = 'Responsável pela Retirada <span class="text-danger">*</span>';
+            if (input) input.placeholder = 'Nome de quem retirou (ex: Edilson, Rodrigo, Ivanildo...)';
+            if (dica) dica.textContent = 'Digite o nome do operador da vulcanização/produção que pegou as peças.';
+        } else {
+            if (label) label.innerHTML = 'Origem / Quem Entregou (Opcional)';
+            if (input) input.placeholder = 'Ex: Prensa 01, Produção...';
+            if (dica) dica.textContent = 'Na DR-201, entradas físicas ficam com responsável pela retirada vazio.';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        atualizarLotesModal('{{ modal_id|default:"modalMovimentoEstoqueRapido" }}');
+    });
+</script>

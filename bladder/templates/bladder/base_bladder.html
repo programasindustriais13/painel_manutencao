@@ -46,6 +46,164 @@
             min-height: 100vh;
             display: flex;
             flex-direction: column;
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+
+        /* ========================================================= */
+        /* TEMA CLARO (OPERADOR) & TEMA ESCURO (LÍDER)               */
+        /* ========================================================= */
+        body.theme-light {
+            --dark-bg: #F8FAFC;
+            --dark-card: #FFFFFF;
+            --dark-card-border: #E2E8F0;
+            --dark-surface: #F1F5F9;
+            --text-main: #0F172A;
+            --text-secondary: #334155;
+            --text-muted: #64748B;
+
+            --bs-body-color: #0F172A;
+            --bs-body-bg: #F8FAFC;
+            --bs-secondary-color: #64748B;
+            --bs-secondary-rgb: 100, 116, 139;
+            --bs-tertiary-color: #94A3B8;
+            --bs-heading-color: #0F172A;
+            background-color: #F8FAFC !important;
+            color: #0F172A !important;
+        }
+
+        body.theme-light .bladder-navbar {
+            background-color: #FFFFFF;
+            border-bottom: 2px solid #F59E0B;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        }
+
+        body.theme-light .bladder-brand {
+            color: #0F172A;
+        }
+
+        body.theme-light .nav-link-custom {
+            color: #475569;
+        }
+
+        body.theme-light .nav-link-custom:hover {
+            color: #0F172A;
+            background-color: #F1F5F9;
+        }
+
+        body.theme-light .nav-link-custom.active {
+            color: #B45309;
+            background-color: #FEF3C7;
+            border-color: #FDE68A;
+        }
+
+        body.theme-light .glass-card {
+            background: #FFFFFF !important;
+            border: 1px solid #E2E8F0 !important;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05) !important;
+            color: #0F172A !important;
+        }
+
+        body.theme-light .footer {
+            background-color: #FFFFFF;
+            border-top: 1px solid #E2E8F0;
+            color: #64748B;
+        }
+
+        body.theme-light .form-control,
+        body.theme-light .form-select {
+            background-color: #FFFFFF !important;
+            border-color: #CBD5E1 !important;
+            color: #0F172A !important;
+        }
+
+        body.theme-light .form-control:focus,
+        body.theme-light .form-select:focus {
+            background-color: #FFFFFF !important;
+            border-color: #F59E0B !important;
+            color: #0F172A !important;
+            box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.2) !important;
+        }
+
+        body.theme-light .form-label {
+            color: #1E293B !important;
+        }
+
+        body.theme-light .text-light {
+            color: #0F172A !important;
+        }
+
+        body.theme-light .text-white {
+            color: #0F172A !important;
+        }
+
+        body.theme-light .text-muted {
+            color: #64748B !important;
+        }
+
+        body.theme-light .text-secondary {
+            color: #475569 !important;
+        }
+
+        body.theme-light .bg-dark {
+            background-color: #F1F5F9 !important;
+            color: #0F172A !important;
+        }
+
+        body.theme-light .modal-content {
+            background-color: #FFFFFF !important;
+            color: #0F172A !important;
+            border-color: #E2E8F0 !important;
+        }
+
+        body.theme-light .btn-close-white {
+            filter: none !important;
+        }
+
+        body.theme-light .table-dark {
+            background-color: #FFFFFF !important;
+            color: #0F172A !important;
+        }
+
+        body.theme-light .table-dark td,
+        body.theme-light .table-dark th {
+            background-color: #FFFFFF !important;
+            color: #0F172A !important;
+            border-color: #E2E8F0 !important;
+        }
+
+        body.theme-light .op-card-board {
+            background: #FFFFFF !important;
+            border: 1px solid #CBD5E1 !important;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05) !important;
+            color: #0F172A !important;
+        }
+
+        body.theme-light .op-metric-box {
+            background: #F8FAFC !important;
+            border: 1px solid #E2E8F0 !important;
+        }
+
+        body.theme-light .btn-portal-switcher {
+            background: #F1F5F9;
+            border-color: #CBD5E1;
+            color: #334155;
+        }
+
+        body.theme-light .btn-portal-switcher:hover {
+            background: #E2E8F0;
+            color: #0F172A;
+        }
+
+        /* Botões com alvo de toque adequado para tablet / chão de fábrica (min 48px) */
+        .touch-btn {
+            min-height: 48px;
+            font-size: 0.95rem;
+            letter-spacing: 0.3px;
+        }
+
+        .touch-header-btn {
+            min-height: 48px;
+            padding: 0.5rem 1.25rem;
         }
 
         .text-muted { color: #94A3B8 !important; }
@@ -178,7 +336,7 @@
     </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body class="theme-light" id="bladderBody">
     <!-- Top Navbar -->
     <nav class="bladder-navbar">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 container-fluid">
@@ -187,38 +345,38 @@
                 <i class="bi bi-disc-fill text-warning fs-4"></i>
                 <div class="d-flex align-items-center gap-2">
                     <span class="fs-5 fw-bold tracking-tight">SETOR DE BLADDER</span>
-                    <span class="bladder-brand-badge">{% if is_lider_bladder %}PCP &bull; Operação{% else %}Chão de Fábrica{% endif %}</span>
+                    <span class="bladder-brand-badge">{% if is_lider_bladder %}PCP &bull; Gestão{% else %}Operador &bull; Turno{% endif %}</span>
                 </div>
             </a>
 
-            <!-- Nav Links -->
+            <!-- Nav Links (Organização Simplificada per Seção 7) -->
             <div class="d-flex flex-wrap align-items-center gap-2">
                 {% if is_lider_bladder %}
-                    <a href="{% url 'bladder:dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
-                        <i class="bi bi-speedometer2"></i> Dashboard
+                    <!-- 1. Visão Geral -->
+                    <a href="{% url 'bladder:dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" title="Visão Geral & Indicadores">
+                        <i class="bi bi-speedometer2"></i> Visão Geral
                     </a>
-                {% endif %}
-                <a href="{% url 'bladder:operador' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'operador' %}active{% endif %}">
-                    <i class="bi bi-person-workspace text-warning"></i> Chão de Fábrica
-                </a>
-                <a href="{% url 'bladder:recados_criados' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'recados_criados' %}active{% endif %}">
-                    <i class="bi bi-chat-square-text-fill text-warning"></i> Recados Criados
-                </a>
-                {% if is_lider_bladder %}
-                    <a href="{% url 'bladder:cronograma' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'cronograma' %}active{% endif %}">
-                        <i class="bi bi-calendar3"></i> Calendário
+                    <!-- 2. Turno -->
+                    <a href="{% url 'bladder:operador' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'operador' %}active{% endif %}" title="Ambiente de Turno Operacional">
+                        <i class="bi bi-person-workspace text-warning"></i> Turno
                     </a>
-                    <a href="{% url 'bladder:ordens_lista' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'ordens_lista' %}active{% endif %}">
+                    <!-- 3. Ordens de Produção -->
+                    <a href="{% url 'bladder:ordens_lista' %}" class="nav-link-custom {% if request.resolver_match.url_name in 'ordens_lista,ordem_nova,ordem_detalhe' %}active{% endif %}" title="Ordens de Produção">
                         <i class="bi bi-list-check"></i> Ordens de Produção
                     </a>
-                    <a href="{% url 'bladder:ordem_nova' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'ordem_nova' %}active{% endif %}">
-                        <i class="bi bi-plus-circle-fill text-warning"></i> Nova OP
+                    <!-- 4. Estoque -->
+                    <a href="{% url 'bladder:estoque_lista' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'estoque_lista' %}active{% endif %}" title="Estoque de Bladders Acabados">
+                        <i class="bi bi-boxes text-warning"></i> Estoque
                     </a>
-                    <a href="{% url 'bladder:relatorios' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'relatorios' %}active{% endif %}">
-                        <i class="bi bi-file-earmark-bar-graph"></i> Relatórios
+                    <!-- 5. Calendário -->
+                    <a href="{% url 'bladder:cronograma' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'cronograma' %}active{% endif %}" title="Calendário de Escala e Planejamento">
+                        <i class="bi bi-calendar3"></i> Calendário
                     </a>
-                    <a href="{% url 'bladder:passagem_turno_lista' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'passagem_turno_lista' %}active{% endif %}">
-                        <i class="bi bi-arrow-left-right text-info"></i> Passagem de Turno
+                    <!-- Relatórios ocultado a pedido do cliente -->
+                {% else %}
+                    <!-- Modo Operador: Apenas Ambiente Turno (Seção 7) -->
+                    <a href="{% url 'bladder:operador' %}" class="nav-link-custom active" title="Painel Operacional do Turno">
+                        <i class="bi bi-person-workspace text-warning"></i> Turno
                     </a>
                 {% endif %}
             </div>
@@ -261,12 +419,21 @@
     <footer class="footer">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 container-fluid">
             <div>Pneus Freedom &bull; Setor de Fabricação de Bladders &bull; PCP &amp; Controle Operacional</div>
-            <div>{% include "components/developer_footer.html" with is_dark=True %}</div>
+            <div>{% include "components/developer_footer.html" with is_dark=False %}</div>
         </div>
     </footer>
 
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Padronização Permanente em Tema Claro (Diretriz do Cliente) -->
+    <script>
+        (function() {
+            try {
+                localStorage.removeItem('bladder_theme');
+            } catch (e) {}
+        })();
+    </script>
 
     <!-- Inatividade de Sessão Humana Compartilhada -->
     {% include "components/session_inactivity.html" %}
