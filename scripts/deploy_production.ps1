@@ -117,10 +117,14 @@ try {
 
 # 1.5 Django System Check (manage.py check)
 Write-Host "  Verificando integridade dos modelos e rotas Django..." -ForegroundColor Gray
-$CheckResult = & $PythonExec manage.py check 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[ERRO CRÍTICO] Falha no 'manage.py check':" -ForegroundColor Red
-    $CheckResult | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$CheckResult = & $PythonExec manage.py check
+$checkExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+
+if ($checkExit -ne 0) {
+    Write-Host "[ERRO CRÍTICO] Falha no 'manage.py check' (ExitCode: $checkExit)!" -ForegroundColor Red
     exit 1
 }
 Write-Host "  [OK] 'manage.py check' concluído com 0 erros." -ForegroundColor Green
@@ -198,10 +202,14 @@ if ($DryRun) {
     $ReqFile = Join-Path $ProjectRoot "requirements.txt"
     if (Test-Path $ReqFile) {
         Write-Host "  Atualizando dependências Python (requirements.txt)..." -ForegroundColor Gray
-        $ReqOut = & $PythonExec -m pip install -r $ReqFile --quiet --no-warn-script-location 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERRO CRÍTICO] Falha ao instalar dependências do requirements.txt:" -ForegroundColor Red
-            $ReqOut | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        & $PythonExec -m pip install -r $ReqFile --quiet --disable-pip-version-check --no-warn-script-location --trusted-host pypi.org --trusted-host files.pythonhosted.org
+        $pipExit = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+
+        if ($pipExit -ne 0) {
+            Write-Host "[ERRO CRÍTICO] Falha ao instalar dependências do requirements.txt (ExitCode: $pipExit)!" -ForegroundColor Red
             exit 1
         }
         Write-Host "  [OK] Dependências do requirements.txt atualizadas com sucesso." -ForegroundColor Green
@@ -209,35 +217,56 @@ if ($DryRun) {
 
     # 3.1 Executar migrações exclusivamente no banco default
     Write-Host "  Aplicando migrações no banco de dados 'default'..." -ForegroundColor Gray
-    $MigrateOutput = & $PythonExec manage.py migrate --database=default --noinput 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERRO CRÍTICO] Falha ao executar migrações no banco default:" -ForegroundColor Red
-        $MigrateOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $PythonExec manage.py migrate --database=default --noinput
+    $migExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+
+    if ($migExit -ne 0) {
+        Write-Host "[ERRO CRÍTICO] Falha ao executar migrações no banco default (ExitCode: $migExit)!" -ForegroundColor Red
         exit 1
     }
     Write-Host "  [OK] Migrações do banco default aplicadas com sucesso." -ForegroundColor Green
 
     # 3.2 Provisionamento idempotente de grupos e permissões
     Write-Host "  Provisionando grupos e permissões da Matrizaria..." -ForegroundColor Gray
-    $ProvOutput = & $PythonExec manage.py provisionar_grupos_matrizaria --database=default 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERRO CRÍTICO] Falha ao provisionar grupos da Matrizaria:" -ForegroundColor Red
-        $ProvOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $PythonExec manage.py provisionar_grupos_matrizaria --database=default
+    $provExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+
+    if ($provExit -ne 0) {
+        Write-Host "[ERRO CRÍTICO] Falha ao provisionar grupos da Matrizaria (ExitCode: $provExit)!" -ForegroundColor Red
         exit 1
     }
     Write-Host "  [OK] Grupos e permissões provisionados/higienizados com sucesso." -ForegroundColor Green
 
     # 3.3 Tipos padrão de atividades operacionais do Bladder
     Write-Host "  Inicializando tipos padrão de atividades operacionais do Bladder..." -ForegroundColor Gray
-    $BladderOutput = & $PythonExec manage.py popular_tipos_atividade_bladder 2>&1
-    Write-Host "  [OK] $BladderOutput" -ForegroundColor Green
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $PythonExec manage.py popular_tipos_atividade_bladder
+    $bladderExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+
+    if ($bladderExit -ne 0) {
+        Write-Host "  [AVISO] popular_tipos_atividade_bladder retornou código $bladderExit." -ForegroundColor Yellow
+    } else {
+        Write-Host "  [OK] Tipos operacionais do Bladder inicializados com sucesso." -ForegroundColor Green
+    }
 
     # 3.4 Coleta de arquivos estáticos
     Write-Host "  Coletando arquivos estáticos (collectstatic)..." -ForegroundColor Gray
-    $StaticOutput = & $PythonExec manage.py collectstatic --noinput 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "[ERRO CRÍTICO] Falha na coleta de estáticos:" -ForegroundColor Red
-        $StaticOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $PythonExec manage.py collectstatic --noinput
+    $staticExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+
+    if ($staticExit -ne 0) {
+        Write-Host "[ERRO CRÍTICO] Falha na coleta de estáticos (ExitCode: $staticExit)!" -ForegroundColor Red
         exit 1
     }
     Write-Host "  [OK] Arquivos estáticos coletados com sucesso." -ForegroundColor Green
