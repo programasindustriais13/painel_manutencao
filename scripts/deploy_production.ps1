@@ -321,78 +321,65 @@ if ($DryRun) {
     }
     Write-Host "  [DRY-RUN] Simulação de reinício de serviços / liberação de portas sem interrupção real." -ForegroundColor Yellow
 } else {
-    $ReiniciouPorGerenciador = $false
-
+    # 1. Parar serviços ou tarefas agendadas previamente
     if ($ServiceWaitress) {
-        Write-Host "  Serviço Windows '$($ServiceWaitress.Name)' detectado. Reiniciando serviço..." -ForegroundColor Gray
-        try {
-            Restart-Service -Name $ServiceWaitress.Name -Force
-            Start-Sleep -Seconds 3
-            Write-Host "  [OK] Serviço '$($ServiceWaitress.Name)' reiniciado com sucesso." -ForegroundColor Green
-            $ReiniciouPorGerenciador = $true
-        } catch {
-            Write-Host "  [AVISO] Tentando reiniciar via NSSM..." -ForegroundColor Yellow
-            try {
-                & nssm restart $ServiceWaitress.Name
-                Start-Sleep -Seconds 3
-                Write-Host "  [OK] Serviço '$($ServiceWaitress.Name)' reiniciado via NSSM." -ForegroundColor Green
-                $ReiniciouPorGerenciador = $true
-            } catch {
-                Write-Host "  [AVISO] Falha ao reiniciar serviço Windows: $_" -ForegroundColor Yellow
-            }
-        }
+        Write-Host "  Serviço Windows '$($ServiceWaitress.Name)' detectado. Parando serviço..." -ForegroundColor Gray
+        Stop-Service -Name $ServiceWaitress.Name -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
     } elseif ($TaskWaitress) {
-        Write-Host "  Tarefa Agendada 'Painel Manutencao - Waitress' detectada. Reiniciando tarefa..." -ForegroundColor Gray
-        try {
-            Stop-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
-            Start-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 3
-            Write-Host "  [OK] Tarefa Agendada 'Painel Manutencao - Waitress' reiniciada com sucesso." -ForegroundColor Green
-            $ReiniciouPorGerenciador = $true
-        } catch {
-            Write-Host "  [AVISO] Falha ao reiniciar Tarefa Agendada: $_" -ForegroundColor Yellow
-        }
+        Write-Host "  Tarefa Agendada 'Painel Manutencao - Waitress' detectada. Parando tarefa..." -ForegroundColor Gray
+        Stop-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
     }
 
-    if (-not $ReiniciouPorGerenciador) {
-        # Gerenciamento de processos standalone: verificar e liberar porta configurada
-        $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
-        if ($TcpConn) {
-            $Pids = $TcpConn.OwningProcess | Select-Object -Unique
-            Write-Host "  Processo(s) detectado(s) na porta $WaitressPort (PID: $($Pids -join ', '))." -ForegroundColor Yellow
-            foreach ($procId in $Pids) {
-                try {
-                    $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-                    if ($proc -and $proc.ProcessName -match "python") {
-                        Write-Host "  Finalizando processo anterior do Waitress (PID: $procId)..." -ForegroundColor Gray
-                        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
-                    }
-                } catch {
-                    Write-Host "  [AVISO] Não foi possível encerrar PID $procId : $_" -ForegroundColor Yellow
+    # 2. GARANTIR LIBERACAO DA PORTA 8900: Encerrar qualquer python remanescente na porta
+    $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
+    if ($TcpConn) {
+        $Pids = $TcpConn.OwningProcess | Select-Object -Unique
+        Write-Host "  Processo(s) detectado(s) na porta $WaitressPort (PID: $($Pids -join ', ')). Encerrando..." -ForegroundColor Yellow
+        foreach ($procId in $Pids) {
+            try {
+                $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
+                if ($proc -and $proc.ProcessName -match "python") {
+                    Write-Host "  Finalizando processo anterior do Waitress (PID: $procId)..." -ForegroundColor Gray
+                    Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
                 }
+            } catch {
+                Write-Host "  [AVISO] Não foi possível encerrar PID $procId : $_" -ForegroundColor Yellow
             }
-            Start-Sleep -Seconds 2
         }
+        Start-Sleep -Seconds 2
+    }
 
-        # Validar liberação da porta
-        $PortLivre = $false
-        for ($i = 0; $i -lt 10; $i++) {
-            $CheckConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
-            if (-not $CheckConn) {
-                $PortLivre = $true
-                break
-            }
-            Start-Sleep -Seconds 1
+    # 3. Validar se a porta ficou 100% livre
+    $PortLivre = $false
+    for ($i = 0; $i -lt 10; $i++) {
+        $CheckConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
+        if (-not $CheckConn) {
+            $PortLivre = $true
+            break
         }
-        if (-not $PortLivre) {
-            Write-Host "[ERRO CRÍTICO] A porta $WaitressPort continua ocupada após tentativa de liberação!" -ForegroundColor Red
-            exit 1
-        }
-        Write-Host "  [OK] Porta $WaitressPort liberada para inicialização." -ForegroundColor Green
+        Start-Sleep -Seconds 1
+    }
+    if (-not $PortLivre) {
+        Write-Host "[ERRO CRÍTICO] A porta $WaitressPort continua ocupada após tentativa de liberação!" -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "  [OK] Porta $WaitressPort liberada com sucesso." -ForegroundColor Green
 
-        # Iniciar Waitress em background se não for serviço Windows gerenciado
-        Write-Host "  Iniciando processo do servidor Waitress..." -ForegroundColor Gray
+    # 4. Iniciar novo processo com código atualizado
+    if ($ServiceWaitress) {
+        Write-Host "  Iniciando serviço Windows '$($ServiceWaitress.Name)'..." -ForegroundColor Gray
+        Start-Service -Name $ServiceWaitress.Name -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        Write-Host "  [OK] Serviço '$($ServiceWaitress.Name)' iniciado." -ForegroundColor Green
+    } elseif ($TaskWaitress) {
+        Write-Host "  Iniciando Tarefa Agendada 'Painel Manutencao - Waitress'..." -ForegroundColor Gray
+        Start-ScheduledTask -TaskName "Painel Manutencao - Waitress" -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        Write-Host "  [OK] Tarefa Agendada 'Painel Manutencao - Waitress' iniciada." -ForegroundColor Green
+    } else {
+        Write-Host "  Iniciando processo do servidor Waitress em background..." -ForegroundColor Gray
         $WaitressArgs = "-m waitress --host=$WaitressHost --port=$WaitressPort --threads=$WaitressThreads maintenance_project.wsgi:application"
         Start-Process -FilePath $PythonExec -ArgumentList $WaitressArgs -WorkingDirectory $ProjectRoot -WindowStyle Hidden
         Start-Sleep -Seconds 3
