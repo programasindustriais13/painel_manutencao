@@ -4388,4 +4388,8 @@ ARQUITETURA: SPEC-DRIVEN (SPEC_CORRECAO_CONCORRENCIA_DR201_APPEND.md)
    - Teste 3 (Lote 3 un): Lote de 3 Bladders gerou exatamente 3 linhas consecutivas (2946 a 2948) com seus respectivos lotes unitários.
    - Teste 4 (Fluxo Real da Tela): `registrar_movimentacao_multipla_estoque(..., disparar_sync=True)` disparou background thread e gravou na DR-201 (linha 2949) em 2.0s.
    - Teste 5 (Banco de Dados): Confirmação de `sincronizado_dr201=True` no sucesso e `sincronizado_dr201=False` com erro detalhado em falha simulada.
+
+4. CORREÇÃO NO PIPELINE DE DEPLOY (`scripts/deploy_production.ps1`):
+   - Identificado que o comando `Stop-ScheduledTask` no Windows não finalizava os processos filhos `python.exe` rodando o Waitress na porta 8900.
+   - Ajustado o script de deploy para SEMPRE inspecionar a porta 8900 e encerrar forçadamente qualquer processo python remanescente antes de reiniciar a Tarefa Agendada ou serviço, garantindo que o novo código em disco seja carregado em memória.
 ================================================================================
