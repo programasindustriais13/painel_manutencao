@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+import threading
 from decimal import Decimal
 import requests
 from django.conf import settings
@@ -1515,117 +1516,131 @@ def auditar_planilha_dr201():
     }
 
 
+_dr201_sync_lock = threading.Lock()
+
+
 def sincronizar_lote_movimentacoes_dr201(movimentacoes_ids, data_turno_str=None, turno_str=None):
     """
     Sincroniza uma lista de movimentações físicas de estoque com a planilha DR-201 (Google Sheets).
-    Calcula com precisão matemática a próxima linha disponível com base na Coluna A (Carimbo de data/hora),
-    gravando cada movimentação em sua própria linha sem depender de heurísticas e sem risco de sobrescrever dados.
-    Garante que cada movimentação gere uma linha individual na DR-201 com seu respectivo lote.
-    Garante que NENHUM dado existente seja sobrescrito ou apagado.
+    Utiliza append server-side (insert_data_option='INSERT_ROWS') para delegar a escolha da próxima
+    linha ao Google Sheets de forma atômica no servidor, eliminando condições de corrida com
+    threads paralelas ou com submissões concorrentes do Google Forms.
+    Utiliza _dr201_sync_lock para serialização e proteção de idempotência intra-processo.
     """
-    from .models import MovimentacaoEstoqueBladder
+    from django.db import close_old_connections
+    close_old_connections()
 
-    movs = list(MovimentacaoEstoqueBladder.objects.filter(
-        id__in=movimentacoes_ids,
-        sincronizado_dr201=False,
-        tipo__in=['ENTRADA', 'SAIDA']
-    ).select_related('produto', 'usuario').order_by('id'))
+    with _dr201_sync_lock:
+        close_old_connections()
+        from .models import MovimentacaoEstoqueBladder
 
-    if not movs:
-        return True, "Nenhuma movimentação pendente para sincronizar."
+        movs = list(MovimentacaoEstoqueBladder.objects.filter(
+            id__in=movimentacoes_ids,
+            sincronizado_dr201=False,
+            tipo__in=['ENTRADA', 'SAIDA']
+        ).select_related('produto', 'usuario').order_by('id'))
 
-    cred_path = os.path.join(settings.BASE_DIR, 'credentials.json')
-    if not os.path.exists(cred_path):
-        erro = "Arquivo credentials.json não encontrado na raiz do projeto."
-        for m in movs:
-            m.erro_sincronizacao_dr201 = erro
-            m.save(update_fields=['erro_sincronizacao_dr201'])
-        return False, erro
+        if not movs:
+            logger.info(f"DR201 sync ignorado | mov_ids={movimentacoes_ids} já sincronizados ou inexistentes.")
+            return True, "Nenhuma movimentação pendente para sincronizar."
 
-    try:
-        import gspread
-        gc = gspread.service_account(filename=cred_path)
-        sh = gc.open_by_key('1lMXlQIpxTIkTYC0kCQir029Vrvb2M1l4hWvbxvDv0YM')
-        ws = sh.worksheet('DR201')
+        cred_path = os.path.join(settings.BASE_DIR, 'credentials.json')
+        if not os.path.exists(cred_path):
+            erro = "Arquivo credentials.json não encontrado na raiz do projeto."
+            logger.error(f"DR201 sync FALHA | mov_ids={[m.id for m in movs]} | erro={erro}")
+            for m in movs:
+                m.erro_sincronizacao_dr201 = erro
+                m.save(update_fields=['erro_sincronizacao_dr201'])
+            return False, erro
 
-        novas_linhas = []
-        agora_str = timezone.localtime().strftime('%d/%m/%Y %H:%M:%S')
+        try:
+            import gspread
+            gc = gspread.service_account(filename=cred_path)
+            sh = gc.open_by_key('1lMXlQIpxTIkTYC0kCQir029Vrvb2M1l4hWvbxvDv0YM')
+            ws = sh.worksheet('DR201')
 
-        for m in movs:
-            # Data
-            if data_turno_str:
-                d_str = data_turno_str
-            else:
-                d_str = m.data_turno.strftime('%d/%m/%Y')
+            novas_linhas = []
+            agora_str = timezone.localtime().strftime('%d/%m/%Y %H:%M:%S')
 
-            # Turno
-            if turno_str:
-                t_str = turno_str
-            else:
-                hora_local = timezone.localtime(m.data_hora).hour
-                t_str = 'MANHÃ' if 6 <= hora_local < 18 else 'NOITE'
+            for m in movs:
+                # Data
+                if data_turno_str:
+                    d_str = data_turno_str
+                else:
+                    d_str = m.data_turno.strftime('%d/%m/%Y')
 
-            # Responsável Bladder (operador do sistema)
-            nome_completo = m.usuario.get_full_name().strip()
-            responsavel_nome = (nome_completo or m.usuario.first_name or m.usuario.username).strip().upper()
+                # Turno
+                if turno_str:
+                    t_str = turno_str
+                else:
+                    hora_local = timezone.localtime(m.data_hora).hour
+                    t_str = 'MANHÃ' if 6 <= hora_local < 18 else 'NOITE'
 
-            # Destino & Responsável Retirada
-            if m.tipo == 'ENTRADA':
-                destino_texto = 'Entrada de bladder para estoque'
-                responsavel_retirada = ""
-            else:  # SAIDA
-                destino_texto = 'Saída de bladder para produção'
-                responsavel_retirada = (m.destino or "").strip().upper()
+                # Responsável Bladder (operador do sistema)
+                nome_completo = m.usuario.get_full_name().strip()
+                responsavel_nome = (nome_completo or m.usuario.first_name or m.usuario.username).strip().upper()
 
-            lote_val = (m.lote_etiqueta or "").strip()
-            modelo_val = m.produto.codigo
-            obs_val = (m.justificativa or "").strip()
+                # Destino & Responsável Retirada
+                if m.tipo == 'ENTRADA':
+                    destino_texto = 'Entrada de bladder para estoque'
+                    responsavel_retirada = ""
+                else:  # SAIDA
+                    destino_texto = 'Saída de bladder para produção'
+                    responsavel_retirada = (m.destino or "").strip().upper()
 
-            novas_linhas.append([
-                agora_str,           # Col A: Carimbo de data/hora
-                d_str,               # Col B: Data
-                t_str,               # Col C: Turno
-                responsavel_nome,    # Col D: Responsável Bladder
-                destino_texto,       # Col E: Destino
-                responsavel_retirada,# Col F: Responsável pela retirada
-                lote_val,            # Col G: Lote do Bladder Vulcanizado
-                modelo_val,          # Col H: Modelo Bladder
-                obs_val,             # Col I: Observações (preenchida pelo operador)
-                "",                  # Col J: Foto da etiqueta
-            ])
+                lote_val = (m.lote_etiqueta or "").strip()
+                modelo_val = m.produto.codigo
+                obs_val = (m.justificativa or "").strip()
 
-        # Localiza a próxima linha disponível com precisão absoluta através da coluna A (Carimbo de Data/Hora)
-        # Evita que heurísticas do Sheets sobrescrevam a mesma linha em planilhas vinculadas a Google Forms
-        col_carimbos = ws.col_values(1)
-        proxima_linha = len(col_carimbos) + 1
-        linha_fim = proxima_linha + len(novas_linhas) - 1
+                novas_linhas.append([
+                    agora_str,            # Col A: Carimbo de data/hora
+                    d_str,                # Col B: Data
+                    t_str,                # Col C: Turno
+                    responsavel_nome,     # Col D: Responsável Bladder
+                    destino_texto,        # Col E: Destino
+                    responsavel_retirada, # Col F: Responsável pela retirada
+                    lote_val,             # Col G: Lote do Bladder Vulcanizado
+                    modelo_val,           # Col H: Modelo Bladder
+                    obs_val,              # Col I: Observações (preenchida pelo operador)
+                    "",                   # Col J: Foto da etiqueta
+                ])
 
-        # Expande o grid de linhas se necessário
-        if linha_fim > ws.row_count:
-            linhas_adicionais = max(100, len(novas_linhas))
-            ws.add_rows(linhas_adicionais)
+            # Inserção server-side atômica no Google Sheets (NÃO calcula próxima linha no Python)
+            response = ws.append_rows(
+                novas_linhas,
+                value_input_option='USER_ENTERED',
+                insert_data_option='INSERT_ROWS',
+                table_range='A:J',
+                include_values_in_response=True,
+            )
 
-        # Atualiza exatamente o intervalo novo (ex: A2934:J2934), saltando linha a linha com 100% de garantia
-        range_destino = f"A{proxima_linha}:J{linha_fim}"
-        ws.update(values=novas_linhas, range_name=range_destino, value_input_option='USER_ENTERED')
+            # Rastreabilidade e log do range atualizado retornado pela API
+            updates = response.get('updates', {}) if isinstance(response, dict) else {}
+            updated_range = updates.get('updatedRange') or (response.get('tableRange') if isinstance(response, dict) else '') or f"{len(novas_linhas)} linha(s)"
 
-        agora = timezone.now()
-        for m in movs:
-            m.sincronizado_dr201 = True
-            m.data_sincronizacao_dr201 = agora
-            m.erro_sincronizacao_dr201 = None
-            m.save(update_fields=['sincronizado_dr201', 'data_sincronizacao_dr201', 'erro_sincronizacao_dr201'])
+            agora = timezone.now()
+            with transaction.atomic():
+                for m in movs:
+                    m.sincronizado_dr201 = True
+                    m.data_sincronizacao_dr201 = agora
+                    m.erro_sincronizacao_dr201 = None
+                    m.save(update_fields=['sincronizado_dr201', 'data_sincronizacao_dr201', 'erro_sincronizacao_dr201'])
 
-        logger.info(f"{len(novas_linhas)} linha(s) sincronizada(s) na DR-201 com sucesso.")
-        return True, f"{len(novas_linhas)} linha(s) adicionada(s) à DR-201 com sucesso."
+            mov_ids = [m.id for m in movs]
+            logger.info(f"DR201 sync OK | mov_ids={mov_ids} | rows={len(novas_linhas)} | range={updated_range}")
+            return True, f"{len(novas_linhas)} linha(s) adicionada(s) à DR-201 com sucesso no range {updated_range}."
 
-    except Exception as e:
-        logger.warning(f"Erro ao sincronizar lote na DR-201: {e}")
-        for m in movs:
-            m.sincronizado_dr201 = False
-            m.erro_sincronizacao_dr201 = str(e)[:500]
-            m.save(update_fields=['sincronizado_dr201', 'erro_sincronizacao_dr201'])
-        return False, str(e)
+        except Exception as e:
+            mov_ids = [m.id for m in movs]
+            logger.error(f"DR201 sync FALHA | mov_ids={mov_ids} | rows={len(movs)} | erro={e}")
+            with transaction.atomic():
+                for m in movs:
+                    m.sincronizado_dr201 = False
+                    m.erro_sincronizacao_dr201 = str(e)[:500]
+                    m.save(update_fields=['sincronizado_dr201', 'erro_sincronizacao_dr201'])
+            return False, str(e)
+        finally:
+            close_old_connections()
 
 
 def disparar_sincronizacao_lote_dr201_async(movimentacoes_ids, data_turno_str=None, turno_str=None):
@@ -1633,13 +1648,13 @@ def disparar_sincronizacao_lote_dr201_async(movimentacoes_ids, data_turno_str=No
     Dispara a sincronização de um lote de movimentações em segundo plano (background thread).
     Garante que a resposta HTTP do operador seja instantânea (<50ms) sem travar a interface.
     """
-    import threading
     thread = threading.Thread(
         target=sincronizar_lote_movimentacoes_dr201,
         args=(movimentacoes_ids, data_turno_str, turno_str),
         daemon=True
     )
     thread.start()
+    return thread
 
 
 def sincronizar_movimentacao_dr201(movimentacao):

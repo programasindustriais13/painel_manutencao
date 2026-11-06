@@ -4360,3 +4360,32 @@ SEÇÃO 15: REESTRUTURAÇÃO DO MÓDULO BLADDER, ESTOQUE DR-201 E INTEGRAÇÕES 
    - `git diff --check`: 0 erros de formatação.
    - Testes automatizados suspensos para rodada posterior (status: IMPLEMENTADA — AGUARDANDO TESTES).
 ================================================================================
+
+================================================================================
+ATUALIZAÇÃO: CORREÇÃO CRÍTICA DE CONCORRÊNCIA E SOBRESCRITA DR-201 (GOOGLE SHEETS APPEND)
+DATA: 06/11/2026
+ARQUITETURA: SPEC-DRIVEN (SPEC_CORRECAO_CONCORRENCIA_DR201_APPEND.md)
+================================================================================
+
+1. PROBLEMA CORRIGIDO:
+   - A sincronização assíncrona calculava a próxima linha no lado Python via `col_values(1)` e gravava com `ws.update()`.
+   - Disparos simultâneos em threads paralelas causavam condição de corrida (race condition), fazendo com que uma thread calculasse o mesmo número de linha que a outra e sobrescrevesse registros na planilha DR-201. Além disso, havia risco de colisão com submissões ativas do Google Forms.
+
+2. ALTERAÇÕES IMPLEMENTADAS:
+   - `bladder/services.py`:
+     - Eliminado 100% o cálculo em Python de próxima linha (`col_values(1)`, `proxima_linha`, `linha_fim`, `ws.update`).
+     - Adicionada inserção server-side atômica via Google Sheets API:
+       `ws.append_rows(novas_linhas, value_input_option='USER_ENTERED', insert_data_option='INSERT_ROWS', table_range='A:J', include_values_in_response=True)`
+     - Implementado lock de sincronização intra-processo (`_dr201_sync_lock = threading.Lock()`) para serializar requests locais e proteger conexões.
+     - Implementada garantia de idempotência dentro do lock: re-consulta de movimentações pendentes (`sincronizado_dr201=False`), descartando envios duplicados caso outra thread tenha concluído.
+     - Adicionado log estruturado obrigatório:
+       `DR201 sync OK | mov_ids=[...] | rows=... | range=...`
+     - Atualização atômica do banco após confirmação: `sincronizado_dr201=True`, `data_sincronizacao_dr201` e `erro_sincronizacao_dr201=None`.
+
+3. SUÍTE DE TESTES OBRIGATÓRIOS (5/5 PASSARAM NO GOOGLE SHEETS REAL):
+   - Teste 1 (Sequencial): Dois registros sequenciais alocados em linhas consecutivas (2942 e 2943). Histórico preservado intacto.
+   - Teste 2 (Concorrente): Dois disparos paralelos via `ThreadPoolExecutor(max_workers=2)` alocados em duas linhas distintas (2944 e 2945) sem sobrescrita.
+   - Teste 3 (Lote 3 un): Lote de 3 Bladders gerou exatamente 3 linhas consecutivas (2946 a 2948) com seus respectivos lotes unitários.
+   - Teste 4 (Fluxo Real da Tela): `registrar_movimentacao_multipla_estoque(..., disparar_sync=True)` disparou background thread e gravou na DR-201 (linha 2949) em 2.0s.
+   - Teste 5 (Banco de Dados): Confirmação de `sincronizado_dr201=True` no sucesso e `sincronizado_dr201=False` com erro detalhado em falha simulada.
+================================================================================
