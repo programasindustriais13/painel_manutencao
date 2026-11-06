@@ -6,7 +6,10 @@ echo ======================================================================
 echo   PIPELINE DE DEPLOY AUTOMATIZADO - PNEUS FREEDOM
 echo ======================================================================
 echo.
-echo Executando deploy seguro apos o git pull...
+echo Sincronizando repositorio a partir do GitHub (git pull origin main)...
+git pull origin main
+echo.
+echo Executando deploy seguro...
 echo.
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\deploy_production.ps1" %*

@@ -103,16 +103,26 @@ if (Test-Path $CredFile) {
 
 # 1.4 Estado do Repositório Git
 try {
-    $GitBranch = git branch --show-current 2>&1
+    $GitBranch = (git branch --show-current 2>&1).ToString().Trim()
+    if (-not $GitBranch -or $GitBranch -match "fatal") {
+        $GitBranch = "main"
+    }
+
+    if (-not $CheckOnly -and -not $DryRun) {
+        Write-Host "  Atualizando codigo a partir do repositorio remoto (git pull origin $GitBranch)..." -ForegroundColor Yellow
+        $PullResult = git pull origin $GitBranch 2>&1
+        $PullResult | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+    }
+
     $GitCommit = git log -n 1 --oneline 2>&1
     $GitStatus = git status --short 2>&1
-    Write-Host "  [OK] Git Branch: $GitBranch | Commit: $GitCommit" -ForegroundColor Green
+    Write-Host "  [OK] Git Branch: $GitBranch | Commit Atual: $GitCommit" -ForegroundColor Green
     if ($GitStatus) {
         Write-Host "  [AVISO] Existem alterações não commitadas na árvore de trabalho:" -ForegroundColor Yellow
         $GitStatus | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
     }
 } catch {
-    Write-Host "  [AVISO] Não foi possível consultar o Git: $_" -ForegroundColor Yellow
+    Write-Host "  [AVISO] Não foi possível consultar ou atualizar o Git: $_" -ForegroundColor Yellow
 }
 
 # 1.5 Django System Check (manage.py check)
