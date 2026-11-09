@@ -275,13 +275,12 @@ class CaldeiraFastReader:
             bucket = min(49, (ts - start_ms) * 50 // max(1, end_ms - start_ms + 1))
             chart_rows.setdefault(bucket, row)
             vacuum = _number(row["values"].get("pressao_vacuo"))
-            if vacuum is not None and vacuum <= 0:
+            if vacuum is not None:
                 vacuum_bucket = ts // 300000 * 300000
-                strength = abs(vacuum)
-                current = vacuum_buckets.setdefault(vacuum_bucket, [0.0, 0, strength])
-                current[0] += strength
+                current = vacuum_buckets.setdefault(vacuum_bucket, [0.0, 0, vacuum])
+                current[0] += vacuum
                 current[1] += 1
-                current[2] = min(current[2], strength)
+                current[2] = max(current[2], vacuum)
         # O totalizador usa as leituras reais, inclusive leituras repetidas no mesmo ts.
         cond_id = next((dp for dp, key in id_to_key.items() if key == "volume_condensado"), None)
         if cond_id is not None:
@@ -319,7 +318,7 @@ class CaldeiraFastReader:
         id_to_key, missing = cls._resolved()
         start_ms, end_ms = int(start_dt.timestamp() * 1000), int(end_dt.timestamp() * 1000)
         ids_key = ",".join(map(str, sorted(id_to_key)))
-        cache_key = f"caldeira-summary-v4:{start_ms}:{end_ms}:{ids_key}"
+        cache_key = f"caldeira-summary-v6:{start_ms}:{end_ms}:{ids_key}"
         saved = report_cache.get(cache_key)
         if saved is not None:
             return saved
@@ -334,7 +333,7 @@ class CaldeiraFastReader:
         chart_rows = []
         vacuum_buckets = {}
         for segment_start, segment_end, full_day in cls._segments(start_dt, end_dt):
-            segment_key = (f"caldeira-day-v4:{int(segment_start.timestamp() * 1000)}:"
+            segment_key = (f"caldeira-day-v6:{int(segment_start.timestamp() * 1000)}:"
                            f"{int(segment_end.timestamp() * 1000)}:{ids_key}")
             part = report_cache.get(segment_key) if full_day else None
             if part is None:
@@ -344,11 +343,11 @@ class CaldeiraFastReader:
             count += part["count"]
             raw_count += part["raw_count"]
             chart_rows.extend(part["chart_rows"])
-            for bucket, (value_sum, value_count, minimum) in part["vacuum_buckets"].items():
-                current = vacuum_buckets.setdefault(bucket, [0.0, 0, minimum])
+            for bucket, (value_sum, value_count, maximum) in part["vacuum_buckets"].items():
+                current = vacuum_buckets.setdefault(bucket, [0.0, 0, maximum])
                 current[0] += value_sum
                 current[1] += value_count
-                current[2] = min(current[2], minimum)
+                current[2] = max(current[2], maximum)
             for key in variables:
                 _merge_acc(variables[key], part["variables"][key])
             for key in differences:
@@ -417,18 +416,18 @@ class CaldeiraFastReader:
         charts = CaldeiraHistoricalService._build_chart_datasets(chart_rows, cond_stats)
         display_bucket_ms = max(300000, math.ceil((end_ms - start_ms) / (240 * 300000)) * 300000)
         vacuum_display = {}
-        for bucket, (value_sum, value_count, minimum) in vacuum_buckets.items():
+        for bucket, (value_sum, value_count, maximum) in vacuum_buckets.items():
             display_bucket = bucket // display_bucket_ms * display_bucket_ms
-            current = vacuum_display.setdefault(display_bucket, [0.0, 0, minimum])
+            current = vacuum_display.setdefault(display_bucket, [0.0, 0, maximum])
             current[0] += value_sum
             current[1] += value_count
-            current[2] = min(current[2], minimum)
+            current[2] = max(current[2], maximum)
         vacuum_times = sorted(vacuum_display)
         charts["chart_6_vacuo"] = {
             "timestamps": vacuum_times,
             "labels": [_local_datetime(ts).strftime("%d/%m %H:%M") for ts in vacuum_times],
-            "strength_avg": [round(vacuum_display[ts][0] / vacuum_display[ts][1], 3) for ts in vacuum_times],
-            "strength_min": [round(vacuum_display[ts][2], 3) for ts in vacuum_times],
+            "vacuum_avg": [round(vacuum_display[ts][0] / vacuum_display[ts][1], 3) for ts in vacuum_times],
+            "vacuum_max": [round(vacuum_display[ts][2], 3) for ts in vacuum_times],
         }
         result = {"total_records": count, "raw_points_count": raw_count,
                   "variables_found_count": len(id_to_key), "variables_missing": missing,

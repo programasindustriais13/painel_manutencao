@@ -1,9 +1,11 @@
 import json
-from datetime import timedelta
+from urllib.parse import urlencode
+from datetime import timedelta, datetime, timezone as dt_timezone
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.utils import timezone
 from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse, FileResponse, Http404
+from django.urls import reverse
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger, Page
 from django.db import transaction
 from django.db.models import Q
@@ -14,6 +16,8 @@ from .services_calandra import CalandraHistoricalService
 from .services_caldeira import CaldeiraHistoricalService, CALDEIRA_VARIABLES_CONFIG
 from .services_caldeira_fast import CaldeiraFastReader
 from .services_caldeira_insights import CaldeiraInsightsService, PRESS_STATUS_XIDS, DOOR_XID
+from .caldeira_insights_jobs import job_key as caldeira_insights_job_key, read_result as read_caldeira_insights_result, read_state as read_caldeira_insights_state, ensure_job as ensure_caldeira_insights_job
+from .caldeira_insights_excel import build_insights_excel
 from .caldeira_export_jobs import start_job as start_caldeira_export_job, read_job as read_caldeira_export_job, output_path as caldeira_export_output_path
 from .xid_configuration import XIDRegistry, XIDDiagnosticsService, XIDTestService
 from .models import (
@@ -1197,15 +1201,37 @@ def caldeira_historical_report(request):
     return render(request, "production/caldeira_report.html", context)
 
 
-@lider_producao_required
-def caldeira_performance(request):
-    """Análise contextual independente do filtro do histórico geral."""
+def _caldeira_performance_filters(request):
+    """Mantém os filtros e o instante da análise iguais na tela e no Excel."""
     window = request.GET.get("janela", "24h")
-    if window not in ("24h", "7d"):
+    if window not in ("24h", "7d", "personalizado"):
         window = "24h"
     now_local = timezone.localtime()
     end_dt = now_local.replace(minute=(now_local.minute // 5) * 5, second=0, microsecond=0)
-    start_dt = end_dt - (timedelta(days=7) if window == "7d" else timedelta(hours=24))
+    if window == "personalizado":
+        try:
+            start_value = datetime.fromisoformat(request.GET.get("inicio", ""))
+            end_value = datetime.fromisoformat(request.GET.get("fim", ""))
+            if (timezone.is_aware(start_value) or timezone.is_aware(end_value)
+                    or start_value.second or start_value.microsecond
+                    or end_value.second or end_value.microsecond):
+                raise ValueError
+            start_dt = timezone.make_aware(start_value)
+            end_dt = timezone.make_aware(end_value)
+            if not start_dt < end_dt <= now_local or end_dt - start_dt > timedelta(days=CaldeiraInsightsService.MAX_DAYS):
+                raise ValueError
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Informe início e fim válidos: o fim deve ser posterior ao início, não pode estar no futuro e o intervalo máximo é de 31 dias.") from exc
+    else:
+        try:
+            snapshot_ms = int(request.GET.get("fim_ms", ""))
+            snapshot = timezone.localtime(datetime.fromtimestamp(snapshot_ms / 1000, tz=dt_timezone.utc))
+            if not end_dt - timedelta(hours=2) <= snapshot <= end_dt or snapshot.second or snapshot.minute % 5:
+                raise ValueError
+            end_dt = snapshot.replace(microsecond=0)
+        except (ValueError, OverflowError):
+            pass
+        start_dt = end_dt - (timedelta(days=7) if window == "7d" else timedelta(hours=24))
     try:
         drop_bar = float(request.GET.get("queda_bar", "1.0").replace(",", "."))
         if not 0.2 <= drop_bar <= 3.0:
@@ -1220,7 +1246,44 @@ def caldeira_performance(request):
         min_minutes = 2
     settings_obj = CaldeiraAnalysisSettings.objects.filter(pk=1).first() or CaldeiraAnalysisSettings(pk=1)
     floor = float(settings_obj.operating_pressure_floor_bar) if settings_obj.operating_pressure_floor_bar is not None else None
-    analysis = CaldeiraInsightsService.analyze(start_dt, end_dt, drop_bar, min_minutes, floor)
+    return window, start_dt, end_dt, drop_bar, min_minutes, settings_obj, floor
+
+
+def _caldeira_performance_query(window, start_dt, end_dt, drop_bar, min_minutes):
+    params = {"janela": window, "queda_bar": drop_bar, "duracao_min": min_minutes}
+    if window == "personalizado":
+        params.update({"inicio": timezone.localtime(start_dt).strftime("%Y-%m-%dT%H:%M"),
+                       "fim": timezone.localtime(end_dt).strftime("%Y-%m-%dT%H:%M")})
+    else:
+        params["fim_ms"] = int(end_dt.timestamp() * 1000)
+    return urlencode(params)
+
+
+@lider_producao_required
+def caldeira_performance(request):
+    """Mostra o resultado pronto sem bloquear a requisição no histórico SCADA."""
+    try:
+        window, start_dt, end_dt, drop_bar, min_minutes, settings_obj, floor = _caldeira_performance_filters(request)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect("production:caldeira_performance")
+    key = caldeira_insights_job_key(start_dt, end_dt, drop_bar, min_minutes, floor, settings_obj.updated_at)
+    analysis = read_caldeira_insights_result(key)
+    if analysis is None:
+        ensure_caldeira_insights_job(key, start_dt, end_dt, drop_bar, min_minutes, floor,
+                                    retry=request.GET.get("retry") == "1")
+        state = read_caldeira_insights_state(key) or {}
+        query = _caldeira_performance_query(window, start_dt, end_dt, drop_bar, min_minutes)
+        refresh_url = f"{reverse('production:caldeira_performance')}?{query}"
+        response = render(request, "production/caldeira_performance_loading.html", {
+            "state": state, "refresh_url": refresh_url, "retry_url": f"{refresh_url}&retry=1",
+            "window": window, "start_dt": start_dt, "end_dt": end_dt,
+            "start_input": timezone.localtime(start_dt).strftime("%Y-%m-%dT%H:%M"),
+            "end_input": timezone.localtime(end_dt).strftime("%Y-%m-%dT%H:%M"),
+            "drop_bar": drop_bar, "min_minutes": min_minutes,
+        })
+        response["Cache-Control"] = "no-store"
+        return response
     if analysis["above_pmta"]:
         maintenance_advice = ("Leitura acima da PMTA da placa: confirme o instrumento e acione imediatamente "
                               "o responsável técnico conforme o procedimento da instalação.")
@@ -1254,6 +1317,9 @@ def caldeira_performance(request):
     return render(request, "production/caldeira_performance.html", {
         "analysis": analysis,
         "analysis_json": json.dumps({"hours": analysis["hours"]}),
+        "export_query": _caldeira_performance_query(window, start_dt, end_dt, drop_bar, min_minutes),
+        "start_input": timezone.localtime(start_dt).strftime("%Y-%m-%dT%H:%M"),
+        "end_input": timezone.localtime(end_dt).strftime("%Y-%m-%dT%H:%M"),
         "window": window,
         "settings_obj": settings_obj,
         "settings_form": CaldeiraAnalysisSettingsForm(instance=settings_obj),
@@ -1261,6 +1327,25 @@ def caldeira_performance(request):
         "maintenance_advice": maintenance_advice,
         "maintenance_level": maintenance_level,
     })
+
+
+@lider_producao_required
+def caldeira_performance_excel(request):
+    try:
+        window, start_dt, end_dt, drop_bar, min_minutes, settings_obj, floor = _caldeira_performance_filters(request)
+    except ValueError as exc:
+        messages.error(request, str(exc))
+        return redirect("production:caldeira_performance")
+    key = caldeira_insights_job_key(start_dt, end_dt, drop_bar, min_minutes, floor, settings_obj.updated_at)
+    analysis = read_caldeira_insights_result(key)
+    if analysis is None:
+        ensure_caldeira_insights_job(key, start_dt, end_dt, drop_bar, min_minutes, floor)
+        query = _caldeira_performance_query(window, start_dt, end_dt, drop_bar, min_minutes)
+        return redirect(f"{reverse('production:caldeira_performance')}?{query}")
+    response = FileResponse(build_insights_excel(analysis),
+                            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="caldeira_desempenho_{end_dt:%Y%m%d_%H%M}.xlsx"'
+    return response
 
 
 @superuser_required

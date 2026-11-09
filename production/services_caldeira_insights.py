@@ -55,7 +55,7 @@ def _pearson(pairs):
 
 
 class CaldeiraInsightsService:
-    MAX_DAYS = 7
+    MAX_DAYS = 31
 
     @classmethod
     def _resolve(cls):
@@ -102,7 +102,7 @@ class CaldeiraInsightsService:
         start_ms, end_ms = int(start_dt.timestamp() * 1000), int(end_dt.timestamp() * 1000)
         signature = sha256(repr((start_ms, end_ms, sorted(ids.items()), drop_bar,
                                  min_minutes, operating_floor_bar)).encode()).hexdigest()
-        cache_key = f"caldeira-insights-v1:{signature}"
+        cache_key = f"caldeira-insights-v2:{signature}"
         cached = report_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -111,12 +111,19 @@ class CaldeiraInsightsService:
         hours = defaultdict(lambda: {"active_ms": 0, "press_covered_ms": 0, "cond_liters": 0.0, "cond_reads": 0,
                                      "cond_deltas": 0,
                                      "pressure_sum": 0.0, "pressure_count": 0, "pressure_min": None,
-                                     "door_openings": 0, "drop_count": 0, "below_floor_count": 0})
+                                     "door_openings": 0, "door_open_ms": 0,
+                                     "drop_count": 0, "below_floor_count": 0})
         shifts = defaultdict(lambda: {"door_openings": 0, "drop_count": 0,
-                                      "door_near_drops": 0, "pressure_samples": 0})
+                                      "door_near_drops": 0, "pressure_samples": 0,
+                                      "door_open_ms": 0, "door_complete_count": 0,
+                                      "door_duration_sum_ms": 0, "door_quick_count": 0,
+                                      "door_long_count": 0, "door_long_sum_ms": 0,
+                                      "drop_pressure_min": None, "drop_magnitude_max": None})
         previous_cond = state.get("condensate")
         previous_door = state.get("door")
         door_has_data = previous_door is not None
+        door_open_started = None
+        door_events = []
         last_ts = start_ms
         pressure_peak = deque()
         drop_started = None
@@ -137,6 +144,9 @@ class CaldeiraInsightsService:
                     active = sum(state[key] is True for key in press_keys)
                     hours[hour_start]["active_ms"] += active * duration
                     hours[hour_start]["press_covered_ms"] += duration
+                if state.get("door") is True:
+                    hours[hour_start]["door_open_ms"] += duration
+                    shifts[_shift_key(begin)]["door_open_ms"] += duration
                 begin = segment_end
 
         def finish_drop(end_ts):
@@ -144,15 +154,45 @@ class CaldeiraInsightsService:
             if drop_started is not None and end_ts - drop_started >= min_minutes * 60000:
                 shift = _shift_key(drop_started)
                 shifts[shift]["drop_count"] += 1
-                if drop_context[1]:
+                if drop_context["door_near"]:
                     shifts[shift]["door_near_drops"] += 1
+                minimum = drop_context["minimum"]
+                magnitude = round(drop_context["peak"] - minimum, 2)
+                shift_data = shifts[shift]
+                shift_data["drop_pressure_min"] = (minimum if shift_data["drop_pressure_min"] is None
+                                                   else min(shift_data["drop_pressure_min"], minimum))
+                shift_data["drop_magnitude_max"] = (magnitude if shift_data["drop_magnitude_max"] is None
+                                                    else max(shift_data["drop_magnitude_max"], magnitude))
                 hours[drop_started // 3600000 * 3600000]["drop_count"] += 1
                 local_started = timezone.localtime(datetime.fromtimestamp(drop_started / 1000, tz=timezone.utc))
                 drop_events.append({"ts": drop_started, "time_label": local_started.strftime("%d/%m %H:%M"),
                                     "duration_min": round((end_ts - drop_started) / 60000, 1),
-                                    "active_presses": drop_context[0], "door_near": drop_context[1],
+                                    "peak_pressure": round(drop_context["peak"], 2),
+                                    "minimum_pressure": round(minimum, 2), "drop_bar": magnitude,
+                                    "active_presses": drop_context["active_presses"],
+                                    "door_near": drop_context["door_near"],
                                     "shift": shift[1]})
             drop_started = drop_context = None
+
+        def finish_door(end_ts):
+            nonlocal door_open_started
+            if door_open_started is not None and end_ts >= door_open_started:
+                duration = end_ts - door_open_started
+                shift = _shift_key(door_open_started)
+                shift_data = shifts[shift]
+                shift_data["door_complete_count"] += 1
+                shift_data["door_duration_sum_ms"] += duration
+                if duration < 60000:
+                    shift_data["door_quick_count"] += 1
+                else:
+                    shift_data["door_long_count"] += 1
+                    shift_data["door_long_sum_ms"] += duration
+                local_start = timezone.localtime(datetime.fromtimestamp(door_open_started / 1000, tz=timezone.utc))
+                door_events.append({"ts": door_open_started, "time_label": local_start.strftime("%d/%m %H:%M:%S"),
+                                    "duration_seconds": round(duration / 1000),
+                                    "duration_min": round(duration / 60000, 1),
+                                    "quick": duration < 60000, "shift": shift[1]})
+            door_open_started = None
 
         for dp_id, _, raw_value, ts, _ in CaldeiraFastReader._records(ids, start_ms, end_ms):
             add_interval(last_ts, ts)
@@ -167,6 +207,11 @@ class CaldeiraInsightsService:
                     shifts[_shift_key(ts)]["door_openings"] += 1
                     hours[ts // 3600000 * 3600000]["door_openings"] += 1
                     latest_door_open = ts
+                    door_open_started = ts
+                elif previous_door is True and current is False:
+                    finish_door(ts)
+                elif current is None:
+                    door_open_started = None
                 previous_door = current
                 state[key] = current
             elif key == "condensate":
@@ -207,7 +252,11 @@ class CaldeiraInsightsService:
                 if below and drop_started is None:
                     active = sum(state.get(p) is True for p in press_keys) if all(state.get(p) is not None for p in press_keys) else None
                     near_door = latest_door_open is not None and 0 <= ts - latest_door_open <= 15 * 60000
-                    drop_started, drop_context = ts, (active, near_door)
+                    drop_started = ts
+                    drop_context = {"active_presses": active, "door_near": near_door,
+                                    "peak": pressure_peak[0][1], "minimum": pressure}
+                elif below and drop_context is not None:
+                    drop_context["minimum"] = min(drop_context["minimum"], pressure)
                 elif not below and drop_started is not None:
                     finish_drop(ts)
 
@@ -233,7 +282,9 @@ class CaldeiraInsightsService:
                               "cond_liters": round(row["cond_liters"], 1) if row["cond_deltas"] else None,
                               "pressure_avg": round(row["pressure_sum"] / row["pressure_count"], 2) if row["pressure_count"] else None,
                               "pressure_min": round(row["pressure_min"], 2) if row["pressure_min"] is not None else None,
-                              "door_openings": row["door_openings"], "drop_count": row["drop_count"],
+                              "door_openings": row["door_openings"],
+                              "door_open_minutes": round(row["door_open_ms"] / 60000, 1),
+                              "drop_count": row["drop_count"],
                               "pressure_samples": row["pressure_count"]})
             cursor += 3600000
         correlation = _pearson(correlation_pairs)
@@ -256,15 +307,25 @@ class CaldeiraInsightsService:
                 covered_hours = overlap.total_seconds() / 3600
                 if covered_hours > 0:
                     values = shifts[(current_date.isoformat(), label)]
-                    shift_rows.append({"date": current_date.isoformat(), "label": label,
+                    shift_rows.append({"date": current_date.isoformat(),
+                                       "date_label": current_date.strftime("%d/%m/%Y"), "label": label,
                                        "covered_hours": round(covered_hours, 1),
                                        "partial": covered_hours < 11.99,
                                        "drops_per_12h": round(values["drop_count"] * 12 / covered_hours, 1)
                                        if values["pressure_samples"] else None,
+                                       "door_open_minutes": round(values["door_open_ms"] / 60000, 1),
+                                       "door_average_minutes": round(values["door_duration_sum_ms"] / values["door_complete_count"] / 60000, 1)
+                                       if values["door_complete_count"] else None,
+                                       "door_long_average_minutes": round(values["door_long_sum_ms"] / values["door_long_count"] / 60000, 1)
+                                       if values["door_long_count"] else None,
                                        **values})
             current_date += timedelta(days=1)
-        result = {"hours": hour_rows, "shifts": shift_rows, "drops": drop_events[-40:][::-1],
+        result = {"hours": hour_rows, "shifts": shift_rows, "drops": drop_events[::-1],
+                "door_events": door_events[::-1],
                 "drop_total": len(drop_events), "door_available": door_available and door_has_data,
+                "door_open_minutes": round(sum(row["door_open_ms"] for row in hours.values()) / 60000, 1),
+                "door_average_minutes": round(sum(event["duration_seconds"] for event in door_events) / len(door_events) / 60, 1)
+                if door_events else None,
                 "pressure_samples": sum(row["pressure_samples"] for row in hour_rows),
                 "door_openings": sum(row["door_openings"] for row in hour_rows),
                 "press_count": len(press_keys), "press_total": len(PRESS_STATUS_XIDS),

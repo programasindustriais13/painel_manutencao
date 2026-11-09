@@ -1,0 +1,48 @@
+{% extends "production/base_production.html" %}
+{% load l10n %}
+{% block title %}Preparando análise da caldeira{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width: 900px;">
+    <a href="{% url 'production:caldeira_report' %}" class="text-decoration-none">← Voltar ao histórico da caldeira</a>
+    <div class="card border-0 shadow-sm p-4 mt-3" role="status">
+        <h1 class="h4 fw-bold">Análise da caldeira</h1>
+        <p class="text-muted mb-3">{{ start_dt|date:"d/m/Y H:i" }} até {{ end_dt|date:"d/m/Y H:i" }}</p>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            <a class="btn btn-sm {% if window == '24h' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=24h&queda_bar={{ drop_bar|unlocalize }}&duracao_min={{ min_minutes }}">Últimas 24 horas</a>
+            <a class="btn btn-sm {% if window == '7d' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=7d&queda_bar={{ drop_bar|unlocalize }}&duracao_min={{ min_minutes }}">Últimos 7 dias</a>
+        </div>
+        <form method="get" class="row g-2 align-items-end mb-3" id="insights-period-form">
+            <input type="hidden" name="janela" value="personalizado">
+            <input type="hidden" name="queda_bar" value="{{ drop_bar|unlocalize }}">
+            <input type="hidden" name="duracao_min" value="{{ min_minutes }}">
+            <div class="col-sm-5"><label for="loading-inicio" class="form-label small fw-semibold">Data e hora inicial</label><input id="loading-inicio" class="form-control form-control-sm" type="datetime-local" name="inicio" value="{{ start_input }}" required></div>
+            <div class="col-sm-5"><label for="loading-fim" class="form-label small fw-semibold">Data e hora final</label><input id="loading-fim" class="form-control form-control-sm" type="datetime-local" name="fim" value="{{ end_input }}" required></div>
+            <div class="col-sm-2"><button class="btn btn-warning btn-sm w-100">Filtrar período</button></div>
+            <div class="col-12 small text-muted">Intervalo máximo de 31 dias.</div>
+        </form>
+        {% if state.status == 'failed' %}
+            <p>Não foi possível concluir a análise. Tente novamente ou verifique o registro do processamento.</p>
+            <a class="btn btn-warning" href="{{ retry_url }}">Tentar novamente</a>
+        {% else %}
+            <div class="d-flex align-items-center gap-3"><div class="spinner-border text-primary" aria-hidden="true"></div><span>Organizando as leituras. Esta página será atualizada automaticamente.</span></div>
+            <a class="btn btn-outline-secondary mt-3 align-self-start" href="{{ refresh_url }}">Atualizar agora</a>
+        {% endif %}
+    </div>
+</div>
+{% if state.status != 'failed' %}
+<script>
+let periodEdited = false;
+document.querySelectorAll('#insights-period-form input[type="datetime-local"]').forEach(input => {
+    input.addEventListener('input', () => { periodEdited = true; });
+});
+function refreshInsights() {
+    if (periodEdited || document.querySelector('#insights-period-form:focus-within')) {
+        window.setTimeout(refreshInsights, 5000);
+        return;
+    }
+    window.location.replace('{{ refresh_url|escapejs }}');
+}
+window.setTimeout(refreshInsights, 5000);
+</script>
+{% endif %}
+{% endblock %}

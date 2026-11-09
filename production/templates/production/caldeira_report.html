@@ -359,12 +359,6 @@
         </div>
     </a>
 
-    <!-- Informative Engineering Note -->
-    <div class="info-note-box mb-4">
-        <i class="bi bi-info-circle-fill text-warning me-1"></i>
-        <strong>Nota de Interpretação:</strong> Oscilações de pressão podem ocorrer quando várias prensas ou cavidades solicitam vapor simultaneamente. Este relatório apresenta o comportamento medido e não classifica automaticamente uma oscilação como falha. As linhas possuem capacidades instaladas diferentes: até 14 cavidades nas prensas 1 a 7 e até 18 cavidades nas prensas 8 a 12.
-    </div>
-
     <!-- Gráficos de acompanhamento -->
     <div class="row g-4 mb-4">
         
@@ -433,11 +427,10 @@
             <div class="chart-container-card">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-speedometer text-danger me-1"></i>5. Força do Vácuo ao Longo do Tempo
+                        <i class="bi bi-speedometer text-danger me-1"></i>5. Pressão da Unidade de Vácuo
                     </h6>
-                    <span class="badge bg-light text-muted border fs-8">bar abaixo da pressão ambiente</span>
+                    <span class="badge bg-light text-muted border fs-8">bar</span>
                 </div>
-                <p class="small text-muted mb-2">Quanto mais alta a linha, mais forte está o vácuo. A linha laranja mostra a menor força em cada intervalo e facilita ver quedas frequentes.</p>
                 <div class="chart-box">
                     <canvas id="chart6Vacuo"></canvas>
                 </div>
@@ -708,7 +701,7 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // Vácuo apresentado em magnitude positiva e consolidado por intervalo.
+    // Pressão de vácuo original (negativa), consolidada por intervalo.
     const ctx6 = document.getElementById("chart6Vacuo");
     if (ctx6 && rawDatasets.chart_6_vacuo) {
         const source = rawDatasets.chart_6_vacuo;
@@ -718,16 +711,16 @@ document.addEventListener("DOMContentLoaded", function() {
                 labels: source.labels,
                 datasets: [
                     {
-                        label: 'Força média do vácuo',
-                        data: source.strength_avg,
+                        label: 'Vácuo médio (bar)',
+                        data: source.vacuum_avg,
                         borderColor: '#2563EB',
                         borderWidth: 2.5,
                         pointRadius: 0,
                         tension: 0.2
                     },
                     {
-                        label: 'Menor força no intervalo (queda)',
-                        data: source.strength_min,
+                        label: 'Maior leitura no intervalo (bar)',
+                        data: source.vacuum_max,
                         borderColor: '#EA580C',
                         borderWidth: 1.8,
                         pointRadius: 0,
@@ -739,7 +732,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 ...commonOptions,
                 scales: {
                     ...commonOptions.scales,
-                    y: {...commonOptions.scales.y, beginAtZero: true, title: {display: true, text: 'Força do vácuo (bar)'}}
+                    y: {...commonOptions.scales.y, beginAtZero: false, title: {display: true, text: 'Vácuo (bar)'}}
                 }
             }
         });

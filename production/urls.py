@@ -37,6 +37,7 @@ urlpatterns = [
     path("relatorios/calandra/exportar-excel/", views.calandra_export_excel, name="calandra_export_excel"),
     path("relatorios/caldeira/", views.caldeira_historical_report, name="caldeira_report"),
     path("relatorios/caldeira/desempenho/", views.caldeira_performance, name="caldeira_performance"),
+    path("relatorios/caldeira/desempenho/exportar-excel/", views.caldeira_performance_excel, name="caldeira_performance_excel"),
     path("relatorios/caldeira/desempenho/configurar/", views.caldeira_performance_settings, name="caldeira_performance_settings"),
     path("relatorios/caldeira/exportar-excel/", views.caldeira_export_excel, name="caldeira_export_excel"),
     path("relatorios/caldeira/exportacao/<uuid:job_id>/", views.caldeira_export_status, name="caldeira_export_status"),

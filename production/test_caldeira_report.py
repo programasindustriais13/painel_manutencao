@@ -26,7 +26,9 @@ from production.services_caldeira import (
 )
 from production.services_caldeira_fast import CaldeiraFastReader, report_cache
 from production.services_caldeira_insights import CaldeiraInsightsService
+from production.caldeira_insights_excel import build_insights_excel
 from production import caldeira_export_jobs
+from production import caldeira_insights_jobs
 from production.services_calandra import (
     CalandraHistoricalService,
     CALANDRA_VARIABLES_CONFIG,
@@ -526,8 +528,8 @@ class CaldeiraReportTestCase(TestCase):
                  for minute, value in ((1, -0.55), (2, -0.20), (3, -0.54))],
             )
         chart = CaldeiraFastReader.summary(start_dt, start_dt + timedelta(minutes=5))["chart_datasets"]["chart_6_vacuo"]
-        self.assertEqual(chart["strength_min"], [0.2])
-        self.assertEqual(len(chart["strength_avg"]), 1)
+        self.assertEqual(chart["vacuum_max"], [-0.2])
+        self.assertEqual(chart["vacuum_avg"], [-0.43])
 
     def test_insights_counts_door_opening_pressure_drop_and_press_activity(self):
         start_dt = timezone.make_aware(datetime(2026, 11, 9, 6, 0))
@@ -552,13 +554,27 @@ class CaldeiraReportTestCase(TestCase):
         self.assertEqual(result["shifts"][0]["drop_count"], 1)
         self.assertEqual(result["shifts"][0]["door_near_drops"], 1)
         self.assertEqual(result["shifts"][0]["pressure_samples"], 4)
+        self.assertEqual(result["shifts"][0]["drop_pressure_min"], 13.7)
+        self.assertEqual(result["drops"][0]["peak_pressure"], 15)
+        self.assertEqual(result["drops"][0]["minimum_pressure"], 13.7)
+        self.assertEqual(result["door_events"][0]["duration_seconds"], 60)
+        self.assertEqual(result["shifts"][0]["door_long_average_minutes"], 1)
+        workbook = openpyxl.load_workbook(build_insights_excel(result), read_only=True)
+        self.assertEqual(workbook.sheetnames, ["Resumo", "Turnos", "Recuos", "Aberturas da Porta", "Horas"])
+        self.assertEqual(list(workbook["Recuos"].values)[1][3], 13.7)
+        self.assertEqual(list(workbook["Aberturas da Porta"].values)[1][2], 60)
+        workbook.close()
 
     def test_performance_page_and_settings_permissions(self):
         self.client.force_login(self.user_lp)
-        response = self.client.get(reverse("production:caldeira_performance"))
+        with patch("production.views.read_caldeira_insights_result", return_value=None), \
+             patch("production.views.ensure_caldeira_insights_job") as start_job:
+            response = self.client.get(reverse("production:caldeira_performance"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "O que aconteceu com a pressão?")
-        self.assertContains(response, "Não há leituras de pressão")
+        self.assertContains(response, "Organizando as leituras")
+        self.assertContains(response, "Filtrar período")
+        start_job.assert_called_once()
+        self.assertNotContains(response, "O que aconteceu com a pressão?")
         save_url = reverse("production:caldeira_performance_settings")
         response = self.client.post(save_url, {"last_maintenance_date": "2026-11-01"})
         self.assertNotEqual(response.status_code, 200)
@@ -577,10 +593,121 @@ class CaldeiraReportTestCase(TestCase):
         self.client.post(save_url, {"operating_pressure_floor_bar": "17.7"})
         self.assertEqual(CaldeiraAnalysisSettings.objects.get(pk=1).last_maintenance_date.isoformat(), "2026-11-01")
 
+    def test_door_open_time_is_split_at_shift_change(self):
+        start_dt = timezone.make_aware(datetime(2026, 11, 9, 17, 50))
+        end_dt = start_dt + timedelta(minutes=20)
+        def reading(minute, value):
+            return (4, 3, value, int((start_dt + timedelta(minutes=minute)).timestamp() * 1000), minute)
+        records = [reading(9, 1), reading(12, 0), reading(13, 1), reading(13.5, 0)]
+        with patch.object(CaldeiraInsightsService, "_resolve", return_value=({4: "door"}, [], True)), \
+             patch.object(CaldeiraInsightsService, "_seeds", return_value={"door": False}), \
+             patch.object(CaldeiraFastReader, "_records", return_value=iter(records)):
+            result = CaldeiraInsightsService.analyze(start_dt, end_dt)
+        self.assertEqual(result["door_openings"], 2)
+        self.assertEqual(result["door_open_minutes"], 3.5)
+        self.assertEqual(result["shifts"][0]["door_open_minutes"], 1)
+        self.assertEqual(result["shifts"][1]["door_open_minutes"], 2.5)
+        self.assertEqual(result["shifts"][0]["door_long_average_minutes"], 3)
+        self.assertEqual(result["shifts"][1]["door_quick_count"], 1)
+
+    def test_ready_performance_page_and_excel_share_result(self):
+        self.client.force_login(self.user_lp)
+        start_dt = timezone.make_aware(datetime(2026, 11, 9, 6, 0))
+        with patch.object(CaldeiraInsightsService, "_resolve", return_value=({}, [], False)), \
+             patch.object(CaldeiraInsightsService, "_seeds", return_value={}), \
+             patch.object(CaldeiraFastReader, "_records", return_value=iter(())):
+            analysis = CaldeiraInsightsService.analyze(start_dt, start_dt + timedelta(hours=24))
+        with patch("production.views.read_caldeira_insights_result", return_value=analysis), \
+             patch("production.views.ensure_caldeira_insights_job") as start_job:
+            response = self.client.get(reverse("production:caldeira_performance"))
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Comparação por turno horário")
+            self.assertContains(response, "Exportar Excel")
+            self.assertNotContains(response, "O que aconteceu com a pressão?")
+            self.assertNotContains(response, "O que os dados sugerem sobre o condensado?")
+            export = self.client.get(reverse("production:caldeira_performance_excel"))
+            self.assertEqual(export.status_code, 200)
+            self.assertIn(".xlsx", export["Content-Disposition"])
+            book = openpyxl.load_workbook(io.BytesIO(b"".join(export.streaming_content)), read_only=True)
+            self.assertEqual(book.sheetnames, ["Resumo", "Turnos", "Recuos", "Aberturas da Porta", "Horas"])
+            book.close()
+            start_job.assert_not_called()
+
+    def test_custom_performance_period_survives_loading_and_export(self):
+        self.client.force_login(self.user_lp)
+        end_dt = timezone.localtime().replace(second=0, microsecond=0) - timedelta(hours=12)
+        start_dt = end_dt - timedelta(hours=8)
+        filters = {"janela": "personalizado", "inicio": start_dt.strftime("%Y-%m-%dT%H:%M"),
+                   "fim": end_dt.strftime("%Y-%m-%dT%H:%M"), "queda_bar": "1.5", "duracao_min": "3"}
+        with patch("production.views.read_caldeira_insights_result", return_value=None), \
+             patch("production.views.ensure_caldeira_insights_job") as start_job:
+            response = self.client.get(reverse("production:caldeira_performance"), filters)
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Organizando as leituras")
+            self.assertContains(response, 'id="loading-inicio"')
+            self.assertContains(response, 'id="loading-fim"')
+            self.assertContains(response, "janela=personalizado")
+            self.assertContains(response, "inicio=")
+            self.assertEqual(start_job.call_args.args[1:3], (start_dt, end_dt))
+            export = self.client.get(reverse("production:caldeira_performance_excel"), filters)
+            self.assertEqual(export.status_code, 302)
+            self.assertIn("janela=personalizado", export["Location"])
+            self.assertIn("inicio=", export["Location"])
+
+        with patch.object(CaldeiraInsightsService, "_resolve", return_value=({}, [], False)), \
+             patch.object(CaldeiraInsightsService, "_seeds", return_value={}), \
+             patch.object(CaldeiraFastReader, "_records", return_value=iter(())):
+            analysis = CaldeiraInsightsService.analyze(start_dt, end_dt, 1.5, 3)
+        with patch("production.views.read_caldeira_insights_result", return_value=analysis):
+            response = self.client.get(reverse("production:caldeira_performance"), filters)
+            self.assertContains(response, 'name="inicio"')
+            self.assertContains(response, 'name="fim"')
+            self.assertContains(response, "Filtrar período")
+            self.assertContains(response, "janela=personalizado")
+            self.assertContains(response, "exportar-excel/")
+            export = self.client.get(reverse("production:caldeira_performance_excel"), filters)
+            self.assertEqual(export.status_code, 200)
+            book = openpyxl.load_workbook(io.BytesIO(b"".join(export.streaming_content)), read_only=True)
+            summary = list(book["Resumo"].values)
+            self.assertEqual(summary[1][1], start_dt.strftime("%d/%m/%Y %H:%M"))
+            self.assertEqual(summary[2][1], end_dt.strftime("%d/%m/%Y %H:%M"))
+            book.close()
+
+    def test_custom_performance_period_rejects_invalid_dates_and_long_ranges(self):
+        self.client.force_login(self.user_lp)
+        url = reverse("production:caldeira_performance")
+        end_dt = timezone.localtime().replace(second=0, microsecond=0) - timedelta(hours=1)
+        with patch("production.views.ensure_caldeira_insights_job") as start_job:
+            for start, end in ((end_dt, end_dt - timedelta(hours=1)),
+                               (end_dt - timedelta(days=32), end_dt),
+                               (end_dt - timedelta(hours=1), end_dt + timedelta(days=1))):
+                response = self.client.get(url, {"janela": "personalizado",
+                    "inicio": start.strftime("%Y-%m-%dT%H:%M"),
+                    "fim": end.strftime("%Y-%m-%dT%H:%M")})
+                self.assertRedirects(response, url, fetch_redirect_response=False)
+            start_job.assert_not_called()
+
+    def test_insights_worker_persists_result(self):
+        key = "a" * 64
+        start_dt = timezone.make_aware(datetime(2026, 11, 9, 6, 0))
+        with tempfile.TemporaryDirectory() as directory, patch.object(caldeira_insights_jobs, "JOB_DIR", Path(directory)):
+            caldeira_insights_jobs.write_state(key, {
+                "status": "queued", "start": start_dt.isoformat(),
+                "end": (start_dt + timedelta(hours=1)).isoformat(),
+                "drop_bar": 1.0, "min_minutes": 2, "floor": None,
+            })
+            with patch.object(CaldeiraInsightsService, "analyze", return_value={
+                "start": start_dt, "end": start_dt + timedelta(hours=1), "drop_total": 2,
+            }):
+                call_command("build_caldeira_insights", job=key)
+            self.assertEqual(caldeira_insights_jobs.read_state(key)["status"], "ready")
+            self.assertEqual(caldeira_insights_jobs.read_result(key)["drop_total"], 2)
+
     def test_report_removes_setpoint_difference_chart(self):
         self.client.force_login(self.user_lp)
         response = self.client.get(reverse("production:caldeira_report"))
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "Diferença das Linhas de Alta em Relação ao Setpoint")
-        self.assertContains(response, "Força do Vácuo ao Longo do Tempo")
+        self.assertContains(response, "Pressão da Unidade de Vácuo")
+        self.assertNotContains(response, "Nota de Interpretação")
         self.assertContains(response, "caldeira/desempenho/")

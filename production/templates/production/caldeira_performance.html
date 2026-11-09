@@ -1,4 +1,5 @@
 {% extends "production/base_production.html" %}
+{% load l10n %}
 {% block title %}Entenda a Caldeira 2{% endblock %}
 {% block content %}
 <div class="container-fluid" style="max-width: 1500px;">
@@ -6,31 +7,42 @@
         <a href="{% url 'production:caldeira_report' %}" class="text-decoration-none">← Voltar ao histórico da caldeira</a>
         <span class="text-muted small">Análise independente do período do relatório principal</span>
     </div>
-    <div class="rounded-4 p-4 mb-4 text-white" style="background:#17243a;">
-        <span class="badge text-bg-warning mb-2">CALDEIRA 2 · ACOMPANHAMENTO</span>
-        <h1 class="h3 fw-bold mb-2">O que aconteceu com a pressão?</h1>
-        <p class="mb-0 text-white-50">Compare quedas de pressão com prensas em vulcanização, condensado e abertura da porta. Os números mostram contexto; não identificam a causa nem avaliam um operador individualmente.</p>
-    </div>
-
     <div class="card border-0 shadow-sm p-3 mb-4">
         <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
             <strong class="me-2">Período desta análise</strong>
-            <a class="btn btn-sm {% if window == '24h' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=24h&queda_bar={{ analysis.drop_bar }}&duracao_min={{ analysis.min_minutes }}">Últimas 24 horas</a>
-            <a class="btn btn-sm {% if window == '7d' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=7d&queda_bar={{ analysis.drop_bar }}&duracao_min={{ analysis.min_minutes }}">Últimos 7 dias</a>
-            <span class="small text-muted ms-auto">{{ analysis.start|date:"d/m/Y H:i" }} até {{ analysis.end|date:"d/m/Y H:i" }} · atualiza a cada 5 min</span>
+            <a class="btn btn-sm {% if window == '24h' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=24h&queda_bar={{ analysis.drop_bar|unlocalize }}&duracao_min={{ analysis.min_minutes }}">Últimas 24 horas</a>
+            <a class="btn btn-sm {% if window == '7d' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=7d&queda_bar={{ analysis.drop_bar|unlocalize }}&duracao_min={{ analysis.min_minutes }}">Últimos 7 dias</a>
+            <a class="btn btn-sm btn-outline-success" href="{% url 'production:caldeira_performance_excel' %}?{{ export_query }}"><i class="bi bi-file-earmark-excel"></i> Exportar Excel</a>
+            <span class="small text-muted ms-auto">{{ analysis.start|date:"d/m/Y H:i" }} até {{ analysis.end|date:"d/m/Y H:i" }} · dados fechados a cada 5 min</span>
         </div>
         <form method="get" class="row g-2 align-items-end border-top pt-3">
+            <input type="hidden" name="janela" value="personalizado">
+            <input type="hidden" name="queda_bar" value="{{ analysis.drop_bar|unlocalize }}">
+            <input type="hidden" name="duracao_min" value="{{ analysis.min_minutes }}">
+            <div class="col-sm-5 col-md-3">
+                <label for="insights-inicio" class="form-label small fw-semibold">Data e hora inicial</label>
+                <input id="insights-inicio" class="form-control form-control-sm" type="datetime-local" name="inicio" value="{{ start_input }}" required>
+            </div>
+            <div class="col-sm-5 col-md-3">
+                <label for="insights-fim" class="form-label small fw-semibold">Data e hora final</label>
+                <input id="insights-fim" class="form-control form-control-sm" type="datetime-local" name="fim" value="{{ end_input }}" required>
+            </div>
+            <div class="col-sm-2 col-md-2"><button class="btn btn-warning btn-sm w-100 fw-semibold">Filtrar período</button></div>
+            <div class="col-12 small text-muted">Escolha um intervalo de até 31 dias. As datas e horas seguem o horário local.</div>
+        </form>
+        <form method="get" class="row g-2 align-items-end border-top pt-3">
             <input type="hidden" name="janela" value="{{ window }}">
+            {% if window == 'personalizado' %}<input type="hidden" name="inicio" value="{{ start_input }}"><input type="hidden" name="fim" value="{{ end_input }}">{% endif %}
             <div class="col-sm-4 col-md-3">
                 <label class="form-label small fw-semibold">Recuo de pressão a observar</label>
-                <div class="input-group input-group-sm"><input class="form-control" type="number" min="0.2" max="3" step="0.1" name="queda_bar" value="{{ analysis.drop_bar }}"><span class="input-group-text">bar</span></div>
+                <div class="input-group input-group-sm"><input class="form-control" type="number" min="0.2" max="3" step="0.1" name="queda_bar" value="{{ analysis.drop_bar|unlocalize }}"><span class="input-group-text">bar</span></div>
             </div>
             <div class="col-sm-4 col-md-3">
                 <label class="form-label small fw-semibold">Duração mínima</label>
                 <div class="input-group input-group-sm"><input class="form-control" type="number" min="1" max="15" step="1" name="duracao_min" value="{{ analysis.min_minutes }}"><span class="input-group-text">min</span></div>
             </div>
             <div class="col-sm-4 col-md-2"><button class="btn btn-warning btn-sm w-100 fw-semibold">Aplicar critério</button></div>
-            <div class="col-12 small text-muted">Critério de triagem ajustável para comparar turnos. Não é um limite de operação ou de segurança aprovado pelo fabricante.</div>
+            <div class="col-12 small text-muted">Define quais quedas entram na contagem. Exemplo: com 1 bar e 2 min, uma pressão de 15 bar que cai para 14 bar ou menos por pelo menos 2 min conta como um recuo. O pico considerado é o dos 30 min anteriores.</div>
         </form>
     </div>
 
@@ -48,47 +60,46 @@
     {% endif %}
     <div class="row g-3 mb-4">
         <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Recuos observados</div><div class="display-6 fw-bold">{{ analysis.drop_total }}</div><div class="small text-muted">Pelo critério acima; não são falhas confirmadas.</div></div></div>
-        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Eventos de porta aberta</div><div class="display-6 fw-bold">{% if analysis.door_available %}{{ analysis.door_openings }}{% else %}—{% endif %}</div><div class="small text-muted">ON/1 indica porta aberta; sugere alimentação, sem confirmá-la.</div></div></div>
-        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Prensas acompanhadas</div><div class="display-6 fw-bold">{{ analysis.press_count }}<small class="fs-5 text-muted">/{{ analysis.press_total }}</small></div><div class="small text-muted">ON = em vulcanização; OFF = fora dessa etapa. Prensa 03 ainda sem sinal.</div></div></div>
-        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Maior pressão medida</div><div class="display-6 fw-bold">{{ analysis.max_pressure|default:"—" }}<small class="fs-5 text-muted"> bar</small></div><div class="small text-muted">PMTA da placa: 17,7 bar. PMTA não é meta operacional.</div></div></div>
-    </div>
-
-    <div class="card border-0 shadow-sm p-4 mb-4" style="border-left:4px solid #0d6efd !important;">
-        <h2 class="h5 fw-bold">O que os dados sugerem sobre o condensado?</h2>
-        <p class="mb-2">{{ analysis.relationship }}</p>
-        <div class="small text-muted">Comparação feita em {{ analysis.correlation_hours }} hora(s) completas com dados suficientes. O volume de condensado em L/h não pode ser convertido diretamente em produção de vapor em kg/h. A placa informa capacidade nominal de 2.500 kg/h; o alcance do medidor de condensado precisa ser confirmado antes de calcular eficiência.</div>
-        {% if analysis.press_missing %}<div class="small text-warning-emphasis mt-2">Sem sinal nesta janela: {{ analysis.press_missing|join:", " }}.</div>{% endif %}
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Aberturas da porta</div><div class="display-6 fw-bold">{% if analysis.door_available %}{{ analysis.door_openings }}{% else %}—{% endif %}</div></div></div>
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Tempo médio por abertura concluída</div><div class="display-6 fw-bold">{{ analysis.door_average_minutes|default_if_none:"—" }}<small class="fs-5 text-muted"> min</small></div></div></div>
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Maior pressão medida</div><div class="display-6 fw-bold">{{ analysis.max_pressure|default:"—" }}<small class="fs-5 text-muted"> bar</small></div></div></div>
     </div>
 
     <div class="row g-4 mb-4">
-        <div class="col-xl-6"><div class="card border-0 shadow-sm p-3 h-100"><h2 class="h6 fw-bold">Pressão da caldeira por hora</h2><p class="small text-muted">A linha laranja mostra a menor leitura de cada hora. Observe se os recuos coincidem com mais prensas em processo.</p><div style="height:320px"><canvas id="pressureContextChart"></canvas></div></div></div>
-        <div class="col-xl-6"><div class="card border-0 shadow-sm p-3 h-100"><h2 class="h6 fw-bold">Condensado e prensas em vulcanização</h2><p class="small text-muted">Barras: volume medido em cada hora. Linha: quantidade média de prensas em processo. Horas parciais não entram na comparação.</p><div style="height:320px"><canvas id="condensateContextChart"></canvas></div></div></div>
+        <div class="col-12"><div class="card border-0 shadow-sm p-3 h-100"><h2 class="h6 fw-bold">Pressão da caldeira por hora</h2><p class="small text-muted">A linha laranja mostra a menor leitura de cada hora.</p><div style="height:320px"><canvas id="pressureContextChart"></canvas></div></div></div>
+        <div class="col-12"><div class="card border-0 shadow-sm p-3 h-100"><h2 class="h6 fw-bold">Condensado e prensas em vulcanização</h2><p class="small text-muted">Barras: volume medido em cada hora. Linha: quantidade média de prensas em processo.</p><div style="height:320px"><canvas id="condensateContextChart"></canvas></div></div></div>
     </div>
 
     <div class="card border-0 shadow-sm p-3 mb-4">
         <h2 class="h5 fw-bold">Comparação por turno horário</h2>
-        <p class="small text-muted">Turnos de 06h–18h e 18h–06h. A escala 12×36 alterna pessoas; sem escala nominal e contexto de carga, esta tabela não atribui quedas a operadores.</p>
-        <div class="table-responsive"><table class="table table-sm table-striped align-middle"><thead><tr><th>Início do turno</th><th>Horário</th><th class="text-end">Horas observadas</th><th class="text-end">Leituras de pressão</th><th class="text-end">Recuos</th><th class="text-end">Recuos por 12h</th><th class="text-end">Porta aberta</th><th class="text-end">Recuos até 15 min após abertura</th></tr></thead><tbody>
-            {% for shift in analysis.shifts %}<tr><td>{{ shift.date }}</td><td>{{ shift.label }}{% if shift.partial %} <span class="badge bg-light text-muted border">parcial</span>{% endif %}</td><td class="text-end">{{ shift.covered_hours }}</td><td class="text-end">{{ shift.pressure_samples }}</td><td class="text-end fw-semibold">{% if shift.pressure_samples %}{{ shift.drop_count }}{% else %}—{% endif %}</td><td class="text-end">{{ shift.drops_per_12h|default_if_none:"—" }}</td><td class="text-end">{% if analysis.door_available %}{{ shift.door_openings }}{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available and shift.pressure_samples %}{{ shift.door_near_drops }}{% else %}—{% endif %}</td></tr>{% empty %}<tr><td colspan="8" class="text-center text-muted">Sem dados de turnos.</td></tr>{% endfor %}
+        <div class="table-responsive"><table class="table table-sm table-striped align-middle"><thead><tr><th>Início</th><th>Turno</th><th class="text-end">Horas</th><th class="text-end">Recuos</th><th class="text-end">Recuos/12h</th><th class="text-end">Menor pressão no recuo</th><th class="text-end">Maior queda</th><th class="text-end">Aberturas</th><th class="text-end">Porta aberta</th><th class="text-end">Média/abertura</th><th class="text-end">Rápidas (&lt;1 min)</th><th class="text-end">Média longas (≥1 min)</th></tr></thead><tbody>
+            {% for shift in analysis.shifts %}<tr><td>{{ shift.date_label }}</td><td>{{ shift.label }}{% if shift.partial %} <span class="badge bg-light text-muted border">parcial</span>{% endif %}</td><td class="text-end">{{ shift.covered_hours }}</td><td class="text-end fw-semibold">{% if shift.pressure_samples %}{{ shift.drop_count }}{% else %}—{% endif %}</td><td class="text-end">{{ shift.drops_per_12h|default_if_none:"—" }}</td><td class="text-end">{% if shift.drop_pressure_min is not None %}{{ shift.drop_pressure_min }} bar{% else %}—{% endif %}</td><td class="text-end">{% if shift.drop_magnitude_max is not None %}{{ shift.drop_magnitude_max }} bar{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available %}{{ shift.door_openings }}{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available %}{{ shift.door_open_minutes }} min{% else %}—{% endif %}</td><td class="text-end">{% if shift.door_average_minutes is not None %}{{ shift.door_average_minutes }} min{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available %}{{ shift.door_quick_count }}{% else %}—{% endif %}</td><td class="text-end">{% if shift.door_long_average_minutes is not None %}{{ shift.door_long_average_minutes }} min{% else %}—{% endif %}</td></tr>{% empty %}<tr><td colspan="12" class="text-center text-muted">Sem dados de turnos.</td></tr>{% endfor %}
         </tbody></table></div>
-        <div class="small text-muted">A proximidade com a abertura mostra coincidência no tempo. Ela não determina se a queda veio de alimentação, consumo ou outra causa.</div>
+        <div class="small text-muted">Aberturas e médias pertencem ao turno em que a porta abriu; o tempo aberto é dividido entre os turnos. Médias usam apenas aberturas com fechamento registrado. Aberturas rápidas podem ser conferências; a duração sozinha não identifica a atividade realizada.</div>
     </div>
 
     {% if analysis.drops %}
     <div class="card border-0 shadow-sm p-3 mb-4">
         <h2 class="h5 fw-bold">Últimos recuos para conferir</h2>
-        <p class="small text-muted">Até 40 eventos mais recentes; veja o momento, o turno e o contexto antes de investigar a causa.</p>
-        <div class="table-responsive" style="max-height:350px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Início</th><th>Turno</th><th class="text-end">Duração observada</th><th class="text-end">Prensas ON</th><th class="text-end">Porta aberta até 15 min antes</th></tr></thead><tbody>
-            {% for drop in analysis.drops %}<tr><td>{{ drop.time_label }}</td><td>{{ drop.shift }}</td><td class="text-end">{{ drop.duration_min }} min</td><td class="text-end">{{ drop.active_presses|default_if_none:"—" }}</td><td class="text-end">{% if analysis.door_available %}{% if drop.door_near %}Sim{% else %}Não{% endif %}{% else %}—{% endif %}</td></tr>{% endfor %}
+        <div class="table-responsive" style="max-height:350px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Início</th><th>Turno</th><th class="text-end">Pico anterior</th><th class="text-end">Menor pressão</th><th class="text-end">Queda</th><th class="text-end">Duração</th><th class="text-end">Prensas ON</th><th class="text-end">Porta aberta até 15 min antes</th></tr></thead><tbody>
+            {% for drop in analysis.drops|slice:":40" %}<tr><td>{{ drop.time_label }}</td><td>{{ drop.shift }}</td><td class="text-end">{{ drop.peak_pressure }} bar</td><td class="text-end fw-semibold">{{ drop.minimum_pressure }} bar</td><td class="text-end">{{ drop.drop_bar }} bar</td><td class="text-end">{{ drop.duration_min }} min</td><td class="text-end">{{ drop.active_presses|default_if_none:"—" }}</td><td class="text-end">{% if analysis.door_available %}{% if drop.door_near %}Sim{% else %}Não{% endif %}{% else %}—{% endif %}</td></tr>{% endfor %}
+        </tbody></table></div>
+    </div>
+    {% endif %}
+
+    {% if analysis.door_events %}
+    <div class="card border-0 shadow-sm p-3 mb-4">
+        <h2 class="h5 fw-bold">Aberturas da porta</h2>
+        <div class="table-responsive" style="max-height:350px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Início</th><th>Turno</th><th class="text-end">Tempo aberta</th><th>Tipo pela duração</th></tr></thead><tbody>
+            {% for event in analysis.door_events|slice:":40" %}<tr><td>{{ event.time_label }}</td><td>{{ event.shift }}</td><td class="text-end">{{ event.duration_seconds }} s</td><td>{% if event.quick %}Rápida (&lt;1 min){% else %}Longa (≥1 min){% endif %}</td></tr>{% endfor %}
         </tbody></table></div>
     </div>
     {% endif %}
 
     <div class="card border-0 shadow-sm p-3 mb-4">
         <h2 class="h5 fw-bold">Ver por hora</h2>
-        <p class="small text-muted">Uma hora com mais prensas e maior condensado pode representar maior demanda. OFF não informa o motivo de a prensa estar fora da vulcanização.</p>
-        <div class="table-responsive" style="max-height:450px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Hora</th><th class="text-end">Prensas ON (média)</th><th class="text-end">Condensado medido</th><th class="text-end">Menor pressão</th><th class="text-end">Porta</th><th class="text-end">Recuos</th></tr></thead><tbody>
-            {% for hour in analysis.hours %}<tr><td>{{ hour.label }}{% if hour.partial %} <span class="badge bg-light text-muted border">parcial</span>{% endif %}</td><td class="text-end">{{ hour.active_presses|default_if_none:"—" }}</td><td class="text-end">{% if hour.cond_liters is not None %}{{ hour.cond_liters }} L{% else %}—{% endif %}</td><td class="text-end">{% if hour.pressure_min is not None %}{{ hour.pressure_min }} bar{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available %}{{ hour.door_openings }}{% else %}—{% endif %}</td><td class="text-end">{% if hour.pressure_samples %}{{ hour.drop_count }}{% else %}—{% endif %}</td></tr>{% endfor %}
+        <div class="table-responsive" style="max-height:450px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Hora</th><th class="text-end">Prensas ON (média)</th><th class="text-end">Condensado medido</th><th class="text-end">Menor pressão</th><th class="text-end">Porta aberta</th><th class="text-end">Recuos</th></tr></thead><tbody>
+            {% for hour in analysis.hours %}<tr><td>{{ hour.label }}{% if hour.partial %} <span class="badge bg-light text-muted border">parcial</span>{% endif %}</td><td class="text-end">{{ hour.active_presses|default_if_none:"—" }}</td><td class="text-end">{% if hour.cond_liters is not None %}{{ hour.cond_liters }} L{% else %}—{% endif %}</td><td class="text-end">{% if hour.pressure_min is not None %}{{ hour.pressure_min }} bar{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available %}{{ hour.door_open_minutes }} min{% else %}—{% endif %}</td><td class="text-end">{% if hour.pressure_samples %}{{ hour.drop_count }}{% else %}—{% endif %}</td></tr>{% endfor %}
         </tbody></table></div>
     </div>
 
