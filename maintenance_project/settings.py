@@ -214,6 +214,16 @@ DATABASE_ROUTERS = ["production.routers.ScadaRouter"]
 LOGS_DIR = BASE_DIR / "logs"
 os.makedirs(LOGS_DIR, exist_ok=True)
 
+# Resumos históricos reutilizados entre processos e após reinício do Waitress.
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    "caldeira_reports": {
+        "BACKEND": "django.core.cache.backends.filebased.FileBasedCache",
+        "LOCATION": str(LOGS_DIR / ("test_caldeira_reports_cache" if "test" in sys.argv else "caldeira_reports_cache")),
+        "OPTIONS": {"MAX_ENTRIES": 300},
+    },
+}
+
 SCADA_COLLECTOR_LOG_FILE = os.environ.get(
     "SCADA_COLLECTOR_LOG_FILE",
     str(LOGS_DIR / "scada_collector.log")

@@ -1,9 +1,10 @@
 import json
+from datetime import timedelta
 from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib import messages
 from django.utils import timezone
-from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse
-from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.http import JsonResponse, HttpResponseBadRequest, HttpResponse, FileResponse, Http404
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger, Page
 from django.db import transaction
 from django.db.models import Q
 from maintenance.models import Machine
@@ -11,6 +12,9 @@ from .decorators import lider_producao_required, lider_ou_pcp_required, superuse
 from .services import ProductionStateService, PCPCalculationService, BladderTrackingService, scada_reader
 from .services_calandra import CalandraHistoricalService
 from .services_caldeira import CaldeiraHistoricalService, CALDEIRA_VARIABLES_CONFIG
+from .services_caldeira_fast import CaldeiraFastReader
+from .services_caldeira_insights import CaldeiraInsightsService, PRESS_STATUS_XIDS, DOOR_XID
+from .caldeira_export_jobs import start_job as start_caldeira_export_job, read_job as read_caldeira_export_job, output_path as caldeira_export_output_path
 from .xid_configuration import XIDRegistry, XIDDiagnosticsService, XIDTestService
 from .models import (
 
@@ -23,6 +27,7 @@ from .models import (
     ProductionCavityConfig,
     ProductionGlobalParameter,
     ProductionGlobalAlarm,
+    CaldeiraAnalysisSettings,
 )
 from .forms import (
     ProductionTargetForm,
@@ -33,6 +38,7 @@ from .forms import (
     get_cavity_formset,
     ProductionGlobalParameterForm,
     ProductionGlobalAlarmForm,
+    CaldeiraAnalysisSettingsForm,
 )
 
 
@@ -909,6 +915,18 @@ def xid_caldeira_config(request):
                     obj.ordem = var["order"]
                     obj.save()
 
+                extra_signals = [
+                    (f"prensa_{number:02d}", f"Prensa {number:02d} em vulcanização", xid, 20 + number)
+                    for number, xid in PRESS_STATUS_XIDS.items()
+                ]
+                extra_signals.append(("porta_lenha", "Porta da caldeira aberta", DOOR_XID, 40))
+                for key, label, default_xid, order in extra_signals:
+                    ProductionGlobalParameter.objects.update_or_create(
+                        chave=f"caldeira_{key}",
+                        defaults={"nome": label, "xid": request.POST.get(f"xid_{key}", "").strip() or default_xid,
+                                  "unidade": "ON/OFF", "ordem": order},
+                    )
+
                 scada_reader.clear_caches()
             messages.success(request, "Configurações de XIDs da Caldeira salvas com sucesso!")
             return redirect("production:xid_caldeira_config")
@@ -945,6 +963,23 @@ def xid_caldeira_config(request):
         }
         if var["group"] in group_dict:
             group_dict[var["group"]]["vars"].append(item)
+
+    press_group = {"id": "prensas", "title": "6. Prensas em Vulcanização", "badge": "11 sinais · Prensa 03 sem XID",
+                   "icon": "bi-building-gear", "vars": []}
+    for number, default_xid in PRESS_STATUS_XIDS.items():
+        key = f"prensa_{number:02d}"
+        current_xid = db_map.get(f"caldeira_{key}") or default_xid
+        press_group["vars"].append({"key": key, "friendly_name": f"Prensa {number:02d}",
+                                    "description": "ON = em vulcanização; OFF = fora dessa etapa.",
+                                    "tag_name": default_xid, "current_xid": current_xid,
+                                    "is_customized": current_xid != default_xid, "unit": "ON/OFF"})
+    groups.append(press_group)
+    door_xid = db_map.get("caldeira_porta_lenha") or DOOR_XID
+    groups.append({"id": "porta", "title": "7. Porta de Alimentação", "badge": "1 sinal", "icon": "bi-door-open",
+                   "vars": [{"key": "porta_lenha", "friendly_name": "Porta da caldeira",
+                             "description": "ON/1 = porta aberta; o evento sugere alimentação, sem comprová-la.",
+                             "tag_name": DOOR_XID, "current_xid": door_xid,
+                             "is_customized": door_xid != DOOR_XID, "unit": "ON/OFF"}]})
 
     return render(request, "production/xid_caldeira_config.html", {
         "groups": groups,
@@ -1125,19 +1160,19 @@ def caldeira_historical_report(request):
     if error_msg:
         messages.warning(request, error_msg)
 
-    # Consulta e sincronização temporal do histórico
-    history_data = CaldeiraHistoricalService.get_synchronized_history(start_dt, end_dt)
-    timeline = history_data["timeline"]
+    # Resumo limitado em memória; os registros da tabela são consultados por página.
+    history_data = CaldeiraFastReader.summary(start_dt, end_dt)
     variables_config = CaldeiraHistoricalService.get_variables_config()
 
-    # Paginação da tabela (50 registros por página)
-    paginator = Paginator(timeline, 50)
+    paginator = Paginator(range(history_data["total_records"]), CaldeiraFastReader.PAGE_SIZE)
     try:
-        page_obj = paginator.page(page_num)
+        number = paginator.validate_number(page_num)
     except PageNotAnInteger:
-        page_obj = paginator.page(1)
+        number = 1
     except EmptyPage:
-        page_obj = paginator.page(paginator.num_pages)
+        number = paginator.num_pages
+    rows = CaldeiraFastReader.page(start_dt, end_dt, number, history_data["total_records"])
+    page_obj = Page(rows, number, paginator)
 
     context = {
         "periodo_ativo": periodo_ativo,
@@ -1148,7 +1183,7 @@ def caldeira_historical_report(request):
         "start_dt_formatted": start_dt.strftime("%d/%m/%Y %H:%M"),
         "end_dt_formatted": end_dt.strftime("%d/%m/%Y %H:%M"),
         "timeline_page": page_obj,
-        "total_records": len(timeline),
+        "total_records": history_data["total_records"],
         "raw_points_count": history_data["raw_points_count"],
         "variables_found_count": history_data["variables_found_count"],
         "variables_missing": history_data["variables_missing"],
@@ -1160,6 +1195,87 @@ def caldeira_historical_report(request):
         "has_data": history_data.get("has_data", False),
     }
     return render(request, "production/caldeira_report.html", context)
+
+
+@lider_producao_required
+def caldeira_performance(request):
+    """Análise contextual independente do filtro do histórico geral."""
+    window = request.GET.get("janela", "24h")
+    if window not in ("24h", "7d"):
+        window = "24h"
+    now_local = timezone.localtime()
+    end_dt = now_local.replace(minute=(now_local.minute // 5) * 5, second=0, microsecond=0)
+    start_dt = end_dt - (timedelta(days=7) if window == "7d" else timedelta(hours=24))
+    try:
+        drop_bar = float(request.GET.get("queda_bar", "1.0").replace(",", "."))
+        if not 0.2 <= drop_bar <= 3.0:
+            raise ValueError
+    except ValueError:
+        drop_bar = 1.0
+    try:
+        min_minutes = int(request.GET.get("duracao_min", "2"))
+        if not 1 <= min_minutes <= 15:
+            raise ValueError
+    except ValueError:
+        min_minutes = 2
+    settings_obj = CaldeiraAnalysisSettings.objects.filter(pk=1).first() or CaldeiraAnalysisSettings(pk=1)
+    floor = float(settings_obj.operating_pressure_floor_bar) if settings_obj.operating_pressure_floor_bar is not None else None
+    analysis = CaldeiraInsightsService.analyze(start_dt, end_dt, drop_bar, min_minutes, floor)
+    if analysis["above_pmta"]:
+        maintenance_advice = ("Leitura acima da PMTA da placa: confirme o instrumento e acione imediatamente "
+                              "o responsável técnico conforme o procedimento da instalação.")
+        maintenance_level = "danger"
+    elif floor is not None and analysis["below_floor_count"]:
+        maintenance_advice = ("Houve leituras abaixo da referência operacional cadastrada. Solicite avaliação "
+                              "técnica antecipada; os dados não identificam a causa nem definem o serviço necessário.")
+        maintenance_level = "warning"
+    elif not analysis["pressure_samples"]:
+        maintenance_advice = ("Sem leituras de pressão suficientes para avaliar a condição. Confirme a comunicação "
+                              "do supervisório e mantenha o plano de inspeção documentado.")
+        maintenance_level = "secondary"
+    elif analysis["drop_total"]:
+        maintenance_advice = ("Há recuos pelo critério de triagem escolhido. Compare com prensas e abertura da porta "
+                              "e peça revisão técnica se o padrão se repetir. Sem faixa operacional aprovada, "
+                              "a telemetria não define quando antecipar a manutenção.")
+        maintenance_level = "warning"
+    else:
+        maintenance_advice = ("Nenhum recuo foi identificado pelo critério escolhido nesta janela. "
+                              "Mantenha as verificações e inspeções previstas no plano documentado.")
+        maintenance_level = "success"
+    due = settings_obj.next_inspection_due
+    if due is None:
+        inspection_status = "Data da próxima inspeção não cadastrada. Consulte o último relatório NR-13."
+    elif due < end_dt.date():
+        inspection_status = "A data cadastrada para a inspeção passou. Confira o relatório e acione o responsável técnico."
+    elif due <= end_dt.date() + timedelta(days=30):
+        inspection_status = "A data cadastrada para a inspeção está próxima. Planeje com o responsável técnico."
+    else:
+        inspection_status = "Próxima inspeção registrada; mantenha o plano e os registros atualizados."
+    return render(request, "production/caldeira_performance.html", {
+        "analysis": analysis,
+        "analysis_json": json.dumps({"hours": analysis["hours"]}),
+        "window": window,
+        "settings_obj": settings_obj,
+        "settings_form": CaldeiraAnalysisSettingsForm(instance=settings_obj),
+        "inspection_status": inspection_status,
+        "maintenance_advice": maintenance_advice,
+        "maintenance_level": maintenance_level,
+    })
+
+
+@superuser_required
+def caldeira_performance_settings(request):
+    if request.method != "POST":
+        return redirect("production:caldeira_performance")
+    settings_obj = CaldeiraAnalysisSettings.objects.filter(pk=1).first() or CaldeiraAnalysisSettings(pk=1)
+    form = CaldeiraAnalysisSettingsForm(request.POST, instance=settings_obj)
+    if form.is_valid():
+        form.save()
+        messages.success(request, "Datas e referência operacional salvas.")
+    else:
+        details = " ".join(str(error) for errors in form.errors.values() for error in errors)
+        messages.error(request, f"Revise os campos de manutenção e inspeção. {details}")
+    return redirect("production:caldeira_performance")
 
 
 @lider_producao_required
@@ -1181,16 +1297,44 @@ def caldeira_export_excel(request):
         hora_final=hora_final if hora_final else None,
     )
 
+    if end_dt - start_dt > timedelta(days=1):
+        job_id = start_caldeira_export_job(request.user, start_dt, end_dt)
+        return redirect("production:caldeira_export_status", job_id=job_id)
+
     user_name = request.user.get_full_name() or request.user.username or "Sistema"
-    excel_bytes = CaldeiraHistoricalService.generate_excel_report(start_dt, end_dt, generated_by=user_name)
+    excel_file = CaldeiraFastReader.excel_file(start_dt, end_dt, generated_by=user_name)
 
     filename = f"relatorio_caldeira_{start_dt.strftime('%Y%m%d_%H%M')}_ate_{end_dt.strftime('%Y%m%d_%H%M')}.xlsx"
-    response = HttpResponse(
-        excel_bytes,
-        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    response = FileResponse(
+        excel_file,
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+@lider_producao_required
+def caldeira_export_status(request, job_id):
+    job = read_caldeira_export_job(job_id)
+    if job is None or job.get("user_id") != request.user.pk:
+        raise Http404("Exportação não encontrada.")
+    path = caldeira_export_output_path(job_id)
+    ready = job.get("status") == "ready" and path.is_file()
+    if job.get("status") in ("queued", "running"):
+        created = timezone.datetime.fromisoformat(job["created_at"])
+        if timezone.now() - created > timedelta(hours=2):
+            job = {**job, "status": "failed"}
+    if job.get("status") == "ready" and not ready:
+        job = {**job, "status": "failed"}
+    if ready and request.GET.get("download") == "1":
+        start_dt = timezone.datetime.fromisoformat(job["start"])
+        end_dt = timezone.datetime.fromisoformat(job["end"])
+        filename = f"relatorio_caldeira_{start_dt:%Y%m%d_%H%M}_ate_{end_dt:%Y%m%d_%H%M}.xlsx"
+        return FileResponse(path.open("rb"), as_attachment=True, filename=filename,
+                            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return render(request, "production/caldeira_export_status.html", {
+        "job": job, "ready": ready, "job_id": job_id,
+    })
 
 
 

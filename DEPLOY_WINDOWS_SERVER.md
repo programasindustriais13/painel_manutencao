@@ -98,6 +98,20 @@ Antes de executar migrações ou atualizar o código em produção:
 
 ## 🔄 4. Atualização de Código e Migrações (Somente no Banco Default)
 
+**Fluxo habitual após o primeiro provisionamento dos serviços:**
+
+```powershell
+git pull
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy_production.ps1
+```
+
+O script não faz outro pull. Ele cria backup, instala dependências, aplica
+migrações apenas no banco `default`, coleta arquivos estáticos, reinicia o web
+e o coletor, verifica o HTTP e aquece o histórico da Caldeira. Para verificar
+sem alterar nada, use `-CheckOnly` ou `-DryRun`. Se precisar concluir o deploy
+sem consultar o SCADA naquele momento, use `-SkipCaldeiraWarmup` e aqueça depois.
+As etapas abaixo documentam a execução manual e o provisionamento inicial.
+
 1. **Obter atualização do Git:**
    ```powershell
    git fetch origin
@@ -163,7 +177,7 @@ nssm start ScadaCollectorService
 > [!NOTE]
 > **PARÂMETROS DO COLETOR EM PRODUÇÃO:**
 > - O intervalo recomendado e homologado em produção é `--interval 60` (60 segundos por ciclo).
-> - NENHUMA requisição web HTTP consulta a tabela `pointvalues` do Scada MySQL. Apenas o coletor background acessa a telemetria do Scada e salva agregados no banco `default`.
+> - O coletor consulta o SCADA periodicamente; os relatórios históricos também leem `pointvalues` sob demanda. O relatório da Caldeira reutiliza resumos de dias encerrados em cache.
 
 ### Comandos de Gestão dos Serviços:
 - **Verificar status:** `nssm status ScadaCollectorService`
@@ -172,6 +186,52 @@ nssm start ScadaCollectorService
 - **Remover serviço:** `nssm remove ScadaCollectorService confirm`
 
 ---
+
+### 5.3 Preparação do histórico da Caldeira
+
+Depois do `git pull`, o deploy padrão executa este aquecimento automaticamente,
+após subir e validar a aplicação:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy_production.ps1
+```
+
+Para aquecer o histórico separadamente, execute na raiz do projeto:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py warm_caldeira_reports --days 31
+```
+
+O comando lê o SCADA e grava resumos diários em `logs/caldeira_reports_cache`.
+O cache é gravado em disco e **sobrevive a reinícios** do Windows e do Waitress;
+por isso o aquecimento não precisa rodar a cada reinício. Dias encerrados são
+reutilizados por até 30 dias, enquanto não forem limpos/evictados; o dia atual
+é calculado no momento da consulta.
+Executar o aquecimento após um deploy prepara os dias ainda não armazenados.
+Se desejar manter sempre o último dia encerrado preparado antes da primeira
+consulta, agende o comando uma vez por dia, após a meia-noite.
+Se dados históricos do SCADA forem corrigidos, reconstrua o cache com
+`warm_caldeira_reports --days 31 --refresh` em horário de menor uso.
+O primeiro aquecimento consulta o histórico completo e pode levar alguns minutos.
+
+O coletor `collect_production_scada --interval 60` é um processo contínuo, separado
+do cache. Se `ScadaCollectorService` estiver instalado com início automático, ele
+reinicia com o Windows. O deploy reinicia o serviço pelo nome encontrado. Em
+instalações sem esse serviço, o deploy inicia o coletor em segundo plano, mas
+esse processo não será iniciado automaticamente após um reinício do Windows.
+Nesse caso, configure o serviço NSSM da seção 5.2 uma única vez.
+
+Exportações da Caldeira superiores a um dia iniciam um processo separado e exibem uma
+página de acompanhamento. O arquivo pronto fica em `logs/caldeira_exports` e só pode
+ser baixado pelo usuário que solicitou a exportação. Arquivos de exportação com mais
+de sete dias são removidos quando uma nova exportação é solicitada.
+
+A tela `/producao/relatorios/caldeira/desempenho/` consulta pressão, condensado,
+11 sinais de prensas e o sinal de porta. Depois da migração, confira em
+`/producao/configuracao-scada/caldeira/` se os XIDs das prensas e `DP_342748` existem no SCADA.
+O estado ON/1 da porta significa aberta. A Prensa 03 fica fora da análise até
+que seu XID seja cadastrado no supervisório. As datas de manutenção e inspeção
+ficam vazias até serem preenchidas com base nos documentos da unidade.
 
 ## 📑 6. Logging e Rotação de Logs
 

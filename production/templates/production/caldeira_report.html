@@ -138,7 +138,7 @@
                 </p>
             </div>
             <div class="d-flex flex-wrap gap-2 align-items-center">
-                <a href="{% url 'production:caldeira_export_excel' %}?periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}" 
+                <a href="{% url 'production:caldeira_export_excel' %}?periodo=personalizado&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}"
                    class="btn btn-success btn-sm rounded-pill px-3 py-2 fw-semibold shadow-sm d-flex align-items-center gap-2"
                    title="Exportar relatório gerencial e histórico completo em Excel (.xlsx) pronto para impressão">
                     <i class="bi bi-file-earmark-excel-fill fs-6"></i>
@@ -349,13 +349,23 @@
 
     </div>
 
+    <a href="{% url 'production:caldeira_performance' %}" class="card border-0 shadow-sm p-3 mb-4 text-decoration-none" style="border-left: 4px solid #B8842E !important;">
+        <div class="d-flex align-items-center justify-content-between gap-3">
+            <div>
+                <strong class="text-dark"><i class="bi bi-clipboard2-pulse text-warning me-2"></i>Entender as quedas de pressão</strong>
+                <div class="small text-muted mt-1">Veja o contexto por turno: prensas em vulcanização, condensado e eventos da porta de alimentação.</div>
+            </div>
+            <span class="btn btn-outline-dark btn-sm text-nowrap">Abrir análise <i class="bi bi-arrow-right"></i></span>
+        </div>
+    </a>
+
     <!-- Informative Engineering Note -->
     <div class="info-note-box mb-4">
         <i class="bi bi-info-circle-fill text-warning me-1"></i>
         <strong>Nota de Interpretação:</strong> Oscilações de pressão podem ocorrer quando várias prensas ou cavidades solicitam vapor simultaneamente. Este relatório apresenta o comportamento medido e não classifica automaticamente uma oscilação como falha. As linhas possuem capacidades instaladas diferentes: até 14 cavidades nas prensas 1 a 7 e até 18 cavidades nas prensas 8 a 12.
     </div>
 
-    <!-- 2. Interactive Charts Grid (6 Charts) -->
+    <!-- Gráficos de acompanhamento -->
     <div class="row g-4 mb-4">
         
         <!-- Gráfico 1: Geração e Distribuição de Vapor -->
@@ -373,27 +383,12 @@
             </div>
         </div>
 
-        <!-- Gráfico 2: Acompanhamento do Setpoint -->
+        <!-- Linhas de Baixa -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-bullseye text-primary me-1"></i>2. Diferença das Linhas de Alta em Relação ao Setpoint
-                    </h6>
-                    <span class="badge bg-light text-muted border fs-8">bar (Ref: 0)</span>
-                </div>
-                <div class="chart-box">
-                    <canvas id="chart2Setpoint"></canvas>
-                </div>
-            </div>
-        </div>
-
-        <!-- Gráfico 3: Linhas de Baixa -->
-        <div class="col-12 col-xl-6">
-            <div class="chart-container-card">
-                <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-arrow-down-circle-fill text-info me-1"></i>3. Pressão das Linhas de Baixa
+                        <i class="bi bi-arrow-down-circle-fill text-info me-1"></i>2. Pressão das Linhas de Baixa
                     </h6>
                     <span class="badge bg-light text-muted border fs-8">bar</span>
                 </div>
@@ -403,12 +398,12 @@
             </div>
         </div>
 
-        <!-- Gráfico 4: Volume de Condensado por Hora -->
+        <!-- Volume de Condensado por Hora -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-droplet-fill text-success me-1"></i>4. Volume de Condensado por Hora
+                        <i class="bi bi-droplet-fill text-success me-1"></i>3. Volume de Condensado por Hora
                     </h6>
                     <span class="badge bg-light text-muted border fs-8">Litros (L)</span>
                 </div>
@@ -418,12 +413,12 @@
             </div>
         </div>
 
-        <!-- Gráfico 5: Ar Comprimido -->
+        <!-- Ar Comprimido -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-wind text-secondary me-1"></i>5. Pressão do Ar Comprimido da Vulcanização
+                        <i class="bi bi-wind text-secondary me-1"></i>4. Pressão do Ar Comprimido da Vulcanização
                     </h6>
                     <span class="badge bg-light text-muted border fs-8">bar</span>
                 </div>
@@ -433,15 +428,16 @@
             </div>
         </div>
 
-        <!-- Gráfico 6: Vácuo -->
+        <!-- Vácuo -->
         <div class="col-12 col-xl-6">
             <div class="chart-container-card">
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <h6 class="fw-bold text-dark mb-0">
-                        <i class="bi bi-speedometer text-danger me-1"></i>6. Pressão da Unidade de Vácuo
+                        <i class="bi bi-speedometer text-danger me-1"></i>5. Força do Vácuo ao Longo do Tempo
                     </h6>
-                    <span class="badge bg-light text-muted border fs-8">bar</span>
+                    <span class="badge bg-light text-muted border fs-8">bar abaixo da pressão ambiente</span>
                 </div>
+                <p class="small text-muted mb-2">Quanto mais alta a linha, mais forte está o vácuo. A linha laranja mostra a menor força em cada intervalo e facilita ver quedas frequentes.</p>
                 <div class="chart-box">
                     <canvas id="chart6Vacuo"></canvas>
                 </div>
@@ -521,7 +517,7 @@
             <ul class="pagination pagination-sm justify-content-center mb-0">
                 {% if timeline_page.has_previous %}
                 <li class="page-item">
-                    <a class="page-link" href="?page={{ timeline_page.previous_page_number }}&periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}">Anterior</a>
+                    <a class="page-link" href="?page={{ timeline_page.previous_page_number }}&periodo=personalizado&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}">Anterior</a>
                 </li>
                 {% else %}
                 <li class="page-item disabled"><span class="page-link">Anterior</span></li>
@@ -533,7 +529,7 @@
 
                 {% if timeline_page.has_next %}
                 <li class="page-item">
-                    <a class="page-link" href="?page={{ timeline_page.next_page_number }}&periodo={{ periodo_ativo }}&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}">Próxima</a>
+                    <a class="page-link" href="?page={{ timeline_page.next_page_number }}&periodo=personalizado&data_inicio={{ data_inicio_str }}&hora_inicio={{ hora_inicio_str }}&data_final={{ data_final_str }}&hora_final={{ hora_final_str }}">Próxima</a>
                 </li>
                 {% else %}
                 <li class="page-item disabled"><span class="page-link">Próxima</span></li>
@@ -633,42 +629,7 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // 2. Gráfico 2: Desvio do Setpoint
-    const ctx2 = document.getElementById("chart2Setpoint");
-    if (ctx2 && rawDatasets.chart_2_setpoint_desvio) {
-        new Chart(ctx2, {
-            type: 'line',
-            data: {
-                labels: rawDatasets.chart_2_setpoint_desvio.labels,
-                datasets: [
-                    {
-                        label: 'Desvio Linha 1-7 (bar)',
-                        data: rawDatasets.chart_2_setpoint_desvio.desvio_1_7,
-                        borderColor: '#0284C7',
-                        borderWidth: 1.8,
-                        pointRadius: 0,
-                        tension: 0.1
-                    },
-                    {
-                        label: 'Desvio Linha 8-12 (bar)',
-                        data: rawDatasets.chart_2_setpoint_desvio.desvio_8_12,
-                        borderColor: '#7C3AED',
-                        borderWidth: 1.8,
-                        pointRadius: 0,
-                        tension: 0.1
-                    }
-                ]
-            },
-            options: {
-                ...commonOptions,
-                plugins: {
-                    ...commonOptions.plugins
-                }
-            }
-        });
-    }
-
-    // 3. Gráfico 3: Linhas de Baixa
+    // Linhas de Baixa
     const ctx3 = document.getElementById("chart3Baixa");
     if (ctx3 && rawDatasets.chart_3_baixa) {
         new Chart(ctx3, {
@@ -698,7 +659,7 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // 4. Gráfico 4: Condensado por Hora
+    // Condensado por Hora
     const ctx4 = document.getElementById("chart4Condensado");
     if (ctx4 && rawDatasets.chart_4_condensado_hora) {
         new Chart(ctx4, {
@@ -723,7 +684,7 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // 5. Gráfico 5: Ar Comprimido
+    // Ar Comprimido
     const ctx5 = document.getElementById("chart5Ar");
     if (ctx5 && rawDatasets.chart_5_ar_comprimido) {
         new Chart(ctx5, {
@@ -747,27 +708,40 @@ document.addEventListener("DOMContentLoaded", function() {
         });
     }
 
-    // 6. Gráfico 6: Vácuo
+    // Vácuo apresentado em magnitude positiva e consolidado por intervalo.
     const ctx6 = document.getElementById("chart6Vacuo");
     if (ctx6 && rawDatasets.chart_6_vacuo) {
+        const source = rawDatasets.chart_6_vacuo;
         new Chart(ctx6, {
             type: 'line',
             data: {
-                labels: rawDatasets.chart_6_vacuo.labels,
+                labels: source.labels,
                 datasets: [
                     {
-                        label: 'Unidade de Vácuo (bar)',
-                        data: rawDatasets.chart_6_vacuo.vacuo,
-                        borderColor: '#475569',
-                        backgroundColor: 'rgba(71, 85, 105, 0.08)',
-                        fill: true,
+                        label: 'Força média do vácuo',
+                        data: source.strength_avg,
+                        borderColor: '#2563EB',
+                        borderWidth: 2.5,
+                        pointRadius: 0,
+                        tension: 0.2
+                    },
+                    {
+                        label: 'Menor força no intervalo (queda)',
+                        data: source.strength_min,
+                        borderColor: '#EA580C',
                         borderWidth: 1.8,
                         pointRadius: 0,
                         tension: 0.1
                     }
                 ]
             },
-            options: commonOptions
+            options: {
+                ...commonOptions,
+                scales: {
+                    ...commonOptions.scales,
+                    y: {...commonOptions.scales.y, beginAtZero: true, title: {display: true, text: 'Força do vácuo (bar)'}}
+                }
+            }
         });
     }
 });

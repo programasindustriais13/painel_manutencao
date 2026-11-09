@@ -215,7 +215,8 @@ class CaldeiraHistoricalService:
         Interpreta filtros de período retornando (start_dt, end_dt, periodo_ativo, error_msg).
         Respeita o timezone do Django (America/Sao_Paulo).
         """
-        now = timezone.localtime()
+        # Mantém a mesma janela durante a navegação e permite reutilizar o resumo.
+        now = timezone.localtime().replace(second=0, microsecond=0)
         today_date = now.date()
         error_msg = None
 
@@ -861,7 +862,6 @@ class CaldeiraHistoricalService:
     def _empty_chart_datasets(cls) -> Dict[str, Any]:
         return {
             "chart_1_vapor": {"labels": [], "timestamps": [], "pressao_caldeira": [], "setpoint": [], "alta_1_7": [], "alta_8_12": []},
-            "chart_2_setpoint_desvio": {"labels": [], "timestamps": [], "desvio_1_7": [], "desvio_8_12": []},
             "chart_3_baixa": {"labels": [], "timestamps": [], "baixa_1_7": [], "baixa_8_12": []},
             "chart_4_condensado_hora": {"labels": [], "volumes": []},
             "chart_5_ar_comprimido": {"labels": [], "timestamps": [], "ar_comprimido": []},
@@ -876,7 +876,7 @@ class CaldeiraHistoricalService:
         max_chart_points: int = 1500
     ) -> Dict[str, Any]:
         """
-        Monta datasets para renderização via Chart.js nos 6 gráficos solicitados.
+        Monta datasets para renderização via Chart.js nos 5 gráficos do relatório.
         Aplica downsampling preservando pontos com dados.
         """
         if not timeline:
@@ -918,10 +918,6 @@ class CaldeiraHistoricalService:
         p_alta_1_7 = [_get_float_val(item, "pressao_alta_prensas_1_7") for item in sampled_timeline]
         p_alta_8_12 = [_get_float_val(item, "pressao_alta_prensas_8_12") for item in sampled_timeline]
 
-        # Séries Gráfico 2: Desvios em relação ao Setpoint
-        desv_1_7 = [item.get("desvio_1_7") for item in sampled_timeline]
-        desv_8_12 = [item.get("desvio_8_12") for item in sampled_timeline]
-
         # Séries Gráfico 3: Linhas de Baixa
         p_baixa_1_7 = [_get_float_val(item, "pressao_baixa_prensas_1_7") for item in sampled_timeline]
         p_baixa_8_12 = [_get_float_val(item, "pressao_baixa_prensas_8_12") for item in sampled_timeline]
@@ -946,12 +942,6 @@ class CaldeiraHistoricalService:
                 "alta_1_7": p_alta_1_7,
                 "alta_8_12": p_alta_8_12,
             },
-            "chart_2_setpoint_desvio": {
-                "labels": labels,
-                "timestamps": timestamps,
-                "desvio_1_7": desv_1_7,
-                "desvio_8_12": desv_8_12,
-            },
             "chart_3_baixa": {
                 "labels": labels,
                 "timestamps": timestamps,
@@ -975,7 +965,7 @@ class CaldeiraHistoricalService:
         }
 
     @classmethod
-    def generate_excel_report(
+    def generate_excel_report_legacy(
         cls,
         start_dt: datetime,
         end_dt: datetime,
@@ -1436,3 +1426,10 @@ class CaldeiraHistoricalService:
         output = io.BytesIO()
         wb.save(output)
         return output.getvalue()
+
+    @classmethod
+    def generate_excel_report(cls, start_dt, end_dt, generated_by="Sistema") -> bytes:
+        """Interface anterior mantida para consumidores que precisam de bytes."""
+        from .services_caldeira_fast import CaldeiraFastReader
+        with CaldeiraFastReader.excel_file(start_dt, end_dt, generated_by) as output:
+            return output.read()

@@ -1,0 +1,136 @@
+{% extends "production/base_production.html" %}
+{% block title %}Entenda a Caldeira 2{% endblock %}
+{% block content %}
+<div class="container-fluid" style="max-width: 1500px;">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <a href="{% url 'production:caldeira_report' %}" class="text-decoration-none">← Voltar ao histórico da caldeira</a>
+        <span class="text-muted small">Análise independente do período do relatório principal</span>
+    </div>
+    <div class="rounded-4 p-4 mb-4 text-white" style="background:#17243a;">
+        <span class="badge text-bg-warning mb-2">CALDEIRA 2 · ACOMPANHAMENTO</span>
+        <h1 class="h3 fw-bold mb-2">O que aconteceu com a pressão?</h1>
+        <p class="mb-0 text-white-50">Compare quedas de pressão com prensas em vulcanização, condensado e abertura da porta. Os números mostram contexto; não identificam a causa nem avaliam um operador individualmente.</p>
+    </div>
+
+    <div class="card border-0 shadow-sm p-3 mb-4">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <strong class="me-2">Período desta análise</strong>
+            <a class="btn btn-sm {% if window == '24h' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=24h&queda_bar={{ analysis.drop_bar }}&duracao_min={{ analysis.min_minutes }}">Últimas 24 horas</a>
+            <a class="btn btn-sm {% if window == '7d' %}btn-dark{% else %}btn-outline-secondary{% endif %}" href="?janela=7d&queda_bar={{ analysis.drop_bar }}&duracao_min={{ analysis.min_minutes }}">Últimos 7 dias</a>
+            <span class="small text-muted ms-auto">{{ analysis.start|date:"d/m/Y H:i" }} até {{ analysis.end|date:"d/m/Y H:i" }} · atualiza a cada 5 min</span>
+        </div>
+        <form method="get" class="row g-2 align-items-end border-top pt-3">
+            <input type="hidden" name="janela" value="{{ window }}">
+            <div class="col-sm-4 col-md-3">
+                <label class="form-label small fw-semibold">Recuo de pressão a observar</label>
+                <div class="input-group input-group-sm"><input class="form-control" type="number" min="0.2" max="3" step="0.1" name="queda_bar" value="{{ analysis.drop_bar }}"><span class="input-group-text">bar</span></div>
+            </div>
+            <div class="col-sm-4 col-md-3">
+                <label class="form-label small fw-semibold">Duração mínima</label>
+                <div class="input-group input-group-sm"><input class="form-control" type="number" min="1" max="15" step="1" name="duracao_min" value="{{ analysis.min_minutes }}"><span class="input-group-text">min</span></div>
+            </div>
+            <div class="col-sm-4 col-md-2"><button class="btn btn-warning btn-sm w-100 fw-semibold">Aplicar critério</button></div>
+            <div class="col-12 small text-muted">Critério de triagem ajustável para comparar turnos. Não é um limite de operação ou de segurança aprovado pelo fabricante.</div>
+        </form>
+    </div>
+
+    {% if analysis.above_pmta %}
+    <div class="alert alert-danger" role="alert"><strong>Leitura acima de 17,7 bar, PMTA indicada na placa.</strong> Confirme a unidade e calibração do sinal e siga o procedimento de segurança da instalação com o responsável técnico.</div>
+    {% endif %}
+    {% if analysis.cond_resets %}
+    <div class="alert alert-warning">O totalizador de condensado reiniciou {{ analysis.cond_resets }} vez(es) nesta janela. Confira o medidor antes de interpretar o volume por hora.</div>
+    {% endif %}
+    {% if not analysis.pressure_samples %}
+    <div class="alert alert-warning">Não há leituras de pressão neste período. Os turnos abaixo não permitem avaliar estabilidade da caldeira.</div>
+    {% endif %}
+    {% if not analysis.door_available %}
+    <div class="alert alert-light border">Ainda não há leituras utilizáveis da porta neste período ou no histórico anterior. A comparação com aberturas ficará disponível quando o sinal tiver dados.</div>
+    {% endif %}
+    <div class="row g-3 mb-4">
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Recuos observados</div><div class="display-6 fw-bold">{{ analysis.drop_total }}</div><div class="small text-muted">Pelo critério acima; não são falhas confirmadas.</div></div></div>
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Eventos de porta aberta</div><div class="display-6 fw-bold">{% if analysis.door_available %}{{ analysis.door_openings }}{% else %}—{% endif %}</div><div class="small text-muted">ON/1 indica porta aberta; sugere alimentação, sem confirmá-la.</div></div></div>
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Prensas acompanhadas</div><div class="display-6 fw-bold">{{ analysis.press_count }}<small class="fs-5 text-muted">/{{ analysis.press_total }}</small></div><div class="small text-muted">ON = em vulcanização; OFF = fora dessa etapa. Prensa 03 ainda sem sinal.</div></div></div>
+        <div class="col-md-3"><div class="card border-0 shadow-sm h-100 p-3"><div class="text-muted small">Maior pressão medida</div><div class="display-6 fw-bold">{{ analysis.max_pressure|default:"—" }}<small class="fs-5 text-muted"> bar</small></div><div class="small text-muted">PMTA da placa: 17,7 bar. PMTA não é meta operacional.</div></div></div>
+    </div>
+
+    <div class="card border-0 shadow-sm p-4 mb-4" style="border-left:4px solid #0d6efd !important;">
+        <h2 class="h5 fw-bold">O que os dados sugerem sobre o condensado?</h2>
+        <p class="mb-2">{{ analysis.relationship }}</p>
+        <div class="small text-muted">Comparação feita em {{ analysis.correlation_hours }} hora(s) completas com dados suficientes. O volume de condensado em L/h não pode ser convertido diretamente em produção de vapor em kg/h. A placa informa capacidade nominal de 2.500 kg/h; o alcance do medidor de condensado precisa ser confirmado antes de calcular eficiência.</div>
+        {% if analysis.press_missing %}<div class="small text-warning-emphasis mt-2">Sem sinal nesta janela: {{ analysis.press_missing|join:", " }}.</div>{% endif %}
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-xl-6"><div class="card border-0 shadow-sm p-3 h-100"><h2 class="h6 fw-bold">Pressão da caldeira por hora</h2><p class="small text-muted">A linha laranja mostra a menor leitura de cada hora. Observe se os recuos coincidem com mais prensas em processo.</p><div style="height:320px"><canvas id="pressureContextChart"></canvas></div></div></div>
+        <div class="col-xl-6"><div class="card border-0 shadow-sm p-3 h-100"><h2 class="h6 fw-bold">Condensado e prensas em vulcanização</h2><p class="small text-muted">Barras: volume medido em cada hora. Linha: quantidade média de prensas em processo. Horas parciais não entram na comparação.</p><div style="height:320px"><canvas id="condensateContextChart"></canvas></div></div></div>
+    </div>
+
+    <div class="card border-0 shadow-sm p-3 mb-4">
+        <h2 class="h5 fw-bold">Comparação por turno horário</h2>
+        <p class="small text-muted">Turnos de 06h–18h e 18h–06h. A escala 12×36 alterna pessoas; sem escala nominal e contexto de carga, esta tabela não atribui quedas a operadores.</p>
+        <div class="table-responsive"><table class="table table-sm table-striped align-middle"><thead><tr><th>Início do turno</th><th>Horário</th><th class="text-end">Horas observadas</th><th class="text-end">Leituras de pressão</th><th class="text-end">Recuos</th><th class="text-end">Recuos por 12h</th><th class="text-end">Porta aberta</th><th class="text-end">Recuos até 15 min após abertura</th></tr></thead><tbody>
+            {% for shift in analysis.shifts %}<tr><td>{{ shift.date }}</td><td>{{ shift.label }}{% if shift.partial %} <span class="badge bg-light text-muted border">parcial</span>{% endif %}</td><td class="text-end">{{ shift.covered_hours }}</td><td class="text-end">{{ shift.pressure_samples }}</td><td class="text-end fw-semibold">{% if shift.pressure_samples %}{{ shift.drop_count }}{% else %}—{% endif %}</td><td class="text-end">{{ shift.drops_per_12h|default_if_none:"—" }}</td><td class="text-end">{% if analysis.door_available %}{{ shift.door_openings }}{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available and shift.pressure_samples %}{{ shift.door_near_drops }}{% else %}—{% endif %}</td></tr>{% empty %}<tr><td colspan="8" class="text-center text-muted">Sem dados de turnos.</td></tr>{% endfor %}
+        </tbody></table></div>
+        <div class="small text-muted">A proximidade com a abertura mostra coincidência no tempo. Ela não determina se a queda veio de alimentação, consumo ou outra causa.</div>
+    </div>
+
+    {% if analysis.drops %}
+    <div class="card border-0 shadow-sm p-3 mb-4">
+        <h2 class="h5 fw-bold">Últimos recuos para conferir</h2>
+        <p class="small text-muted">Até 40 eventos mais recentes; veja o momento, o turno e o contexto antes de investigar a causa.</p>
+        <div class="table-responsive" style="max-height:350px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Início</th><th>Turno</th><th class="text-end">Duração observada</th><th class="text-end">Prensas ON</th><th class="text-end">Porta aberta até 15 min antes</th></tr></thead><tbody>
+            {% for drop in analysis.drops %}<tr><td>{{ drop.time_label }}</td><td>{{ drop.shift }}</td><td class="text-end">{{ drop.duration_min }} min</td><td class="text-end">{{ drop.active_presses|default_if_none:"—" }}</td><td class="text-end">{% if analysis.door_available %}{% if drop.door_near %}Sim{% else %}Não{% endif %}{% else %}—{% endif %}</td></tr>{% endfor %}
+        </tbody></table></div>
+    </div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm p-3 mb-4">
+        <h2 class="h5 fw-bold">Ver por hora</h2>
+        <p class="small text-muted">Uma hora com mais prensas e maior condensado pode representar maior demanda. OFF não informa o motivo de a prensa estar fora da vulcanização.</p>
+        <div class="table-responsive" style="max-height:450px; overflow:auto"><table class="table table-sm table-striped align-middle"><thead class="sticky-top bg-white"><tr><th>Hora</th><th class="text-end">Prensas ON (média)</th><th class="text-end">Condensado medido</th><th class="text-end">Menor pressão</th><th class="text-end">Porta</th><th class="text-end">Recuos</th></tr></thead><tbody>
+            {% for hour in analysis.hours %}<tr><td>{{ hour.label }}{% if hour.partial %} <span class="badge bg-light text-muted border">parcial</span>{% endif %}</td><td class="text-end">{{ hour.active_presses|default_if_none:"—" }}</td><td class="text-end">{% if hour.cond_liters is not None %}{{ hour.cond_liters }} L{% else %}—{% endif %}</td><td class="text-end">{% if hour.pressure_min is not None %}{{ hour.pressure_min }} bar{% else %}—{% endif %}</td><td class="text-end">{% if analysis.door_available %}{{ hour.door_openings }}{% else %}—{% endif %}</td><td class="text-end">{% if hour.pressure_samples %}{{ hour.drop_count }}{% else %}—{% endif %}</td></tr>{% endfor %}
+        </tbody></table></div>
+    </div>
+
+    <div class="card border-0 shadow-sm p-4 mb-4" id="manutencao">
+        <h2 class="h5 fw-bold">Manutenção e inspeção: o que conferir</h2>
+        <div class="alert alert-{{ maintenance_level }}" role="status"><strong>Leitura para planejar a revisão:</strong> {{ maintenance_advice }}</div>
+        <div class="row g-3 mb-3">
+            <div class="col-md-4"><div class="border rounded-3 p-3 h-100"><div class="text-muted small">Última manutenção operacional</div><strong>{{ settings_obj.last_maintenance_date|date:"d/m/Y"|default:"Não cadastrada" }}</strong></div></div>
+            <div class="col-md-4"><div class="border rounded-3 p-3 h-100"><div class="text-muted small">Última inspeção NR-13</div><strong>{{ settings_obj.last_inspection_date|date:"d/m/Y"|default:"Não cadastrada" }}</strong></div></div>
+            <div class="col-md-4"><div class="border rounded-3 p-3 h-100"><div class="text-muted small">Próxima inspeção conforme relatório</div><strong>{{ settings_obj.next_inspection_due|date:"d/m/Y"|default:"Não cadastrada" }}</strong></div></div>
+        </div>
+        <p class="mb-2">{{ inspection_status }}</p>
+        {% if settings_obj.operating_pressure_floor_bar %}<p class="small">Faixa operacional documentada: leituras abaixo de <strong>{{ settings_obj.operating_pressure_floor_bar }} bar</strong>: {{ analysis.below_floor_count }}. Confirme o contexto com o responsável técnico.</p>{% endif %}
+        <p class="small text-muted">Placa: Alfa Laval Aalborg BIO 2.5, fabricação 2021, 67,1 m² de aquecimento, 2.500 kg/h de vapor, PMTA 1,77 MPa (17,7 bar). O manual específico e o último laudo não foram fornecidos. A PMTA é um limite de projeto, não a pressão normal de trabalho.</p>
+        <div class="alert alert-light border small mb-2">A <a href="https://www.gov.br/trabalho-e-emprego/pt-br/acesso-a-informacao/participacao-social/conselhos-e-orgaos-colegiados/comissao-tripartite-partitaria-permanente/normas-regulamentadora/normas-regulamentadoras-vigentes/nr-13-atualizada-2023-b.pdf" target="_blank" rel="noopener">NR-13 vigente</a> prevê inspeção periódica, em regra a cada 12 meses para categorias A/B; prazos diferentes exigem condições documentadas. A data válida deve vir do relatório do profissional habilitado. Dados de pressão, porta e condensado podem motivar uma avaliação antecipada, mas não substituem inspeção ou laudo.</div>
+        <p class="small text-muted mb-2">Para uma revisão técnica, confira com o responsável: calibração dos instrumentos e válvulas, tratamento e controle da água, sistema de alimentação, superfícies de aquecimento, fuligem e sistemas de segurança. A <a href="https://www.alfalaval.in/service-and-support/service-overview/monitoring-services/condition-audit/condition-audit-for-aalborg-boilers/" target="_blank" rel="noopener">Alfa Laval</a> recomenda avaliar condição e parâmetros históricos para planejar manutenção; a frequência específica precisa do manual e do histórico desta unidade.</p>
+        {% if request.user.is_superuser %}
+        <details class="mt-3"><summary class="fw-semibold" style="cursor:pointer">Cadastrar datas e referência aprovada</summary>
+            <form action="{% url 'production:caldeira_performance_settings' %}" method="post" class="row g-3 mt-1">{% csrf_token %}
+                {% for field in settings_form %}<div class="col-md-6"><label class="form-label small fw-semibold" for="{{ field.id_for_label }}">{{ field.label }}</label>{{ field }}{% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}</div>{% endfor %}
+                <div class="col-12 small text-muted">Manutenção operacional e inspeção NR-13 são registros diferentes. Não calcule a próxima inspeção a partir da data de manutenção.</div>
+                <div class="col-12"><button class="btn btn-warning btn-sm fw-semibold">Salvar informações</button></div>
+            </form>
+        </details>
+        {% endif %}
+    </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const hours = {{ analysis_json|safe }}.hours;
+    const labels = hours.map(item => item.label);
+    const options = {responsive:true, maintainAspectRatio:false, animation:false,
+        interaction:{mode:'index', intersect:false}, scales:{x:{ticks:{maxTicksLimit:8}}}};
+    new Chart(document.getElementById('pressureContextChart'), {type:'line', data:{labels, datasets:[
+        {label:'Pressão média (bar)', data:hours.map(x=>x.pressure_avg), borderColor:'#2563eb', pointRadius:0, tension:.15},
+        {label:'Menor pressão na hora (bar)', data:hours.map(x=>x.pressure_min), borderColor:'#ea580c', pointRadius:0, tension:.15}
+    ]}, options});
+    new Chart(document.getElementById('condensateContextChart'), {type:'bar', data:{labels, datasets:[
+        {label:'Condensado medido (L)', data:hours.map(x=>x.cond_liters), backgroundColor:'#10b981', yAxisID:'y'},
+        {type:'line', label:'Prensas em vulcanização (média)', data:hours.map(x=>x.active_presses), borderColor:'#7c3aed', pointRadius:0, yAxisID:'y1'}
+    ]}, options:{...options, scales:{...options.scales, y:{beginAtZero:true, title:{display:true,text:'Litros por hora'}}, y1:{beginAtZero:true, position:'right', grid:{drawOnChartArea:false}, title:{display:true,text:'Prensas ON'}}}}});
+});
+</script>
+{% endblock %}

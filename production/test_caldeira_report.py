@@ -1,4 +1,7 @@
 import io
+import uuid
+import tempfile
+from pathlib import Path
 from datetime import datetime, timedelta, time as dt_time
 from unittest.mock import patch, MagicMock
 import openpyxl
@@ -8,8 +11,10 @@ from django.urls import reverse
 from django.contrib.auth.models import User, Group
 from django.utils import timezone
 from django.db import connections
+from django.core.management import call_command
 
 from production.models import (
+    CaldeiraAnalysisSettings,
     ProductionGlobalParameter,
     ScadaDataPoint,
     ScadaPointValue,
@@ -19,6 +24,9 @@ from production.services_caldeira import (
     CaldeiraHistoricalService,
     CALDEIRA_VARIABLES_CONFIG,
 )
+from production.services_caldeira_fast import CaldeiraFastReader, report_cache
+from production.services_caldeira_insights import CaldeiraInsightsService
+from production import caldeira_export_jobs
 from production.services_calandra import (
     CalandraHistoricalService,
     CALANDRA_VARIABLES_CONFIG,
@@ -42,6 +50,7 @@ class CaldeiraReportTestCase(TestCase):
 
     def setUp(self):
         self.client = Client()
+        report_cache.clear()
 
         # Grupos padrão
         self.grp_lp, _ = Group.objects.get_or_create(name="Liderança de Produção")
@@ -123,6 +132,46 @@ class CaldeiraReportTestCase(TestCase):
         self.client.force_login(self.user_tv)
         resp_blocked = self.client.get(reverse("production:caldeira_export_excel"))
         self.assertEqual(resp_blocked.status_code, 302)
+
+    def test_long_excel_export_runs_outside_request_and_is_private(self):
+        """Período longo inicia tarefa; somente o solicitante acompanha o estado."""
+        job_id = uuid.uuid4()
+        self.client.force_login(self.user_lp)
+        with patch("production.views.start_caldeira_export_job", return_value=str(job_id)) as start:
+            response = self.client.get(reverse("production:caldeira_export_excel") + "?periodo=7d")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(str(job_id), response.url)
+        start.assert_called_once()
+        status_url = reverse("production:caldeira_export_status", args=[job_id])
+        job = {"user_id": self.user_lp.pk, "status": "running",
+               "created_at": timezone.now().isoformat()}
+        with patch("production.views.read_caldeira_export_job", return_value=job):
+            response = self.client.get(status_url)
+        self.assertContains(response, "está sendo preparado")
+        self.client.force_login(self.user_op)
+        with patch("production.views.read_caldeira_export_job", return_value=job):
+            response = self.client.get(status_url)
+        self.assertEqual(response.status_code, 404)
+
+    def test_background_excel_job_writes_file_and_marks_ready(self):
+        """O processo auxiliar publica apenas o arquivo Excel completo."""
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(caldeira_export_jobs, "JOB_DIR", Path(directory)):
+                start_dt = timezone.now() - timedelta(days=7)
+                end_dt = timezone.now()
+                with patch.object(caldeira_export_jobs.subprocess, "Popen") as process:
+                    job_id = caldeira_export_jobs.start_job(self.user_lp, start_dt, end_dt)
+                process.assert_called_once()
+                self.assertEqual(caldeira_export_jobs.read_job(job_id)["status"], "queued")
+                with patch.object(CaldeiraFastReader, "excel_file", return_value=io.BytesIO(b"xlsx-test")):
+                    call_command("build_caldeira_export", job=uuid.UUID(job_id))
+                self.assertEqual(caldeira_export_jobs.read_job(job_id)["status"], "ready")
+                self.assertEqual(caldeira_export_jobs.output_path(job_id).read_bytes(), b"xlsx-test")
+                self.client.force_login(self.user_lp)
+                download_url = reverse("production:caldeira_export_status", args=[uuid.UUID(job_id)]) + "?download=1"
+                response = self.client.get(download_url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(b"".join(response.streaming_content), b"xlsx-test")
 
     def test_xid_caldeira_config_permissions(self):
         """Tela de configuração de XIDs da Caldeira exige estritamente superusuário."""
@@ -379,6 +428,80 @@ class CaldeiraReportTestCase(TestCase):
         self.assertEqual(ws3.freeze_panes, "A2")
         self.assertEqual(ws3.page_setup.orientation, ws3.ORIENTATION_LANDSCAPE)
 
+    def test_fast_report_paginates_and_preserves_aggregates_and_excel_rows(self):
+        """A página lê 50 registros e o resumo mantém os cálculos do histórico integral."""
+        start_dt = timezone.now() - timedelta(minutes=2)
+        start_ms = int((start_dt + timedelta(seconds=1)).timestamp() * 1000)
+        rows = []
+        for index in range(51):
+            ts = start_ms + index * 1000
+            rows.append((self.dp_map["pressao_caldeira"], 3, 13.0 + index / 100, ts))
+        for index, value in ((0, 1000), (1, 1050), (2, 10), (3, 40)):
+            rows.append((self.dp_map["volume_condensado"], 3, value, start_ms + index * 1000))
+        for key, value in (("setpoint_pressao_alta", 10),
+                           ("pressao_alta_prensas_1_7", 9.5),
+                           ("pressao_alta_prensas_8_12", 9.0)):
+            rows.append((self.dp_map[key], 3, value, start_ms))
+        with connections["scada"].cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s)", rows
+            )
+        end_dt = start_dt + timedelta(minutes=3)
+        fast = CaldeiraFastReader.summary(start_dt, end_dt)
+        original = CaldeiraHistoricalService.get_synchronized_history(start_dt, end_dt)
+        self.assertEqual(fast["total_records"], 51)
+        self.assertEqual(fast["raw_points_count"], len(rows))
+        self.assertEqual(fast["stats"]["variables"], original["stats"]["variables"])
+        self.assertEqual(fast["stats"]["deviations"], original["stats"]["deviations"])
+        self.assertEqual(fast["condensate_stats"]["total_liters"], 80)
+        self.assertEqual(len(CaldeiraFastReader.page(start_dt, end_dt, 1, 51)), 50)
+        self.assertEqual(len(CaldeiraFastReader.page(start_dt, end_dt, 2, 51)), 1)
+        with CaldeiraFastReader.excel_file(start_dt, end_dt) as output:
+            workbook = openpyxl.load_workbook(output, read_only=True)
+            self.assertEqual(sum(1 for _ in workbook["Dados Históricos"].iter_rows()), 52)
+            self.assertEqual(workbook["Dados Históricos"]["O3"].value, 50)
+            self.assertEqual(workbook["Dados Históricos"]["O4"].value, 0)
+            self.assertEqual(workbook["Dados Históricos"]["O5"].value, 30)
+            workbook.close()
+        with patch.object(CaldeiraFastReader, "EXCEL_MAX_DATA_ROWS", 20):
+            with CaldeiraFastReader.excel_file(start_dt, end_dt) as output:
+                workbook = openpyxl.load_workbook(output, read_only=True)
+                self.assertEqual(
+                    [name for name in workbook.sheetnames if name.startswith("Dados Históricos")],
+                    ["Dados Históricos", "Dados Históricos 2", "Dados Históricos 3"],
+                )
+                self.assertEqual(sum(1 for _ in workbook["Dados Históricos 3"].iter_rows()), 12)
+                workbook.close()
+
+    def test_fast_full_day_segments_preserve_forward_fill_and_condensate(self):
+        """Mesclar dias em cache mantém os resultados de uma consulta contínua."""
+        first_date = timezone.localtime().date() - timedelta(days=3)
+        start_dt = timezone.make_aware(datetime.combine(first_date, dt_time.min))
+        end_dt = start_dt + timedelta(days=2) - timedelta(milliseconds=1)
+        first_ts = int((start_dt + timedelta(hours=12)).timestamp() * 1000)
+        second_ts = int((start_dt + timedelta(days=1, hours=12)).timestamp() * 1000)
+        readings = [
+            (self.dp_map["setpoint_pressao_alta"], 3, 10.0, first_ts),
+            (self.dp_map["pressao_alta_prensas_1_7"], 3, 9.0, first_ts),
+            (self.dp_map["volume_condensado"], 3, 100.0, first_ts),
+            (self.dp_map["pressao_alta_prensas_1_7"], 3, 11.0, second_ts),
+            (self.dp_map["volume_condensado"], 3, 150.0, second_ts),
+        ]
+        with connections["scada"].cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s)", readings
+            )
+        fast = CaldeiraFastReader.summary(start_dt, end_dt)
+        original = CaldeiraHistoricalService.get_synchronized_history(start_dt, end_dt)
+        self.assertEqual(fast["total_records"], len(original["timeline"]))
+        self.assertEqual(fast["stats"]["variables"], original["stats"]["variables"])
+        self.assertEqual(fast["stats"]["deviations"], original["stats"]["deviations"])
+        self.assertEqual(fast["condensate_stats"]["total_liters"], 50.0)
+        with patch.object(CaldeiraFastReader, "_segment_summary",
+                          wraps=CaldeiraFastReader._segment_summary) as segment_query:
+            CaldeiraFastReader.summary(start_dt, end_dt + timedelta(minutes=1))
+        self.assertEqual(segment_query.call_count, 1)
+
     # ─────────────────────────────────────────────────────────────────────────
     # 7. TESTES DE NÃO-REGRESSÃO DA CALANDRA
     # ─────────────────────────────────────────────────────────────────────────
@@ -392,3 +515,72 @@ class CaldeiraReportTestCase(TestCase):
 
         resp_excel = self.client.get(reverse("production:calandra_export_excel"))
         self.assertEqual(resp_excel.status_code, 200)
+
+    def test_vacuum_chart_keeps_weakest_reading_in_interval(self):
+        start_dt = timezone.localtime().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        vacuum_id = self.dp_map["pressao_vacuo"]
+        with connections["scada"].cursor() as cursor:
+            cursor.executemany(
+                "INSERT INTO pointvalues (dataPointId, dataType, pointValue, ts) VALUES (%s, %s, %s, %s)",
+                [(vacuum_id, 3, value, int((start_dt + timedelta(minutes=minute)).timestamp() * 1000))
+                 for minute, value in ((1, -0.55), (2, -0.20), (3, -0.54))],
+            )
+        chart = CaldeiraFastReader.summary(start_dt, start_dt + timedelta(minutes=5))["chart_datasets"]["chart_6_vacuo"]
+        self.assertEqual(chart["strength_min"], [0.2])
+        self.assertEqual(len(chart["strength_avg"]), 1)
+
+    def test_insights_counts_door_opening_pressure_drop_and_press_activity(self):
+        start_dt = timezone.make_aware(datetime(2026, 11, 9, 6, 0))
+        end_dt = start_dt + timedelta(hours=1)
+        def reading(minute, point_id, value):
+            return (point_id, 3, value, int((start_dt + timedelta(minutes=minute)).timestamp() * 1000), minute)
+        records = sorted([
+            reading(1, 3, 1), reading(5, 1, 15), reading(7, 4, 1),
+            reading(8, 4, 0), reading(10, 1, 13.8), reading(13, 1, 13.7),
+            reading(15, 1, 15), reading(30, 2, 1050), reading(31, 3, 0),
+        ], key=lambda row: row[3])
+        with patch.object(CaldeiraInsightsService, "_resolve", return_value=(
+            {1: "pressure", 2: "condensate", 3: "press_01", 4: "door"}, [], True,
+        )), patch.object(CaldeiraInsightsService, "_seeds", return_value={
+            "pressure": None, "condensate": 1000, "press_01": False, "door": False,
+        }), patch.object(CaldeiraFastReader, "_records", return_value=iter(records)):
+            result = CaldeiraInsightsService.analyze(start_dt, end_dt)
+        self.assertEqual(result["door_openings"], 1)
+        self.assertEqual(result["drop_total"], 1)
+        self.assertEqual(result["hours"][0]["cond_liters"], 50)
+        self.assertEqual(result["hours"][0]["active_presses"], 0.5)
+        self.assertEqual(result["shifts"][0]["drop_count"], 1)
+        self.assertEqual(result["shifts"][0]["door_near_drops"], 1)
+        self.assertEqual(result["shifts"][0]["pressure_samples"], 4)
+
+    def test_performance_page_and_settings_permissions(self):
+        self.client.force_login(self.user_lp)
+        response = self.client.get(reverse("production:caldeira_performance"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "O que aconteceu com a pressão?")
+        self.assertContains(response, "Não há leituras de pressão")
+        save_url = reverse("production:caldeira_performance_settings")
+        response = self.client.post(save_url, {"last_maintenance_date": "2026-11-01"})
+        self.assertNotEqual(response.status_code, 200)
+        self.assertFalse(CaldeiraAnalysisSettings.objects.exists())
+
+        self.client.force_login(self.user_admin)
+        response = self.client.post(save_url, {
+            "last_maintenance_date": "2026-11-01",
+            "last_inspection_date": "2026-01-01",
+            "next_inspection_due": "2027-01-01",
+            "operating_pressure_floor_bar": "14.5",
+        })
+        self.assertEqual(response.status_code, 302)
+        settings = CaldeiraAnalysisSettings.objects.get(pk=1)
+        self.assertEqual(str(settings.operating_pressure_floor_bar), "14.50")
+        self.client.post(save_url, {"operating_pressure_floor_bar": "17.7"})
+        self.assertEqual(CaldeiraAnalysisSettings.objects.get(pk=1).last_maintenance_date.isoformat(), "2026-11-01")
+
+    def test_report_removes_setpoint_difference_chart(self):
+        self.client.force_login(self.user_lp)
+        response = self.client.get(reverse("production:caldeira_report"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Diferença das Linhas de Alta em Relação ao Setpoint")
+        self.assertContains(response, "Força do Vácuo ao Longo do Tempo")
+        self.assertContains(response, "caldeira/desempenho/")

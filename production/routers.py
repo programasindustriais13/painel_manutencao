@@ -47,6 +47,7 @@ class ScadaRouter:
         "productionbladderusage",
         "productionbladdersetupmismatchevent",
         "whatsappalertrecipient",
+        "caldeiraanalysissettings",
     }
 
     def db_for_read(self, model, **hints):

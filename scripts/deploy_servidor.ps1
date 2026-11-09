@@ -5,7 +5,8 @@
 [CmdletBinding()]
 param(
     [switch]$CheckOnly,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$SkipCaldeiraWarmup
 )
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path

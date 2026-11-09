@@ -1,0 +1,20 @@
+{% extends "production/base_production.html" %}
+{% block title %}Exportação da Caldeira 2{% endblock %}
+{% block content %}
+<div class="container py-4" style="max-width: 720px;">
+    <div class="card shadow-sm border-0 p-4">
+        <h2 class="h4 mb-3">Exportação Excel da Caldeira 2</h2>
+        {% if ready %}
+            <p>O arquivo está pronto para download.</p>
+            <a class="btn btn-success" href="{% url 'production:caldeira_export_status' job_id %}?download=1">Baixar Excel</a>
+        {% elif job.status == "failed" %}
+            <p>Não foi possível gerar o arquivo. Tente novamente mais tarde.</p>
+            <a class="btn btn-outline-secondary" href="{% url 'production:caldeira_report' %}">Voltar ao relatório</a>
+        {% else %}
+            <p>O histórico está sendo preparado. Esta página será atualizada automaticamente.</p>
+            <div class="spinner-border text-primary" role="status"><span class="visually-hidden">Processando</span></div>
+            <script>setTimeout(function () { window.location.reload(); }, 5000);</script>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

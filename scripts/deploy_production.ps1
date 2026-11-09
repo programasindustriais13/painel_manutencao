@@ -6,12 +6,14 @@
 # Parâmetros:
 #   -CheckOnly : Executa apenas as validações de pré-verificação sem alterar nada.
 #   -DryRun    : Simula todas as etapas do deploy sem aplicar alterações permanentes.
+#   -SkipCaldeiraWarmup : Pula o aquecimento do histórico quando necessário.
 # ==============================================================================
 
 [CmdletBinding()]
 param(
     [switch]$CheckOnly,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$SkipCaldeiraWarmup
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,7 +41,7 @@ Write-Host "====================================================================
 # ==============================================================================
 # ETAPA 1: PRÉ-VERIFICAÇÃO (PREFLIGHT CHECKS)
 # ==============================================================================
-Write-Host "`n>>> [ETAPA 1/5] Executando Pré-Verificações de Integridade..." -ForegroundColor Yellow
+Write-Host "`n>>> [ETAPA 1/6] Executando Pré-Verificações de Integridade..." -ForegroundColor Yellow
 
 # 1.1 Verificar manage.py
 $ManagePy = Join-Path $ProjectRoot "manage.py"
@@ -108,15 +110,10 @@ try {
         $GitBranch = "main"
     }
 
-    if (-not $CheckOnly -and -not $DryRun) {
-        Write-Host "  Atualizando codigo a partir do repositorio remoto (git pull origin $GitBranch)..." -ForegroundColor Yellow
-        $PullResult = git pull origin $GitBranch 2>&1
-        $PullResult | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
-    }
-
     $GitCommit = git log -n 1 --oneline 2>&1
     $GitStatus = git status --short 2>&1
     Write-Host "  [OK] Git Branch: $GitBranch | Commit Atual: $GitCommit" -ForegroundColor Green
+    Write-Host "  [INFO] O deploy usa o código já presente. Execute git pull antes deste script." -ForegroundColor Gray
     if ($GitStatus) {
         Write-Host "  [AVISO] Existem alterações não commitadas na árvore de trabalho:" -ForegroundColor Yellow
         $GitStatus | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
@@ -150,7 +147,7 @@ if ($CheckOnly) {
 # ==============================================================================
 # ETAPA 2: SEGURANÇA E BACKUP PREVENTIVO
 # ==============================================================================
-Write-Host "`n>>> [ETAPA 2/5] Executando Backup de Segurança Preventivo..." -ForegroundColor Yellow
+Write-Host "`n>>> [ETAPA 2/6] Executando Backup de Segurança Preventivo..." -ForegroundColor Yellow
 
 $BackupDir = Join-Path $ProjectRoot "backups\deploy_$DeployTimestamp"
 
@@ -165,7 +162,13 @@ if ($DryRun) {
     $DbPath = Join-Path $ProjectRoot "db.sqlite3"
     if (Test-Path $DbPath) {
         $DbBackupPath = Join-Path $BackupDir "db.sqlite3"
-        Copy-Item -Path $DbPath -Destination $DbBackupPath -Force
+        # A API de backup do SQLite inclui transações confirmadas mesmo com o app ativo.
+        $SqliteBackupCode = "import sqlite3,sys; source=sqlite3.connect(sys.argv[1]); target=sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()"
+        & $PythonExec -c $SqliteBackupCode $DbPath $DbBackupPath
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[ERRO CRÍTICO] Falha no backup consistente de db.sqlite3." -ForegroundColor Red
+            exit 1
+        }
         $DbSize = (Get-Item $DbBackupPath).Length
         if ($DbSize -le 0) {
             Write-Host "[ERRO CRÍTICO] Backup de db.sqlite3 gerou arquivo de tamanho zero!" -ForegroundColor Red
@@ -198,7 +201,7 @@ if ($DryRun) {
 # ==============================================================================
 # ETAPA 3: APLICAÇÃO DAS ALTERAÇÕES
 # ==============================================================================
-Write-Host "`n>>> [ETAPA 3/5] Aplicando Migrações e Atualizações de Aplicação..." -ForegroundColor Yellow
+Write-Host "`n>>> [ETAPA 3/6] Aplicando Migrações e Atualizações de Aplicação..." -ForegroundColor Yellow
 
 if ($DryRun) {
     Write-Host "  [DRY-RUN] Simulação de instalação de dependências (requirements.txt)" -ForegroundColor Yellow
@@ -285,7 +288,7 @@ if ($DryRun) {
 # ==============================================================================
 # ETAPA 4: INICIALIZAÇÃO SEM DUPLICIDADE E LIBERAÇÃO DE PORTAS
 # ==============================================================================
-Write-Host "`n>>> [ETAPA 4/5] Gerenciamento Seguro de Processos e Inicialização..." -ForegroundColor Yellow
+Write-Host "`n>>> [ETAPA 4/6] Gerenciamento Seguro de Processos e Inicialização..." -ForegroundColor Yellow
 
 # Verificar se roda como Serviços Windows via NSSM / SCM
 $ServiceWaitress = $null
@@ -313,7 +316,7 @@ $TaskWaitress = Get-ScheduledTask -TaskName "Painel Manutencao - Waitress" -Erro
 
 if ($DryRun) {
     Write-Host "  [DRY-RUN] Verificando ocupação da porta $WaitressPort..." -ForegroundColor Yellow
-    $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
+    $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -State Listen -ErrorAction SilentlyContinue
     if ($TcpConn) {
         Write-Host "  [DRY-RUN] Porta $WaitressPort atualmente ocupada por PID(s): $($TcpConn.OwningProcess -join ', ')" -ForegroundColor Yellow
     } else {
@@ -324,7 +327,7 @@ if ($DryRun) {
     # 1. Parar serviços ou tarefas agendadas previamente
     if ($ServiceWaitress) {
         Write-Host "  Serviço Windows '$($ServiceWaitress.Name)' detectado. Parando serviço..." -ForegroundColor Gray
-        Stop-Service -Name $ServiceWaitress.Name -Force -ErrorAction SilentlyContinue
+        Stop-Service -Name $ServiceWaitress.Name -Force -ErrorAction Stop
         Start-Sleep -Seconds 2
     } elseif ($TaskWaitress) {
         Write-Host "  Tarefa Agendada 'Painel Manutencao - Waitress' detectada. Parando tarefa..." -ForegroundColor Gray
@@ -333,16 +336,22 @@ if ($DryRun) {
     }
 
     # 2. GARANTIR LIBERACAO DA PORTA 8900: Encerrar qualquer python remanescente na porta
-    $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
+    $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -State Listen -ErrorAction SilentlyContinue
     if ($TcpConn) {
         $Pids = $TcpConn.OwningProcess | Select-Object -Unique
         Write-Host "  Processo(s) detectado(s) na porta $WaitressPort (PID: $($Pids -join ', ')). Encerrando..." -ForegroundColor Yellow
         foreach ($procId in $Pids) {
             try {
                 $proc = Get-Process -Id $procId -ErrorAction SilentlyContinue
-                if ($proc -and $proc.ProcessName -match "python") {
+                $procInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
+                if ($proc -and $procInfo -and
+                    $procInfo.ExecutablePath -eq $PythonExec -and
+                    $procInfo.CommandLine -match "waitress") {
                     Write-Host "  Finalizando processo anterior do Waitress (PID: $procId)..." -ForegroundColor Gray
-                    Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+                    Stop-Process -Id $procId -Force -ErrorAction Stop
+                } else {
+                    Write-Host "[ERRO CRÍTICO] Porta $WaitressPort ocupada por processo não identificado como Waitress deste projeto (PID $procId)." -ForegroundColor Red
+                    exit 1
                 }
             } catch {
                 Write-Host "  [AVISO] Não foi possível encerrar PID $procId : $_" -ForegroundColor Yellow
@@ -354,7 +363,7 @@ if ($DryRun) {
     # 3. Validar se a porta ficou 100% livre
     $PortLivre = $false
     for ($i = 0; $i -lt 10; $i++) {
-        $CheckConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
+        $CheckConn = Get-NetTCPConnection -LocalPort $WaitressPort -State Listen -ErrorAction SilentlyContinue
         if (-not $CheckConn) {
             $PortLivre = $true
             break
@@ -370,8 +379,11 @@ if ($DryRun) {
     # 4. Iniciar novo processo com código atualizado
     if ($ServiceWaitress) {
         Write-Host "  Iniciando serviço Windows '$($ServiceWaitress.Name)'..." -ForegroundColor Gray
-        Start-Service -Name $ServiceWaitress.Name -ErrorAction SilentlyContinue
+        Start-Service -Name $ServiceWaitress.Name -ErrorAction Stop
         Start-Sleep -Seconds 3
+        if ((Get-Service -Name $ServiceWaitress.Name).Status -ne "Running") {
+            throw "O serviço web '$($ServiceWaitress.Name)' não entrou em execução."
+        }
         Write-Host "  [OK] Serviço '$($ServiceWaitress.Name)' iniciado." -ForegroundColor Green
     } elseif ($TaskWaitress) {
         Write-Host "  Iniciando Tarefa Agendada 'Painel Manutencao - Waitress'..." -ForegroundColor Gray
@@ -388,34 +400,60 @@ if ($DryRun) {
 
     # Gerenciamento do Coletor SCADA
     if ($ServiceScada) {
-        Write-Host "  Serviço Windows 'ScadaCollector' detectado. Reiniciando coletor..." -ForegroundColor Gray
-        Restart-Service -Name "ScadaCollector" -Force
+        $CollectorServiceNow = Get-Service -Name $ServiceScada.Name -ErrorAction Stop
+        if ($CollectorServiceNow.Status -eq "Running") {
+            Write-Host "  Reiniciando serviço Windows '$($ServiceScada.Name)'..." -ForegroundColor Gray
+            Restart-Service -Name $ServiceScada.Name -Force -ErrorAction Stop
+        } else {
+            Write-Host "  Iniciando serviço Windows '$($ServiceScada.Name)'..." -ForegroundColor Gray
+            Start-Service -Name $ServiceScada.Name -ErrorAction Stop
+        }
         Start-Sleep -Seconds 2
-        Write-Host "  [OK] Serviço 'ScadaCollector' reiniciado com sucesso." -ForegroundColor Green
+        if ((Get-Service -Name $ServiceScada.Name).Status -ne "Running") {
+            throw "O serviço '$($ServiceScada.Name)' não entrou em execução."
+        }
+        Write-Host "  [OK] Serviço '$($ServiceScada.Name)' ativo." -ForegroundColor Green
+        $CollectorStartup = Get-CimInstance Win32_Service -Filter "Name = '$($ServiceScada.Name)'" -ErrorAction SilentlyContinue
+        if ($CollectorStartup -and $CollectorStartup.StartMode -ne "Auto") {
+            Write-Host "  [AVISO] O coletor está ativo, mas o serviço não está configurado para iniciar automaticamente com o Windows." -ForegroundColor Yellow
+        }
     } else {
-        # Verificar lock do coletor standalone
+        # Instalações antigas usam duas janelas manuais; identificar apenas o coletor deste .venv.
+        $Collectors = @(Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" -ErrorAction Stop |
+            Where-Object { $_.ExecutablePath -eq $PythonExec -and $_.CommandLine -match "collect_production_scada" })
+        foreach ($collector in $Collectors) {
+            Write-Host "  Encerrando coletor manual anterior (PID $($collector.ProcessId))..." -ForegroundColor Gray
+            Stop-Process -Id $collector.ProcessId -Force -ErrorAction Stop
+            Wait-Process -Id $collector.ProcessId -Timeout 5 -ErrorAction SilentlyContinue
+        }
         $LockFile = Join-Path $ProjectRoot "scada_collector.lock"
         if (Test-Path $LockFile) {
-            Write-Host "  Lock 'scada_collector.lock' detectado. Verificando se processo está ativo..." -ForegroundColor Gray
-            try {
-                $LockPid = Get-Content $LockFile -ErrorAction SilentlyContinue
-                if ($LockPid) {
-                    $LockProc = Get-Process -Id ([int]$LockPid) -ErrorAction SilentlyContinue
-                    if (-not $LockProc) {
-                        Write-Host "  Removendo lock órfão de processo encerrado (PID: $LockPid)..." -ForegroundColor Yellow
-                        Remove-Item -Path $LockFile -Force -ErrorAction SilentlyContinue
-                    }
+            $LockPidText = (Get-Content -LiteralPath $LockFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+            $LockPid = 0
+            if ([int]::TryParse($LockPidText, [ref]$LockPid)) {
+                $LockOwner = Get-Process -Id $LockPid -ErrorAction SilentlyContinue
+                if ($LockOwner) {
+                    throw "O lock do coletor pertence ao PID $LockPid, que ainda está ativo. Verifique o processo antes de iniciar outro coletor."
                 }
-            } catch {}
+            }
+            Remove-Item -LiteralPath $LockFile -Force -ErrorAction Stop
         }
-        Write-Host "  [OK] Controle de concorrência do coletor SCADA validado." -ForegroundColor Green
+        Write-Host "  Iniciando coletor SCADA em segundo plano (intervalo 60 s)..." -ForegroundColor Gray
+        $CollectorProcess = Start-Process -FilePath $PythonExec -ArgumentList @("manage.py", "collect_production_scada", "--interval", "60") -WorkingDirectory $ProjectRoot -WindowStyle Hidden -PassThru
+        Start-Sleep -Seconds 3
+        $CollectorProcess.Refresh()
+        if ($CollectorProcess.HasExited) {
+            throw "O coletor SCADA encerrou logo após iniciar. Verifique logs/scada_collector.log."
+        }
+        Write-Host "  [OK] Coletor SCADA ativo (PID $($CollectorProcess.Id))." -ForegroundColor Green
+        Write-Host "  [AVISO] Para iniciar automaticamente após reinício do Windows, configure o serviço ScadaCollectorService uma vez." -ForegroundColor Yellow
     }
 }
 
 # ==============================================================================
 # ETAPA 5: PÓS-VERIFICAÇÃO E SMOKE TESTS
 # ==============================================================================
-Write-Host "`n>>> [ETAPA 5/5] Executando Pós-Verificação e Smoke Tests..." -ForegroundColor Yellow
+Write-Host "`n>>> [ETAPA 5/6] Executando Pós-Verificação e Smoke Tests..." -ForegroundColor Yellow
 
 if ($DryRun) {
     Write-Host "  [DRY-RUN] Simulação de Smoke Tests (HTTP GET /login/ e verificação de porta $WaitressPort)." -ForegroundColor Yellow
@@ -423,7 +461,7 @@ if ($DryRun) {
     # 5.1 Smoke Test 1: Verificar se a porta 8900 está ouvindo
     $Listening = $false
     for ($i = 0; $i -lt 15; $i++) {
-        $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -ErrorAction SilentlyContinue
+        $TcpConn = Get-NetTCPConnection -LocalPort $WaitressPort -State Listen -ErrorAction SilentlyContinue
         if ($TcpConn) {
             $Listening = $true
             break
@@ -459,8 +497,30 @@ if ($DryRun) {
     }
 }
 
+# ==============================================================================
+# ETAPA 6: AQUECIMENTO DO HISTÓRICO DA CALDEIRA
+# ==============================================================================
+Write-Host "`n>>> [ETAPA 6/6] Preparando histórico da Caldeira..." -ForegroundColor Yellow
+if ($SkipCaldeiraWarmup) {
+    Write-Host "  [INFO] Aquecimento pulado por -SkipCaldeiraWarmup." -ForegroundColor Gray
+} elseif ($DryRun) {
+    Write-Host "  [DRY-RUN] Executaria: manage.py warm_caldeira_reports --days 31" -ForegroundColor Yellow
+} else {
+    Write-Host "  Reutilizando dias já em cache e preparando dias ausentes. A primeira execução pode levar alguns minutos..." -ForegroundColor Gray
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $PythonExec manage.py warm_caldeira_reports --days 31
+    $warmExit = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+    if ($warmExit -ne 0) {
+        Write-Host "[ERRO] Aplicação iniciada, mas o aquecimento da Caldeira falhou (ExitCode: $warmExit)." -ForegroundColor Red
+        Write-Host "  Após corrigir o acesso ao SCADA, execute: .\.venv\Scripts\python.exe manage.py warm_caldeira_reports --days 31" -ForegroundColor Yellow
+        exit 2
+    }
+    Write-Host "  [OK] Histórico da Caldeira preparado." -ForegroundColor Green
+}
+
 Write-Host "`n======================================================================" -ForegroundColor Green
 Write-Host "  DEPLOY CONCLUÍDO COM SUCESSO EM PRODUÇÃO!" -ForegroundColor Green
-Write-Host "  Todas as 5 etapas foram executadas com integridade 100% garantida." -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green
 exit 0

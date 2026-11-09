@@ -1,4 +1,5 @@
 from django import forms
+from decimal import Decimal
 from django.db.models import Q
 from django.core.exceptions import ValidationError
 from .models import (
@@ -8,7 +9,35 @@ from .models import (
     ProductionTarget,
     ProductionPCPPlan,
     ProductionBladder,
+    CaldeiraAnalysisSettings,
 )
+
+
+class CaldeiraAnalysisSettingsForm(forms.ModelForm):
+    class Meta:
+        model = CaldeiraAnalysisSettings
+        fields = ["last_maintenance_date", "last_inspection_date", "next_inspection_due",
+                  "operating_pressure_floor_bar"]
+        widgets = {
+            "last_maintenance_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d"),
+            "last_inspection_date": forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d"),
+            "next_inspection_due": forms.DateInput(attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d"),
+            "operating_pressure_floor_bar": forms.NumberInput(attrs={"step": "0.01", "min": "0.01", "max": "17.7", "class": "form-control"}),
+        }
+
+    def clean_operating_pressure_floor_bar(self):
+        value = self.cleaned_data.get("operating_pressure_floor_bar")
+        if value is not None and (value <= 0 or value >= Decimal("17.7")):
+            raise ValidationError("Informe um valor positivo abaixo da PMTA de 17,7 bar.")
+        return value
+
+    def clean(self):
+        data = super().clean()
+        inspection = data.get("last_inspection_date")
+        due = data.get("next_inspection_due")
+        if inspection and due and due <= inspection:
+            self.add_error("next_inspection_due", "A próxima inspeção deve ocorrer após a última.")
+        return data
 
 
 class ProductionMatrixCatalogForm(forms.ModelForm):

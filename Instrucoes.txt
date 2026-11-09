@@ -1,3 +1,13 @@
+FLUXO ATUAL DE DEPLOY NO SERVIDOR (após configurar os serviços Windows uma vez):
+git pull
+powershell -ExecutionPolicy Bypass -File .\scripts\deploy_production.ps1
+
+O script faz backup, migrações no banco default, collectstatic, reinício do web e
+coletor SCADA, testes de acesso e warm_caldeira_reports --days 31. O cache da
+Caldeira permanece em disco após reinícios. O coletor só inicia automaticamente
+com o Windows se estiver configurado como serviço/tarefa de inicialização.
+As anotações abaixo descrevem procedimentos anteriores e diagnóstico manual.
+
 no servidor: 
 Start-ScheduledTask -TaskName "Painel Manutencao - Waitress"
 Start-Sleep -Seconds 8
@@ -25,7 +35,7 @@ Servidor web da Manutenção:
 
 powershell -ExecutionPolicy Bypass -File .\scripts\start_production.ps1
 
-Como o sistema já foi atualizado e está rodando em produção, o fluxo foi concluído com sucesso. Em futuros deploys, basta interromper essas duas janelas com Ctrl + C, atualizar e validar o projeto, iniciar primeiro o servidor web e depois o coletor SCADA.
+O procedimento de duas janelas acima é legado. Para novos deploys, use o fluxo automatizado no início deste arquivo.
 http://localhost:3000/groups
 python manage.py runserver 0.0.0.0:8000
 

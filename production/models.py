@@ -262,6 +262,24 @@ class ProductionGlobalParameter(models.Model):
         return f"{self.nome} ({self.chave})"
 
 
+class CaldeiraAnalysisSettings(models.Model):
+    """Datas documentais da caldeira, distintas dos critérios da telemetria."""
+
+    last_maintenance_date = models.DateField(null=True, blank=True, verbose_name="Última manutenção operacional")
+    last_inspection_date = models.DateField(null=True, blank=True, verbose_name="Última inspeção NR-13")
+    next_inspection_due = models.DateField(null=True, blank=True, verbose_name="Próxima inspeção conforme relatório do PH")
+    operating_pressure_floor_bar = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name="Pressão mínima operacional documentada (bar)",
+        help_text="Preencher somente com valor aprovado no manual ou pelo profissional habilitado.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Configuração da análise da caldeira"
+        verbose_name_plural = "Configurações da análise da caldeira"
+
+
 class WhatsAppAlertRecipient(models.Model):
     nome = models.CharField(
         max_length=100,
