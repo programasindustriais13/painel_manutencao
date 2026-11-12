@@ -4403,3 +4403,101 @@ ARQUITETURA: SPEC-DRIVEN (SPEC_CORRECAO_CONCORRENCIA_DR201_APPEND.md)
    - Identificado que o comando `Stop-ScheduledTask` no Windows não finalizava os processos filhos `python.exe` rodando o Waitress na porta 8900.
    - Ajustado o script de deploy para SEMPRE inspecionar a porta 8900 e encerrar forçadamente qualquer processo python remanescente antes de reiniciar a Tarefa Agendada ou serviço, garantindo que o novo código em disco seja carregado em memória.
 ================================================================================
+
+
+================================================================================
+ATUALIZAÇÃO: LOTE POR BATELADA E QUANTIDADE DE VOLUMES — BLADDERS ACABADOS
+DATA: 12/11/2026
+SPEC: regras_programacao/SPEC_LOTE_BATELADA_VOLUMES_BLADDER.md
+================================================================================
+
+ANTES:
+1 peça = 1 lote = 1 movimentação = 1 linha DR-201.
+
+AGORA:
+1 lote pode possuir N volumes.
+1 movimentação possui lote + quantidade.
+1 movimentação = 1 linha DR-201.
+
+1. MOVIMENTAÇÃO E ESTOQUE:
+   - registrar_movimentacao_multipla_estoque mantém o retorno ([mov], saldo), mas
+     delega aos serviços existentes de entrada/saída e cria somente um evento.
+   - Exemplo: saldo 10 + entrada LOT001/20 = 30; saída LOT001/5 = 25.
+   - Quantidade obrigatória, inteira e positiva; lote obrigatório normalizado,
+     até 60 caracteres. Não há fallback silencioso para quantidade 1.
+   - Campos legado lotes só aceitam um lote; valores extras/ambíguos são rejeitados.
+   - Saída maior que saldo bloqueada; transação, lock por produto, permissões e
+     callback após commit preservados. Não há bloqueio adicional por saldo do lote.
+   - MovimentacaoEstoqueBladder e ProdutoBladder já suportam essa estrutura:
+     nenhuma migration, nova tabela ou alteração de registros históricos.
+   - Eventos antigos quantidade=1 coexistem com novos N. Somas por produto/lote,
+     tipo, data e responsável permitem rastreabilidade e saída parcial futura.
+
+2. INTERFACE E VALIDAÇÃO:
+   - Modal compartilhado entre estoque e operador possui um único lote_etiqueta,
+     independentemente da quantidade (inclusive 100); rótulo Quantidade de Volumes.
+   - Removidos atualizarLotesModal, N inputs/Peça N e badge de uma linha por peça.
+   - Botões +/- mantidos sem teto arbitrário 50; Enter do leitor vai à observação
+     sem confirmar automaticamente. Dicas explicam lote comum e volumes.
+   - MovimentacaoEstoqueForm valida o POST no backend; mensagens usam quantidade
+     de volumes e informam encaminhamento assíncrono, sem afirmar sucesso remoto.
+
+3. DR-201 E HISTÓRICO:
+   - G=lote, H=modelo, I=movimentacao.quantidade (inteiro), uma linha por evento.
+   - Observações internas continuam no campo justificativa do Django; não são
+     enviadas à coluna I. Foto mantém a regra anterior.
+   - APPEND server-side, INSERT_ROWS, A:J e USER_ENTERED preservados; nenhum
+     cálculo de próxima linha, ws.update ou edição de linhas/cabeçalho existentes.
+   - Reconciliação soma I inteiro positivo como volumes e usa 1 para texto/vazio
+     legado, inclusive na listagem de modelos desconhecidos. Importação reutiliza
+     o mesmo cálculo; não reaplicar cargas sem conferência da liderança.
+   - Consulta real anterior à implementação: I já se chama Volumes; não houve
+     renomeação. Planilha vinculada a respostas Google Forms deve ser preservada.
+   - Em outra implantação que ainda tenha Observações: "Alterar o cabeçalho da
+     coluna I de Observações para Quantidade de Volumes" somente manualmente,
+     pelo responsável após avaliar Google Forms; não automatizar essa alteração.
+   - Observação antiga exclusivamente numérica é ambígua; nenhuma encontrada
+     nas 3.058 linhas históricas consultadas antes da alteração.
+
+4. TESTES E ENSAIO EXTERNO:
+   - Classe EstoqueLoteBateladaVolumesTestCase em bladder/tests.py: 19 testes
+     passaram, incluindo A entrada20, B saída5, C saldo negativo, D único lote nos
+     dois modais, E uma linha DR, F histórico/relatórios/Excel, G dois eventos20/15.
+   - Extras: validações diretas/Form/POST, aliases ambíguos, permissões/CSRF,
+     idempotência, rastreio/consumo/fechamento, pendentes legado/N, erro/reenvio e
+     reconciliação unitária/volumes. Google Sheets simulado na suíte automática.
+   - manage.py check: sem problemas. makemigrations --check --dry-run: sem mudanças.
+   - test_dr201_suite.py foi adaptado: ensaio explicitamente executado pelo operador
+     do teste (não por manage.py test), lotes identificáveis, entrada20 e15, saída
+     parcial5, compensações15/15, linhas distintas sequenciais/concorrentes,
+     falha antes do envio/retentativa e comparação do histórico anterior.
+     Compensação ocorre por novos movimentos auditáveis; nunca apagar histórico
+     ou atribuir saldo diretamente para encerrar o teste.
+   - QA independente: 19/19 testes aprovados; sem bloqueios produtivos.
+   - Navegador Edge real em 375/768 px: quantidade1/5/20/100 manteve um único
+     lote, sem perda do valor, overflow horizontal ou erros JavaScript.
+   - BLA003 / TESTE-SPEC-20261112-TELA20: entrada20 (saldo0->20) APPEND
+     'DR201'!A3060:J3060; saída5 (20->15) A3061:J3061; saída compensatória15
+     (15->0) A3062:J3062. Histórico Django e todas as linhas anteriores intactos.
+   - Harness real: lotes TESTE-BATELADA-20261112-5988cfd5-01/-02, +20/+15/-5/
+     -15/-15, linhas3068-3072; concorrência sem sobrescrita, retentativa,
+     reenvio e saldo negativo validados; saldo inicial/final0; exit0.
+     Rodada anterior3063-3067 também passou nos cenários, mas resumo final
+     falhou pela seta Unicode no console cp1252; texto corrigido para ->.
+   - Total de13 eventos/linhas de teste preservados (tela3 + harness5 + retry5),
+     todos sincronizados; compensações por ledger, sem exclusões ou saldo manual.
+   - Playwright instalado apenas no .venv existente para validar o navegador;
+     sem nova dependência da aplicação em requirements.txt ou novo ambiente.
+   - Operador, relatórios, /management/ e /dashboard/: HTTP200 no navegador.
+   - Listas completas de arquivos, testes individuais, riscos e evidências
+     estão na seção12 da SPEC; logs e captura visual permanecem em logs/.
+   - Suíte padrão antes:622 testes/16falhas preexistentes de textos de telas.
+     Depois:641 testes/17falhas, incluindo uma ocorrência adicional PCP
+     test_http_post_edit_plan_returns_302 (HTTP200 em vez de302).
+     PCP passou isolado e junto dos19 novos testes (34/34 OK).
+   - Diagnóstico adicional641 testes com hashing rápido só nas fixtures do
+     processo temporário: exatamente16falhas com os mesmos nomes da baseline;
+     zero novas falhas. Nenhum arquivoPCP ou configuração foi alterado.
+     Causa da ocorrência PCP não confirmada; todos resultados preservados.
+     QA aprovou publicação no escopo; suíte global não é declarada verde.
+================================================================================

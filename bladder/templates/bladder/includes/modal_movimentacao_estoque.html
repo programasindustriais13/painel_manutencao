@@ -15,7 +15,7 @@
                             <h5 class="modal-title fw-bold text-dark mb-0" id="{{ modal_id|default:'modalMovimentoEstoqueRapido' }}Label">
                                 Movimentação de Bladders Acabados
                             </h5>
-                            <span class="text-secondary small">Alimenta o estoque Django e replica automaticamente cada peça na planilha DR-201</span>
+                            <span class="text-secondary small">Alimenta o estoque Django e encaminha cada movimentação para uma linha na DR-201</span>
                         </div>
                     </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
@@ -80,43 +80,35 @@
                             </span>
                         </div>
                         <div class="col-12 col-md-4">
-                            <label class="form-label small fw-bold">Quantidade de Peças <span class="text-danger">*</span></label>
+                            <label class="form-label small fw-bold">Quantidade de Volumes <span class="text-danger">*</span></label>
                             <div class="input-group">
                                 <button type="button" class="btn btn-outline-secondary" onclick="alterarQtdModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}', -1)">-</button>
-                                <input type="number" name="quantidade" class="form-control text-center font-monospace fs-5 fw-bold input-qtd-modal" value="1" min="1" max="50" onchange="atualizarLotesModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}')" oninput="atualizarLotesModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}')">
+                                <input type="number" name="quantidade" class="form-control text-center font-monospace fs-5 fw-bold input-qtd-modal" value="1" min="1" step="1" required>
                                 <button type="button" class="btn btn-outline-secondary" onclick="alterarQtdModal('{{ modal_id|default:'modalMovimentoEstoqueRapido' }}', 1)">+</button>
                             </div>
+                            <span class="text-secondary small d-block mt-1">Quantidade de volumes pertencentes ao lote informado.</span>
                         </div>
                     </div>
 
-                    <!-- Seção Dinâmica de Lotes / Etiquetas (1 Campo por Peça) -->
+                    <!-- Um lote de produção para todos os volumes desta movimentação -->
                     <div class="mb-3 p-3 rounded border bg-light">
-                        <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-1">
-                            <label class="form-label small fw-bold mb-0 text-dark">
-                                <i class="bi bi-upc-scan text-info me-1"></i>
-                                Número do Lote / Código de Barras por Peça <span class="text-danger">*</span>
-                            </label>
-                            <span class="badge bg-secondary badge-qtd-lotes">1 peça = 1 linha na DR-201</span>
-                        </div>
-                        <p class="text-secondary small mb-2">
-                            Bipe ou digite o número do lote/etiqueta de cada peça. Na DR-201 será criada <strong>uma linha individual para cada peça</strong> com seu respectivo lote.
+                        <label class="form-label small fw-bold text-dark">
+                            <i class="bi bi-upc-scan text-info me-1"></i>
+                            Número do Lote / Código de Barras <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" name="lote_etiqueta" class="form-control font-monospace input-lote-item" placeholder="Bipe ou digite o lote" maxlength="60" autocomplete="off" required>
+                        <p class="text-secondary small mt-2 mb-0">
+                            Informe o lote da produção. Todas as unidades desta movimentação pertencerão ao mesmo lote.
+                            1 lote/movimentação = 1 linha na DR-201.
                         </p>
-
-                        <!-- Container dinâmico com inputs de lotes -->
-                        <div class="container-inputs-lotes">
-                            <div class="mb-2 input-group">
-                                <span class="input-group-text font-monospace small bg-white text-muted">Peça 1</span>
-                                <input type="text" name="lotes" class="form-control font-monospace input-lote-item" placeholder="Bipe ou digite o lote da peça 1 (ex: 7586193161)" autocomplete="off">
-                            </div>
-                        </div>
                     </div>
 
-                    <!-- Linha 3: Observações (Preenchimento Real da DR-201) -->
+                    <!-- Observações preservadas apenas no histórico interno -->
                     <div class="mb-2">
-                        <label class="form-label small fw-bold">Observações (Opcional)</label>
+                        <label class="form-label small fw-bold">Observações Internas (Opcional)</label>
                         <input type="text" name="observacao" class="form-control" placeholder="Observações complementares da movimentação...">
                         <span class="text-secondary small d-block mt-1">
-                            Este texto será enviado para a coluna de Observações na DR-201. Deixe em branco se não houver observações.
+                            Este texto fica no histórico interno. A coluna de volumes da DR-201 recebe a quantidade informada.
                         </span>
                     </div>
                 </div>
@@ -139,56 +131,8 @@
         const inputQtd = modal.querySelector('.input-qtd-modal');
         if (!inputQtd) return;
         let val = parseInt(inputQtd.value, 10) || 1;
-        val = Math.max(1, Math.min(50, val + delta));
+        val = Math.max(1, val + delta);
         inputQtd.value = val;
-        atualizarLotesModal(modalId);
-    }
-
-    function atualizarLotesModal(modalId) {
-        const modal = document.getElementById(modalId);
-        if (!modal) return;
-        const inputQtd = modal.querySelector('.input-qtd-modal');
-        const container = modal.querySelector('.container-inputs-lotes');
-        const badge = modal.querySelector('.badge-qtd-lotes');
-        if (!inputQtd || !container) return;
-
-        let qtd = parseInt(inputQtd.value, 10) || 1;
-        qtd = Math.max(1, Math.min(50, qtd));
-
-        if (badge) {
-            badge.textContent = `${qtd} peça${qtd > 1 ? 's' : ''} = ${qtd} linha${qtd > 1 ? 's' : ''} na DR-201`;
-        }
-
-        // Salvar valores já digitados antes de recriar
-        const inputsAtuais = container.querySelectorAll('.input-lote-item');
-        const valoresSalvos = [];
-        inputsAtuais.forEach(inp => valoresSalvos.push(inp.value));
-
-        // Recriar inputs
-        container.innerHTML = '';
-        for (let i = 0; i < qtd; i++) {
-            const div = document.createElement('div');
-            div.className = 'mb-2 input-group';
-            const valExistente = valoresSalvos[i] || '';
-            div.innerHTML = `
-                <span class="input-group-text font-monospace small bg-white text-muted">Peça ${i + 1}</span>
-                <input type="text" name="lotes" class="form-control font-monospace input-lote-item" placeholder="Bipe ou digite o lote da peça ${i + 1} (ex: 7586193161)" value="${valExistente}" autocomplete="off">
-            `;
-            container.appendChild(div);
-        }
-
-        // Suporte a leitor de código de barras: ao apertar Enter em um input, pula para o próximo
-        const novosInputs = container.querySelectorAll('.input-lote-item');
-        novosInputs.forEach((inp, idx) => {
-            inp.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (idx + 1 < novosInputs.length) {
-                        novosInputs[idx + 1].focus();
-                    }
-                }
-            });
-        });
     }
 
     function atualizarTipoOperacaoModal(select, modalId) {
@@ -211,6 +155,16 @@
     }
 
     document.addEventListener('DOMContentLoaded', function() {
-        atualizarLotesModal('{{ modal_id|default:"modalMovimentoEstoqueRapido" }}');
+        const modal = document.getElementById('{{ modal_id|default:"modalMovimentoEstoqueRapido" }}');
+        if (!modal) return;
+        const tipo = modal.querySelector('.select-tipo-op');
+        if (tipo) atualizarTipoOperacaoModal(tipo, modal.id);
+        // O Enter enviado pelo leitor não deve confirmar o formulário sem revisão.
+        modal.querySelector('.input-lote-item').addEventListener('keydown', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                modal.querySelector('[name="observacao"]').focus();
+            }
+        });
     });
 </script>

@@ -1,5 +1,7 @@
 import datetime
 import io
+from html.parser import HTMLParser
+from unittest.mock import patch
 from decimal import Decimal
 from django.test import TestCase, Client
 from django.contrib.auth.models import User, Group
@@ -5055,11 +5057,336 @@ class PassagemTurnoBladderTestCase(TestCase):
         self.assertEqual(len(resp_busca.context["mensagens"]), 1)
 
 
+class EstoqueLoteBateladaVolumesTestCase(TestCase):
+    """Regressão do ledger de volumes e do APPEND, sem acesso à planilha real."""
 
+    @classmethod
+    def setUpTestData(cls):
+        cls.usuario = User.objects.create_user(username='lider_volumes', first_name='Líder Volumes')
+        grupo, _ = Group.objects.get_or_create(name='Liderança Bladder')
+        cls.usuario.groups.add(grupo)
+        cls.externo = User.objects.create_user(username='externo_volumes', is_staff=True)
+        cls.produto = ProdutoBladder.objects.create(codigo='BLA003', descricao='Bladder teste', estoque_atual=10)
+        ConfiguracaoEscalaBladder.objects.create(
+            data_referencia=timezone.localdate(), turma_referencia='TURMA_A',
+            hora_inicio=datetime.time(6), hora_fim=datetime.time(18), ativo=True,
+        )
 
+    def setUp(self):
+        self.client.force_login(self.usuario)
 
+    def movimentar(self, tipo='ENTRADA', quantidade=20, lote='LOT001', **kwargs):
+        from bladder.services import registrar_movimentacao_multipla_estoque
+        return registrar_movimentacao_multipla_estoque(
+            produto=self.produto, tipo=tipo, quantidade=quantidade, usuario=self.usuario,
+            lote_etiqueta=lote, disparar_sync=False, **kwargs,
+        )
 
+    def post_data(self, **kwargs):
+        dados = {'produto': self.produto.pk, 'tipo': 'ENTRADA', 'quantidade': '20',
+                 'lote_etiqueta': 'LOT001', 'responsavel_retirada': 'RODRIGO',
+                 'data_turno': timezone.localdate().isoformat(), 'turno': 'MANHÃ'}
+        dados.update(kwargs)
+        return dados
 
+    def test_a_entrada_20_volumes_uma_movimentacao(self):
+        from bladder.models import MovimentacaoEstoqueBladder
+        movs, saldo = self.movimentar(lote=' LOT001 ')
+        self.produto.refresh_from_db()
+        self.assertEqual(MovimentacaoEstoqueBladder.objects.count(), 1)
+        self.assertEqual(len(movs), 1)
+        self.assertEqual((movs[0].quantidade, movs[0].lote_etiqueta), (20, 'LOT001'))
+        self.assertEqual((movs[0].saldo_anterior, movs[0].saldo_posterior), (10, 30))
+        self.assertEqual((saldo, self.produto.estoque_atual), (30, 30))
 
+    def test_b_saida_parcial_5_volumes_uma_movimentacao(self):
+        from bladder.models import MovimentacaoEstoqueBladder
+        self.movimentar()
+        movs, saldo = self.movimentar(tipo='SAIDA', quantidade=5, destino='RODRIGO')
+        self.produto.refresh_from_db()
+        self.assertEqual(MovimentacaoEstoqueBladder.objects.filter(tipo='SAIDA').count(), 1)
+        self.assertEqual((len(movs), movs[0].quantidade, saldo), (1, 5, 25))
+        self.assertEqual((movs[0].saldo_anterior, movs[0].saldo_posterior), (30, 25))
+        self.assertEqual((movs[0].lote_etiqueta, movs[0].destino), ('LOT001', 'RODRIGO'))
+        self.assertEqual(self.produto.estoque_atual, 25)
 
+    def test_c_saldo_negativo_bloqueia_sem_efeitos(self):
+        from bladder.models import MovimentacaoEstoqueBladder
+        self.produto.estoque_atual = 5
+        self.produto.save(update_fields=['estoque_atual'])
+        with self.assertRaisesMessage(ValueError, 'Saldo insuficiente'):
+            self.movimentar(tipo='SAIDA', quantidade=10)
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.estoque_atual, 5)
+        self.assertFalse(MovimentacaoEstoqueBladder.objects.exists())
 
+    def test_d_interface_um_input_lote_nos_dois_modais(self):
+        class InputsLote(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.inputs = []
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == 'input' and attrs.get('name') in ('lote_etiqueta', 'lotes'):
+                    self.inputs.append(attrs)
+        for nome in ('estoque_lista', 'operador'):
+            with self.subTest(tela=nome):
+                resp = self.client.get(reverse('bladder:' + nome))
+                self.assertEqual(resp.status_code, 200)
+                parser = InputsLote()
+                parser.feed(resp.content.decode())
+                self.assertEqual(len(parser.inputs), 1)
+                self.assertEqual(parser.inputs[0]['name'], 'lote_etiqueta')
+                self.assertIn('required', parser.inputs[0])
+                self.assertContains(resp, 'Quantidade de Volumes')
+                self.assertNotContains(resp, 'atualizarLotesModal')
+                self.assertNotContains(resp, 'Peça 1')
+                self.assertNotContains(resp, 'max="50"')
+
+    @patch('gspread.service_account')
+    @patch('bladder.services.os.path.exists', return_value=True)
+    def test_e_dr201_20_volumes_exatamente_uma_linha(self, _exists, service_account):
+        from bladder.services import sincronizar_movimentacao_dr201
+        mov = self.movimentar(justificativa='Observação apenas interna')[0][0]
+        ws = service_account.return_value.open_by_key.return_value.worksheet.return_value
+        ws.append_rows.return_value = {'updates': {'updatedRange': 'DR201!A3060:J3060'}}
+        sucesso, mensagem = sincronizar_movimentacao_dr201(mov)
+        self.assertTrue(sucesso, mensagem)
+        self.assertIn('DR201!A3060:J3060', mensagem)
+        linhas = ws.append_rows.call_args.args[0]
+        self.assertEqual(len(linhas), 1)
+        self.assertEqual(linhas[0][6:9], ['LOT001', 'BLA003', 20])
+        self.assertIsInstance(linhas[0][8], int)
+        self.assertEqual(linhas[0][5], '')
+        self.assertEqual(ws.append_rows.call_args.kwargs, {
+            'value_input_option': 'USER_ENTERED', 'insert_data_option': 'INSERT_ROWS',
+            'table_range': 'A:J', 'include_values_in_response': True,
+        })
+        ws.col_values.assert_not_called()
+        ws.update.assert_not_called()
+        mov.refresh_from_db()
+        self.assertEqual(mov.justificativa, 'Observação apenas interna')
+        self.assertTrue(mov.sincronizado_dr201)
+        self.assertIsNotNone(mov.data_sincronizacao_dr201)
+        self.assertIsNone(mov.erro_sincronizacao_dr201)
+        # Reenvio após confirmação não duplica a linha.
+        self.assertTrue(sincronizar_movimentacao_dr201(mov)[0])
+        ws.append_rows.assert_called_once()
+
+    def test_f_historico_antigo_e_novo_relatorios_e_excel(self):
+        from bladder.models import MovimentacaoEstoqueBladder
+        antigo = MovimentacaoEstoqueBladder.objects.create(
+            produto=self.produto, tipo='ENTRADA', quantidade=1, lote_etiqueta='LOTE-INDIVIDUAL',
+            saldo_anterior=9, saldo_posterior=10, usuario=self.usuario,
+        )
+        self.movimentar()
+        resp = self.client.get(reverse('bladder:estoque_lista'))
+        self.assertContains(resp, 'LOTE-INDIVIDUAL')
+        self.assertContains(resp, 'LOT001')
+        self.assertEqual([m.quantidade for m in resp.context['movimentacoes']], [20, 1])
+        for tela in ('operador', 'relatorios', 'relatorios_exportar_excel'):
+            with self.subTest(tela=tela):
+                self.assertEqual(self.client.get(reverse('bladder:' + tela)).status_code, 200)
+        antigo.refresh_from_db()
+        self.assertEqual((antigo.quantidade, antigo.lote_etiqueta), (1, 'LOTE-INDIVIDUAL'))
+
+    @patch('gspread.service_account')
+    @patch('bladder.services.os.path.exists', return_value=True)
+    def test_g_movimentos_consecutivos_20_e_15_duas_linhas_distintas(self, _exists, service_account):
+        from bladder.services import sincronizar_movimentacao_dr201
+        primeiro = self.movimentar()[0][0]
+        segundo = self.movimentar(quantidade=15, lote='LOT002')[0][0]
+        ws = service_account.return_value.open_by_key.return_value.worksheet.return_value
+        ws.append_rows.side_effect = [
+            {'updates': {'updatedRange': 'DR201!A3060:J3060'}},
+            {'updates': {'updatedRange': 'DR201!A3061:J3061'}},
+        ]
+        self.assertIn('A3060:J3060', sincronizar_movimentacao_dr201(primeiro)[1])
+        self.assertIn('A3061:J3061', sincronizar_movimentacao_dr201(segundo)[1])
+        self.assertEqual(ws.append_rows.call_count, 2)
+        self.assertEqual([c.args[0][0][6:9] for c in ws.append_rows.call_args_list],
+                         [['LOT001', 'BLA003', 20], ['LOT002', 'BLA003', 15]])
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.estoque_atual, 45)
+        ws.col_values.assert_not_called()
+        ws.update.assert_not_called()
+
+    def test_servicos_diretos_validam_quantidade_e_lote(self):
+        from bladder.services import registrar_entrada_estoque, registrar_saida_estoque
+        from bladder.models import MovimentacaoEstoqueBladder
+        for servico in (registrar_entrada_estoque, registrar_saida_estoque):
+            for invalida in (None, '', 'abc', '1.5', '2.0', 0, -1, True, 1.5, Decimal('1.5')):
+                with self.subTest(servico=servico.__name__, quantidade=invalida):
+                    with self.assertRaises(ValueError):
+                        servico(self.produto, invalida, self.usuario, lote_etiqueta='LOT001', disparar_sync=False)
+            for lote in (None, '', '   ', 'X' * 61):
+                with self.subTest(servico=servico.__name__, lote=lote):
+                    with self.assertRaises(ValueError):
+                        servico(self.produto, 1, self.usuario, lote_etiqueta=lote, disparar_sync=False)
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.estoque_atual, 10)
+        self.assertFalse(MovimentacaoEstoqueBladder.objects.exists())
+
+    def test_wrapper_rejeita_multiplos_lotes_ou_dados_invalidos(self):
+        from bladder.services import registrar_movimentacao_multipla_estoque
+        for dados in ({'lotes': ['A', 'B']}, {'lotes': ['A', 'A']}, {'lotes': ['A'], 'lote_etiqueta': 'B'},
+                      {'lote_etiqueta': ' '}, {'lote_etiqueta': 'A', 'quantidade': 'abc'},
+                      {'lote_etiqueta': 'A', 'tipo': 'AJUSTE'}):
+            with self.subTest(dados=dados):
+                args = dict(produto=self.produto, tipo='ENTRADA', quantidade=20, usuario=self.usuario, disparar_sync=False)
+                args.update(dados)
+                with self.assertRaises(ValueError):
+                    registrar_movimentacao_multipla_estoque(**args)
+        self.assertFalse(self.produto.movimentacoes_estoque.exists())
+
+    def test_form_quantidade_estrita_lote_obrigatorio_e_alias_legado(self):
+        from bladder.forms import MovimentacaoEstoqueForm
+        for quantidade in ('', 'abc', '1.5', '2.0', '0', '-1'):
+            with self.subTest(quantidade=quantidade):
+                form = MovimentacaoEstoqueForm(self.post_data(quantidade=quantidade))
+                self.assertFalse(form.is_valid())
+                self.assertIn('quantidade', form.errors)
+        for lote in ('', '   ', 'X' * 61):
+            form = MovimentacaoEstoqueForm(self.post_data(lote_etiqueta=lote))
+            self.assertFalse(form.is_valid())
+            self.assertIn('lote_etiqueta', form.errors)
+        dados = self.post_data(quantidade='100', lotes=[' LOT001 '])
+        del dados['lote_etiqueta']
+        form = MovimentacaoEstoqueForm(dados)
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['lote_etiqueta'], 'LOT001')
+        self.assertEqual(form.cleaned_data['quantidade'], 100)
+        self.assertEqual(form.cleaned_data['destino'], 'RODRIGO')
+
+    @patch('bladder.services.disparar_sincronizacao_lote_dr201_async')
+    def test_view_post_20_volumes_uma_movimentacao_e_callback(self, disparar):
+        with self.captureOnCommitCallbacks(execute=True):
+            resp = self.client.post(reverse('bladder:estoque_movimentar'), self.post_data(), follow=True)
+        self.assertContains(resp, 'Entrada física de 20 volumes')
+        self.assertContains(resp, 'Sincronização com a DR-201 encaminhada')
+        self.assertEqual(self.produto.movimentacoes_estoque.count(), 1)
+        mov = self.produto.movimentacoes_estoque.get()
+        self.assertEqual((mov.quantidade, mov.lote_etiqueta), (20, 'LOT001'))
+        disparar.assert_called_once_with([mov.id], timezone.localdate().strftime('%d/%m/%Y'), 'MANHÃ')
+
+    @patch('bladder.services.disparar_sincronizacao_lote_dr201_async')
+    def test_view_rejeita_quantidade_lote_multiplos_lotes_e_saldo(self, disparar):
+        casos = [self.post_data(quantidade=q) for q in ('', 'abc', '1.5', '0', '-2')]
+        sem_qtd = self.post_data()
+        del sem_qtd['quantidade']
+        casos.extend([sem_qtd, self.post_data(lote_etiqueta='   '),
+                      self.post_data(lotes=['LOT001', 'LOT002']),
+                      self.post_data(lote_etiqueta=['A', 'B']),
+                      self.post_data(tipo='SAIDA', quantidade='11')])
+        for dados in casos:
+            with self.subTest(dados=dados):
+                with self.captureOnCommitCallbacks(execute=True):
+                    resp = self.client.post(reverse('bladder:estoque_movimentar'), dados)
+                self.assertEqual(resp.status_code, 302)
+                self.assertFalse(self.produto.movimentacoes_estoque.exists())
+        disparar.assert_not_called()
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.estoque_atual, 10)
+
+    def test_permissoes_servicos_view_e_csrf(self):
+        from bladder.services import registrar_entrada_estoque, registrar_saida_estoque, registrar_movimentacao_multipla_estoque
+        for servico in (registrar_entrada_estoque, registrar_saida_estoque):
+            with self.assertRaises(PermissionError):
+                servico(self.produto, 1, self.externo, lote_etiqueta='LOT001', disparar_sync=False)
+        with self.assertRaises(PermissionError):
+            registrar_movimentacao_multipla_estoque(self.produto, 'ENTRADA', 1, self.externo, lotes=['LOT001'])
+        self.client.force_login(self.externo)
+        resp = self.client.post(reverse('bladder:estoque_movimentar'), self.post_data(), HTTP_X_REQUESTED_WITH='XMLHttpRequest')
+        self.assertEqual(resp.status_code, 403)
+        csrf_client = Client(enforce_csrf_checks=True)
+        csrf_client.force_login(self.usuario)
+        self.assertEqual(csrf_client.post(reverse('bladder:estoque_movimentar'), self.post_data()).status_code, 403)
+        self.assertFalse(self.produto.movimentacoes_estoque.exists())
+
+    def test_idempotencia_servico_entrada_preservada(self):
+        from bladder.services import registrar_entrada_estoque
+        kwargs = dict(produto=self.produto, quantidade=20, usuario=self.usuario, lote_etiqueta='LOT001',
+                      idempotency_key='TESTE-IDEMPOTENTE', disparar_sync=False)
+        primeiro = registrar_entrada_estoque(**kwargs)
+        segundo = registrar_entrada_estoque(**kwargs)
+        self.assertEqual(primeiro.pk, segundo.pk)
+        self.produto.refresh_from_db()
+        self.assertEqual(self.produto.estoque_atual, 30)
+        self.assertEqual(self.produto.movimentacoes_estoque.count(), 1)
+
+    @patch('gspread.service_account')
+    @patch('bladder.services.os.path.exists', return_value=True)
+    def test_dr201_saida_mapeia_responsavel_e_volumes(self, _exists, service_account):
+        from bladder.services import sincronizar_movimentacao_dr201
+        mov = self.movimentar(tipo='SAIDA', quantidade=5, destino='Rodrigo')[0][0]
+        ws = service_account.return_value.open_by_key.return_value.worksheet.return_value
+        ws.append_rows.return_value = {'updates': {'updatedRange': 'DR201!A3060:J3060'}}
+        self.assertTrue(sincronizar_movimentacao_dr201(mov)[0])
+        self.assertEqual(ws.append_rows.call_args.args[0][0][5:9], ['RODRIGO', 'LOT001', 'BLA003', 5])
+
+    @patch('gspread.service_account')
+    @patch('bladder.services.os.path.exists', return_value=True)
+    def test_dr201_pendentes_legados_e_novos_uma_linha_por_evento(self, _exists, service_account):
+        from bladder.models import MovimentacaoEstoqueBladder
+        from bladder.services import sincronizar_movimentacoes_pendentes_dr201
+        MovimentacaoEstoqueBladder.objects.create(produto=self.produto, tipo='ENTRADA', quantidade=1,
+            saldo_anterior=9, saldo_posterior=10, usuario=self.usuario, lote_etiqueta=None)
+        self.movimentar()
+        ws = service_account.return_value.open_by_key.return_value.worksheet.return_value
+        ws.append_rows.return_value = {'updates': {'updatedRange': 'DR201!A3060:J3061'}}
+        resultado = sincronizar_movimentacoes_pendentes_dr201()
+        self.assertEqual(resultado, {'total': 2, 'sucessos': 2, 'falhas': 0})
+        self.assertEqual([r[8] for r in ws.append_rows.call_args.args[0]], [1, 20])
+
+    @patch('gspread.service_account')
+    @patch('bladder.services.os.path.exists', return_value=True)
+    def test_dr201_falha_mantem_pendente_e_retentativa(self, _exists, service_account):
+        from bladder.services import sincronizar_movimentacao_dr201
+        mov = self.movimentar()[0][0]
+        ws = service_account.return_value.open_by_key.return_value.worksheet.return_value
+        ws.append_rows.side_effect = ConnectionError('Falha simulada')
+        self.assertFalse(sincronizar_movimentacao_dr201(mov)[0])
+        mov.refresh_from_db()
+        self.assertFalse(mov.sincronizado_dr201)
+        self.assertIsNone(mov.data_sincronizacao_dr201)
+        self.assertIn('Falha simulada', mov.erro_sincronizacao_dr201)
+        ws.append_rows.side_effect = None
+        ws.append_rows.return_value = {'updates': {'updatedRange': 'DR201!A3060:J3060'}}
+        self.assertTrue(sincronizar_movimentacao_dr201(mov)[0])
+
+    @patch('gspread.service_account')
+    @patch('bladder.services.os.path.exists', return_value=True)
+    def test_reconciliacao_volumes_e_fallback_historico(self, _exists, service_account):
+        from bladder.services import auditar_planilha_dr201
+        ws = service_account.return_value.open_by_key.return_value.worksheet.return_value
+        def linha(destino, lote, modelo='BLA003', volumes=''):
+            return ['', '', '', '', destino, '', lote, modelo, volumes, '']
+        ws.get_all_values.return_value = [
+            ['A', 'B', 'C', 'D', 'Destino', 'F', 'Lote', 'Modelo', 'Volumes', 'J'],
+            linha('Entrada', 'ANTIGO', volumes='observação antiga'),
+            linha('Entrada', 'LOT001', volumes='20'),
+            linha('Saída', 'LOT001', volumes='5'),
+            linha('Saída', 'ANTIGO'),
+            linha('Entrada', 'OUTRO', modelo='BLA999', volumes='15'),
+        ]
+        audit = auditar_planilha_dr201()
+        self.assertTrue(audit['sucesso'])
+        self.assertEqual((audit['total_entradas'], audit['total_saidas'], audit['saldo_geral_calculado']), (21, 6, 15))
+        self.assertEqual(audit['linhas_validas'], 5)
+        self.assertEqual(audit['modelos_desconhecidos']['BLA999']['entradas'], 15)
+        self.assertEqual(audit['tabela_reconciliacao'][0]['saldo_calculado'], 15)
+        ws.append_rows.assert_not_called()
+        ws.update.assert_not_called()
+
+    def test_rastreabilidade_saldo_lote_consumo_e_totais_fechamento(self):
+        from django.db.models import Sum
+        self.movimentar()
+        self.movimentar(tipo='SAIDA', quantidade=5)
+        self.movimentar(tipo='SAIDA', quantidade=1, lote='ANTIGO')
+        total = self.produto.movimentacoes_estoque.filter(lote_etiqueta='LOT001').values('tipo').annotate(qtd=Sum('quantidade'))
+        self.assertEqual({r['tipo']: r['qtd'] for r in total}, {'ENTRADA': 20, 'SAIDA': 5})
+        self.assertEqual(self.produto.consumo_medio_diario(dias=30), Decimal('0.2'))
+        resp = self.client.get(reverse('bladder:fechamento_turno'))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.context['total_entradas_estoque'], 20)
+        self.assertEqual(resp.context['total_saidas_estoque'], 6)

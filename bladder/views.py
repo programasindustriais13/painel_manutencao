@@ -2225,90 +2225,54 @@ def estoque_lista(request):
 @login_required
 @operador_ou_lider_bladder_required
 def estoque_movimentar(request):
-    """
-    Registra entrada ou saída física de bladders acabados.
-    Suporta movimentações individuais e múltiplas (1 linha e 1 lote por peça).
-    Protegido contra duplo clique/reenvio e estoque negativo.
-    Replicado de forma assíncrona na planilha DR-201 via Google Sheets API.
-    """
+    """Registra um lote e N volumes em uma movimentação, com réplica assíncrona."""
     if request.method != 'POST':
         return redirect('bladder:estoque_lista')
 
     next_url = request.POST.get('next_url') or request.META.get('HTTP_REFERER') or '/bladder/estoque/'
+    form = MovimentacaoEstoqueForm(request.POST)
+    if not form.is_valid():
+        for erros in form.errors.values():
+            for erro in erros:
+                messages.error(request, str(erro))
+        return redirect(next_url)
+
+    dados = form.cleaned_data
+    produto = dados['produto']
+    tipo = dados['tipo']
+    quantidade = dados['quantidade']
+    destino = dados.get('destino', '')
+    data_turno = dados.get('data_turno') or timezone.localdate()
+    turno_escolhido = dados.get('turno') or ('MANHÃ' if 6 <= timezone.localtime().hour < 18 else 'NOITE')
+    turma_atual, _, _ = calcular_turma_do_dia(data_turno)
 
     try:
-        produto_id = request.POST.get('produto')
-        if not produto_id:
-            messages.error(request, "Selecione o modelo do Bladder.")
-            return redirect(next_url)
-
-        produto = ProdutoBladder.objects.get(pk=produto_id, ativo=True)
-        tipo = request.POST.get('tipo', 'SAIDA').strip().upper()
-
-        try:
-            quantidade = int(request.POST.get('quantidade', 1))
-            if quantidade < 1:
-                quantidade = 1
-        except (ValueError, TypeError):
-            quantidade = 1
-
-        responsavel_retirada = request.POST.get('responsavel_retirada', '').strip()
-        destino = responsavel_retirada or request.POST.get('destino', '').strip()
-        observacao = request.POST.get('observacao', '').strip()
-        data_turno_raw = request.POST.get('data_turno')
-        turno_escolhido = request.POST.get('turno', '').strip().upper()
-
-        data_turno = None
-        if data_turno_raw:
-            try:
-                data_turno = datetime.datetime.strptime(data_turno_raw, '%Y-%m-%d').date()
-            except ValueError:
-                data_turno = None
-
-        if not data_turno:
-            data_turno = timezone.localdate()
-
-        if not turno_escolhido:
-            hora_atual = timezone.localtime().hour
-            turno_escolhido = 'MANHÃ' if 6 <= hora_atual < 18 else 'NOITE'
-
-        turma_atual, _, _ = calcular_turma_do_dia(data_turno)
-
-        # Lotes: lista com 1 lote por peça
-        lotes = request.POST.getlist('lotes')
-        if not lotes:
-            # Fallback para campo único se vier de formulário tradicional
-            lote_etiqueta = request.POST.get('lote_etiqueta', '').strip()
-            if lote_etiqueta:
-                lotes = [lote_etiqueta]
-
-        movs, saldo_final = registrar_movimentacao_multipla_estoque(
+        _, saldo_final = registrar_movimentacao_multipla_estoque(
             produto=produto,
             tipo=tipo,
             quantidade=quantidade,
             usuario=request.user,
-            lotes=lotes,
+            lote_etiqueta=dados['lote_etiqueta'],
             destino=destino,
-            justificativa=observacao,
+            justificativa=dados.get('observacao', ''),
             data_turno=data_turno,
             turno_str=turno_escolhido,
             turma=turma_atual,
-            disparar_sync=True
+            disparar_sync=True,
         )
 
-        total_movs = len(movs)
         if tipo == 'SAIDA':
             quem = f" para {destino}" if destino else ""
             messages.success(
                 request,
-                f"Saída de {total_movs} un de {produto.codigo}{quem} registrada com sucesso! "
-                f"Saldo restante: {saldo_final} un. (Adicionado à DR-201)"
+                f"Saída de {quantidade} volumes de {produto.codigo}{quem} registrada com sucesso! "
+                f"Saldo restante: {saldo_final} un. Sincronização com a DR-201 encaminhada."
             )
         else:
             messages.success(
                 request,
-                f"Entrada física de {total_movs} un de {produto.codigo} confirmada com sucesso! "
-                f"Novo saldo: {saldo_final} un. (Adicionado à DR-201)"
+                f"Entrada física de {quantidade} volumes de {produto.codigo} confirmada com sucesso! "
+                f"Novo saldo: {saldo_final} un. Sincronização com a DR-201 encaminhada."
             )
 
     except (ValueError, PermissionError) as e:

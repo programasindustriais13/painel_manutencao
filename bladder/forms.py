@@ -279,7 +279,7 @@ class MovimentacaoEstoqueForm(forms.Form):
         widget=forms.Select(attrs={'class': 'form-select select-mov-tipo'})
     )
     quantidade = forms.IntegerField(
-        label="Quantidade (un)",
+        label="Quantidade de Volumes",
         min_value=1,
         initial=1,
         widget=forms.NumberInput(attrs={'class': 'form-control form-control-lg text-center font-monospace input-qtd-modal', 'placeholder': '1', 'min': '1', 'value': '1'})
@@ -291,8 +291,9 @@ class MovimentacaoEstoqueForm(forms.Form):
         widget=forms.TextInput(attrs={'class': 'form-control input-responsavel-retirada', 'placeholder': 'Nome de quem retirou (ex: Edilson, Rodrigo, Ivanildo...)'})
     )
     lote_etiqueta = forms.CharField(
-        label="Lote / Etiqueta da Peça",
-        required=False,
+        label="Número do Lote / Código de Barras",
+        max_length=60,
+        required=True,
         widget=forms.TextInput(attrs={'class': 'form-control font-monospace input-lote-item', 'placeholder': 'Ex: 7586193161'})
     )
     observacao = forms.CharField(
@@ -313,8 +314,35 @@ class MovimentacaoEstoqueForm(forms.Form):
     )
 
     def __init__(self, *args, **kwargs):
+        from .services import normalizar_lote_movimentacao
+        self._erro_lote = None
+        data = args[0] if args else kwargs.get('data')
+        if data is not None:
+            data = data.copy()
+            if not data.get('tipo') and data.get('tipo_movimentacao'):
+                data['tipo'] = data['tipo_movimentacao']
+            if not data.get('destino'):
+                data['destino'] = data.get('responsavel_retirada') or data.get('motivo') or ''
+            lotes = data.getlist('lotes') if hasattr(data, 'getlist') else data.get('lotes')
+            try:
+                if hasattr(data, 'getlist') and len(data.getlist('lote_etiqueta')) > 1:
+                    raise ValueError("Informe somente um lote por movimentação.")
+                data['lote_etiqueta'] = normalizar_lote_movimentacao(data.get('lote_etiqueta'), lotes)
+            except ValueError as exc:
+                self._erro_lote = str(exc)
+            if args:
+                args = (data, *args[1:])
+            else:
+                kwargs['data'] = data
         super().__init__(*args, **kwargs)
         self.fields['produto'].label_from_instance = lambda obj: f"{obj.codigo_com_medida} (Saldo: {obj.estoque_atual} un)"
+
+    def clean_quantidade(self):
+        from .services import validar_quantidade_volumes
+        try:
+            return validar_quantidade_volumes(self.data.get('quantidade'))
+        except ValueError as exc:
+            raise forms.ValidationError(str(exc))
 
     @property
     def tipo_movimentacao(self):
@@ -330,18 +358,8 @@ class MovimentacaoEstoqueForm(forms.Form):
 
     def clean(self):
         cleaned_data = super().clean()
-        if not cleaned_data.get('destino') and self.data.get('responsavel_retirada'):
-            cleaned_data['destino'] = self.data.get('responsavel_retirada')
-        elif not cleaned_data.get('destino') and self.data.get('motivo'):
-            cleaned_data['destino'] = self.data.get('motivo')
-
-        if not cleaned_data.get('lote_etiqueta') and self.data.get('lotes'):
-            lotes_list = self.data.getlist('lotes')
-            if lotes_list:
-                cleaned_data['lote_etiqueta'] = lotes_list[0]
-
-        if not cleaned_data.get('tipo') and self.data.get('tipo_movimentacao'):
-            cleaned_data['tipo'] = self.data.get('tipo_movimentacao')
+        if self._erro_lote:
+            self.add_error('lote_etiqueta', self._erro_lote)
         return cleaned_data
 
 

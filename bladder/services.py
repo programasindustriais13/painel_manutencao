@@ -1085,6 +1085,39 @@ def obter_mensagens_recebidas_turno(data_turno=None, turma=None, usuario=None, a
 # MOTOR DO ESTOQUE DE BLADDERS ACABADOS (LEDGER, SEMÁFORO E DR-201)
 # ==============================================================================
 
+def validar_quantidade_volumes(quantidade):
+    """Não trunca frações nem assume uma unidade para entradas inválidas."""
+    if isinstance(quantidade, bool) or not isinstance(quantidade, (int, str)):
+        raise ValueError("Informe uma quantidade inteira de volumes maior que zero.")
+    if isinstance(quantidade, str):
+        quantidade = quantidade.strip()
+        if not quantidade.isdecimal():
+            raise ValueError("Informe uma quantidade inteira de volumes maior que zero.")
+    qtd = int(quantidade)
+    if qtd <= 0:
+        raise ValueError("Informe uma quantidade inteira de volumes maior que zero.")
+    return qtd
+
+
+def normalizar_lote_movimentacao(lote_etiqueta=None, lotes=None):
+    """Aceita o campo único ou o alias legado, sem descartar lotes extras."""
+    if isinstance(lotes, str):
+        lotes = [lotes]
+    if lotes is not None and (not isinstance(lotes, (list, tuple)) or len(lotes) > 1):
+        raise ValueError("Informe somente um lote por movimentação.")
+    lote_alias = lotes[0] if lotes else None
+    if lote_etiqueta is not None and lote_alias is not None:
+        if str(lote_etiqueta).strip() != str(lote_alias).strip():
+            raise ValueError("Informe somente um lote por movimentação.")
+    lote = lote_etiqueta if lote_etiqueta is not None else lote_alias
+    if not isinstance(lote, str) or not lote.strip():
+        raise ValueError("Informe o número do lote da produção.")
+    lote = lote.strip()
+    if len(lote) > 60:
+        raise ValueError("O número do lote deve conter no máximo 60 caracteres.")
+    return lote
+
+
 @transaction.atomic(using='default')
 def registrar_entrada_estoque(
     produto,
@@ -1108,9 +1141,8 @@ def registrar_entrada_estoque(
     if not usuario or not usuario.is_authenticated or not user_is_operador_bladder(usuario):
         raise PermissionError("Usuário não possui autorização para movimentar estoque no Setor de Bladder.")
 
-    qtd = int(quantidade)
-    if qtd <= 0:
-        raise ValueError("A quantidade de entrada deve ser maior que zero.")
+    qtd = validar_quantidade_volumes(quantidade)
+    lote_etiqueta = normalizar_lote_movimentacao(lote_etiqueta)
 
     if idempotency_key:
         existente = MovimentacaoEstoqueBladder.objects.filter(idempotency_key=idempotency_key).first()
@@ -1165,9 +1197,8 @@ def registrar_saida_estoque(
     if not usuario or not usuario.is_authenticated or not user_is_operador_bladder(usuario):
         raise PermissionError("Usuário não possui autorização para movimentar estoque no Setor de Bladder.")
 
-    qtd = int(quantidade)
-    if qtd <= 0:
-        raise ValueError("A quantidade de saída deve ser maior que zero.")
+    qtd = validar_quantidade_volumes(quantidade)
+    lote_etiqueta = normalizar_lote_movimentacao(lote_etiqueta)
 
     dest = (destino or "").strip()
 
@@ -1271,81 +1302,46 @@ def registrar_movimentacao_multipla_estoque(
     data_turno=None,
     turno_str=None,
     turma='TURMA_A',
-    disparar_sync=True
+    disparar_sync=True,
+    lote_etiqueta=None,
 ):
     """
-    Registra movimentação física de Bladders Acabados no estoque (Entrada ou Saída).
-    Quando a quantidade informada é N (ex: 3 peças):
-    - Cria N registros individuais de MovimentacaoEstoqueBladder (quantidade=1 cada),
-      atribuindo o lote correspondente a cada peça para rastreabilidade unitária perfeita.
-    - Sincroniza em lote com a planilha DR-201, gerando exatamente N linhas individuais (1 por peça).
-    - Impede rigorosamente saldo negativo na Saída através de select_for_update.
+    Registra um lote com N volumes em uma única movimentação e uma linha DR-201.
+    Mantém o retorno legado ([movimentação], saldo) e o alias de lote único.
+    Os serviços de entrada/saída preservam autorização, atomicidade e saldo não negativo.
     """
     from .decorators import user_is_operador_bladder
     if not usuario or not usuario.is_authenticated or not user_is_operador_bladder(usuario):
         raise PermissionError("Usuário não possui autorização para movimentar estoque no Setor de Bladder.")
 
-    qtd = int(quantidade)
-    if qtd <= 0:
-        raise ValueError("A quantidade deve ser maior que zero.")
+    qtd = validar_quantidade_volumes(quantidade)
+    lote = normalizar_lote_movimentacao(lote_etiqueta, lotes)
 
     tipo_upper = str(tipo).strip().upper()
     if tipo_upper not in ('ENTRADA', 'SAIDA'):
         raise ValueError(f"Tipo de movimentação inválido: {tipo}")
 
-    p = ProdutoBladder.objects.select_for_update().get(pk=produto.pk)
-
-    if tipo_upper == 'SAIDA':
-        if p.estoque_atual < qtd:
-            raise ValueError(
-                f"Saldo insuficiente para retirada. Estoque atual: {p.estoque_atual} un, solicitado: {qtd} un. "
-                "Não é permitido saldo negativo no estoque."
-            )
-
-    dest = (destino or "").strip()
-    just = (justificativa or "").strip()
     hoje = data_turno if data_turno else timezone.localdate()
+    registrar = registrar_entrada_estoque if tipo_upper == 'ENTRADA' else registrar_saida_estoque
+    mov = registrar(
+        produto=produto,
+        quantidade=qtd,
+        usuario=usuario,
+        turma=turma,
+        destino=(destino or "").strip(),
+        lote_etiqueta=lote,
+        justificativa=(justificativa or "").strip(),
+        data_turno=hoje,
+        disparar_sync=False,
+    )
 
-    # Prepara lista de lotes normalizada (1 por peça)
-    lotes_raw = lotes or []
-    if isinstance(lotes_raw, str):
-        lotes_raw = [lotes_raw]
-    lotes_limpos = [str(l).strip() for l in lotes_raw]
-
-    movs_criadas = []
-    for i in range(qtd):
-        lote_peca = lotes_limpos[i] if i < len(lotes_limpos) else ""
-        saldo_ant = p.estoque_atual
-        if tipo_upper == 'SAIDA':
-            saldo_pos = saldo_ant - 1
-        else:
-            saldo_pos = saldo_ant + 1
-
-        p.estoque_atual = saldo_pos
-        p.save(update_fields=['estoque_atual', 'updated_at'])
-
-        mov = MovimentacaoEstoqueBladder.objects.create(
-            produto=p,
-            tipo=tipo_upper,
-            quantidade=1,
-            saldo_anterior=saldo_ant,
-            saldo_posterior=saldo_pos,
-            usuario=usuario,
-            turma=turma,
-            data_turno=hoje,
-            destino=dest if tipo_upper == 'SAIDA' else (dest or "Estoque Central Bladder"),
-            lote_etiqueta=lote_peca if lote_peca else None,
-            justificativa=just if just else None,
-        )
-        movs_criadas.append(mov)
-
-    if disparar_sync and movs_criadas:
+    if disparar_sync:
         data_str = hoje.strftime('%d/%m/%Y')
         t_str = turno_str if turno_str else ('MANHÃ' if 6 <= timezone.localtime().hour < 18 else 'NOITE')
-        mov_ids = [m.id for m in movs_criadas]
+        mov_ids = [mov.id]
         transaction.on_commit(lambda: disparar_sincronizacao_lote_dr201_async(mov_ids, data_str, t_str))
 
-    return movs_criadas, p.estoque_atual
+    return [mov], mov.saldo_posterior
 
 
 def obter_resumo_estoque_bladders():
@@ -1465,14 +1461,17 @@ def auditar_planilha_dr201():
         dest = r[4].strip() if len(r) > 4 else ""
         lote = r[6].strip() if len(r) > 6 else ""
         mod = r[7].strip() if len(r) > 7 else ""
+        # Registros antigos eram unitários e tinham texto livre/vazio em I.
+        volumes = r[8].strip() if len(r) > 8 else ""
+        quantidade = int(volumes) if volumes.isdecimal() and int(volumes) > 0 else 1
 
         if mod not in stats_por_modelo:
             if mod not in modelos_desconhecidos:
                 modelos_desconhecidos[mod] = {'entradas': 0, 'saidas': 0}
             if 'Entrada' in dest:
-                modelos_desconhecidos[mod]['entradas'] += 1
+                modelos_desconhecidos[mod]['entradas'] += quantidade
             else:
-                modelos_desconhecidos[mod]['saidas'] += 1
+                modelos_desconhecidos[mod]['saidas'] += quantidade
             continue
 
         item = stats_por_modelo[mod]
@@ -1480,11 +1479,11 @@ def auditar_planilha_dr201():
             item['lotes_distintos'].add(lote)
 
         if 'Entrada' in dest:
-            item['entradas'] += 1
-            total_entradas += 1
+            item['entradas'] += quantidade
+            total_entradas += quantidade
         elif 'Saída' in dest:
-            item['saidas'] += 1
-            total_saidas += 1
+            item['saidas'] += quantidade
+            total_saidas += quantidade
 
     tabela_reconciliacao = []
     for cod, st in sorted(stats_por_modelo.items()):
@@ -1590,7 +1589,6 @@ def sincronizar_lote_movimentacoes_dr201(movimentacoes_ids, data_turno_str=None,
 
                 lote_val = (m.lote_etiqueta or "").strip()
                 modelo_val = m.produto.codigo
-                obs_val = (m.justificativa or "").strip()
 
                 novas_linhas.append([
                     agora_str,            # Col A: Carimbo de data/hora
@@ -1601,7 +1599,7 @@ def sincronizar_lote_movimentacoes_dr201(movimentacoes_ids, data_turno_str=None,
                     responsavel_retirada, # Col F: Responsável pela retirada
                     lote_val,             # Col G: Lote do Bladder Vulcanizado
                     modelo_val,           # Col H: Modelo Bladder
-                    obs_val,              # Col I: Observações (preenchida pelo operador)
+                    m.quantidade,         # Col I: Volumes (antiga coluna Observações)
                     "",                   # Col J: Foto da etiqueta
                 ])
 
