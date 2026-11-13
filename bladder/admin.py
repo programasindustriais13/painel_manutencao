@@ -1,4 +1,7 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.http import HttpResponseRedirect
+from django.core.exceptions import PermissionDenied
+from django.db import transaction
 from .models import (
     ProcessoBladder,
     ConfiguracaoEscalaBladder,
@@ -22,6 +25,7 @@ from .models import (
     MovimentacaoEstoqueBladder,
     HistoricoEdicaoMensagemTurnoBladder,
     ConfiguracaoWhatsAppBladder,
+    EnvioWhatsAppBladder,
 )
 
 
@@ -112,8 +116,66 @@ class MovimentacaoEstoqueBladderAdmin(admin.ModelAdmin):
 
 @admin.register(ConfiguracaoWhatsAppBladder)
 class ConfiguracaoWhatsAppBladderAdmin(admin.ModelAdmin):
+    change_form_template = 'admin/bladder/configuracaowhatsappbladder/change_form.html'
     list_display = ('horario_envio', 'habilitado', 'grupo_destino', 'numero_destino', 'dias_semana', 'ultimo_envio', 'ultimo_status')
     list_filter = ('habilitado',)
+    readonly_fields = ('ultimo_envio', 'ultimo_status', 'ultimo_log', 'ultimo_disparo')
+
+    def has_add_permission(self, request):
+        return super().has_add_permission(request) and not ConfiguracaoWhatsAppBladder.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        if change:
+            # O formulário não deve sobrescrever controles atualizados por outro processo.
+            obj.save(update_fields=['habilitado', 'grupo_destino', 'numero_destino', 'horario_envio', 'dias_semana', 'updated_at'])
+        else:
+            super().save_model(request, obj, form, change)
+
+    def change_view(self, request, object_id, form_url='', extra_context=None):
+        context = dict(extra_context or {})
+        context['ultimos_envios'] = EnvioWhatsAppBladder.objects.filter(configuracao_id=object_id)[:10]
+        return super().change_view(request, object_id, form_url, context)
+
+    def response_change(self, request, obj):
+        if '_enviar_teste' in request.POST or '_consultar_envios' in request.POST:
+            if not self.has_change_permission(request, obj):
+                raise PermissionDenied
+            from .whatsapp import enviar_resumo, consultar_envios
+            if '_enviar_teste' in request.POST:
+                def enviar_apos_salvar():
+                    resultado = enviar_resumo(config_id=obj.pk, teste=True, usuario=request.user)
+                    nivel = messages.INFO if resultado['status'] == 'em_fila' else messages.WARNING
+                    self.message_user(request, resultado['mensagem'], level=nivel)
+                # O admin envolve o salvamento em uma transação. Só iniciar o serviço
+                # depois dela: a reserva do envio precisa estar durável antes do HTTP.
+                transaction.on_commit(enviar_apos_salvar)
+            else:
+                def consultar_apos_salvar():
+                    consultar_envios(config_id=obj.pk)
+                    self.message_user(request, 'Consulta concluída. Confira o histórico de envios abaixo.', level=messages.INFO)
+                transaction.on_commit(consultar_apos_salvar)
+            return HttpResponseRedirect(request.path)
+        return super().response_change(request, obj)
+
+
+@admin.register(EnvioWhatsAppBladder)
+class EnvioWhatsAppBladderAdmin(admin.ModelAdmin):
+    list_display = ('criado_em', 'tipo', 'destino', 'status', 'tentativas', 'solicitado_por')
+    list_filter = ('tipo', 'status', 'data_referencia')
+    search_fields = ('destino', 'chave')
+    readonly_fields = tuple(field.name for field in EnvioWhatsAppBladder._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(RecursoBladder)

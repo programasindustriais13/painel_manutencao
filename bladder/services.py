@@ -3,7 +3,6 @@ import logging
 import os
 import threading
 from decimal import Decimal
-import requests
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Case, When, Value, IntegerField, Q, Sum, Count
@@ -28,7 +27,6 @@ from .models import (
     AtividadeTurnoBladder,
     MovimentacaoEstoqueBladder,
     HistoricoEdicaoMensagemTurnoBladder,
-    ConfiguracaoWhatsAppBladder,
 )
 
 logger = logging.getLogger("bladder.services")
@@ -1829,83 +1827,6 @@ def gerar_texto_resumo_estoque_whatsapp():
 
 
 def enviar_resumo_whatsapp_estoque(dry_run=False):
-    """
-    Dispara o resumo matinal de estoque via WhatsApp reutilizando o microserviço Baileys Node.js.
-    Regras de Governança:
-    - Segunda a sexta (sem disparo sábado e domingo);
-    - Idempotência: não reenvia se já foi enviado com sucesso na mesma data;
-    - Em ambiente de desenvolvimento ou dry_run=True, NÃO dispara mensagem real.
-    """
-    config = ConfiguracaoWhatsAppBladder.objects.first()
-    if not config:
-        config = ConfiguracaoWhatsAppBladder.objects.create(habilitado=True)
-
-    if not config.habilitado:
-        logger.info("Envio de resumo WhatsApp Bladder está desabilitado na configuração.")
-        return {'status': 'desabilitado', 'mensagem': 'Envio desabilitado'}
-
-    agora = timezone.localtime(timezone.now())
-    dia_semana_str = str(agora.weekday())
-    dias_permitidos = [d.strip() for d in config.dias_semana.split(',')]
-
-    if dia_semana_str not in dias_permitidos:
-        logger.info(f"Hoje é dia {dia_semana_str} (fim de semana/não configurado). Resumo WhatsApp não enviado.")
-        return {'status': 'fora_do_calendario', 'mensagem': 'Fim de semana ou dia não configurado'}
-
-    # Idempotência: verifica se já foi enviado hoje
-    if config.ultimo_envio and config.ultimo_envio.date() == agora.date() and config.ultimo_status == 'SUCESSO':
-        logger.info("Resumo WhatsApp Bladder já foi enviado hoje com sucesso. Envio repetido abortado.")
-        return {'status': 'ja_enviado', 'mensagem': 'Resumo já enviado hoje'}
-
-    texto = gerar_texto_resumo_estoque_whatsapp()
-
-    # Destino: grupo configurado ou JID/número
-    destino = None
-    if config.grupo_destino and config.grupo_destino.is_active:
-        destino = config.grupo_destino.jid
-    elif config.numero_destino:
-        destino = config.numero_destino.strip()
-
-    if not destino:
-        logger.warning("Nenhum grupo ou número configurado para resumo WhatsApp Bladder.")
-        config.ultimo_status = 'SEM_DESTINATARIO'
-        config.ultimo_log = "Nenhum grupo ativo ou número configurado."
-        config.save(update_fields=['ultimo_status', 'ultimo_log', 'updated_at'])
-        return {'status': 'sem_destinatario', 'mensagem': 'Sem destinatário configurado'}
-
-    # PROTEÇÃO ESTRITA CONTRA ENVIO REAL DURANTE DESENVOLVIMENTO:
-    if dry_run or getattr(settings, 'WHATSAPP_DRY_RUN', False):
-        logger.info(f"[DRY-RUN] Resumo WhatsApp Bladder preparado para {destino}:\n{texto}")
-        config.ultimo_envio = agora
-        config.ultimo_status = 'SIMULADO_DRY_RUN'
-        config.ultimo_log = f"[DRY-RUN] Simulação concluída com sucesso para {destino}."
-        config.save(update_fields=['ultimo_envio', 'ultimo_status', 'ultimo_log', 'updated_at'])
-        return {'status': 'simulado', 'texto': texto, 'destino': destino}
-
-    url = getattr(settings, 'WHATSAPP_SERVICE_URL', 'http://localhost:3000/send')
-    payload = {
-        'numero': destino,
-        'mensagem': texto,
-    }
-
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        if resp.status_code in [200, 202]:
-            config.ultimo_envio = agora
-            config.ultimo_status = 'SUCESSO'
-            config.ultimo_log = f"Enviado com sucesso para {destino} (HTTP {resp.status_code})."
-            config.save(update_fields=['ultimo_envio', 'ultimo_status', 'ultimo_log', 'updated_at'])
-            return {'status': 'sucesso', 'http_code': resp.status_code}
-        else:
-            config.ultimo_status = f'ERRO_HTTP_{resp.status_code}'
-            config.ultimo_log = f"Falha no microserviço Baileys: {resp.text[:200]}"
-            config.save(update_fields=['ultimo_status', 'ultimo_log', 'updated_at'])
-            return {'status': 'erro_http', 'http_code': resp.status_code}
-    except Exception as e:
-        logger.warning(f"Exceção ao enviar WhatsApp Bladder: {e}")
-        config.ultimo_status = 'FALHA_CONEXAO'
-        config.ultimo_log = f"Exceção de rede: {str(e)}"
-        config.save(update_fields=['ultimo_status', 'ultimo_log', 'updated_at'])
-        return {'status': 'falha_conexao', 'erro': str(e)}
-
-
+    """Entrada compatível com o comando existente; regras em bladder.whatsapp."""
+    from .whatsapp import enviar_resumo
+    return enviar_resumo(dry_run=dry_run)

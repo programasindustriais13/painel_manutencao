@@ -4,7 +4,8 @@
   "description": "WhatsApp microservice using Express and Baileys",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test bladder_tracking.test.js server.test.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc13",

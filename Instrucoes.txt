@@ -4615,3 +4615,32 @@ O usuário aprovou a implementação da proposta nesta etapa.
    - Publicação no servidor: fluxo habitual git pull + deploy_production.ps1,
      que aplica a migração e coleta o CSS. Não foi publicado nesta sessão.
 ================================================================================
+
+
+WHATSAPP BLADDER — AGENDAMENTO E TESTE NO ADMIN (13/11/2026)
+--------------------------------------------------------------------------------
+- Horário e dias do admin agora controlam o comando diário; janela de 4 horas,
+  bloqueio automático em DEBUG=True e compatibilidade com SUCESSO anterior.
+- Migração bladder.0009: histórico durável e reserva contra concorrência.
+- Admin: salvar e enviar teste ao número individual, atualizar status e histórico
+  somente leitura com autoria. Validação de telefone/dias e proteção CSRF/permissões.
+- Limites: 3 testes/dia, intervalo de 10 minutos; Node limita todo o Bladder a
+  4 mensagens aceitas/dia. Fila e proteções compartilhadas dos outros módulos mantidas.
+- Distingue Na fila de Enviado ao WhatsApp. Não confirma entrega/leitura.
+  Falha após aceitação ou resultado incerto nunca gera reenvio automático.
+- Instalador por duplo clique: INSTALAR_AGENDAMENTO_BLADDER.bat. Execute APENAS
+  em C:\03_PYTHON\11_Painel Manutencao\painel_manutencao após o deploy normal.
+  Cadastra tarefa SYSTEM a cada minuto, sem iniciar o WhatsApp, alterar .env,
+  aplicar migrações ou enviar teste. Reexecução atualiza a mesma tarefa.
+- Reiniciar manualmente o Node após publicar para carregar o acompanhamento.
+- Nenhum envio real ou instalação de tarefa local foi feito nesta implementação.
+- Instruções completas, limites, operação e testes: WHATSAPP_BLADDER.md.
+- Validação final: 39 testes Python + 5 Node + ensaio Edge aprovados.
+  Ensaio real de interface com transporte simulado confirmou botão, bloqueio de
+  segundo clique, autoria, status e acesso a /management/ e /dashboard/.
+- Suíte ampliada: 245 testes, 17 falhas também reproduzidas nos fontes HEAD
+  anteriores carregados em memória. Evidências em logs/whatsapp_bladder_*.log.
+- Migração local aplicada após backup SQLite consistente em
+  backups/db_pre_whatsapp_bladder_20261113_100619.sqlite3.
+- Instalador validado por análise sintática, trigger PT1M sem expiração e
+  recusa da pasta local; tarefa real e WhatsApp real dependem do servidor.

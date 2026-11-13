@@ -326,6 +326,7 @@ LOGOUT_REDIRECT_URL = "login"
 
 # Microserviços Auxiliares
 WHATSAPP_SERVICE_URL = os.environ.get("WHATSAPP_SERVICE_URL", "http://localhost:3000/send")
+WHATSAPP_DRY_RUN = _parse_bool(os.environ.get("WHATSAPP_DRY_RUN"), default=False)
 
 # AI & OCR Settings (Google Gemini Vision)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()

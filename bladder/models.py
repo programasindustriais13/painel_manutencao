@@ -1,5 +1,7 @@
 import datetime
+import uuid
 from decimal import Decimal
+from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -1737,6 +1739,19 @@ class ConfiguracaoWhatsAppBladder(models.Model):
     )
     updated_at = models.DateTimeField(auto_now=True)
 
+    ultimo_disparo = models.DateTimeField(null=True, blank=True, editable=False)
+
+    def clean(self):
+        super().clean()
+        from django.core.exceptions import ValidationError
+        dias = [dia.strip() for dia in self.dias_semana.split(',')]
+        if not dias or any(dia not in {'0', '1', '2', '3', '4', '5', '6'} for dia in dias):
+            raise ValidationError({'dias_semana': 'Informe dias de 0 a 6 separados por vírgula.'})
+        if self.numero_destino:
+            numero = self.numero_destino.strip()
+            if not numero.isascii() or not numero.isdigit() or not numero.startswith('55') or len(numero) not in (12, 13):
+                raise ValidationError({'numero_destino': 'Informe somente dígitos: 55 + DDD + número (12 ou 13 dígitos).'})
+
     class Meta:
         verbose_name = "Configuração de WhatsApp Bladder"
         verbose_name_plural = "Configurações de WhatsApp Bladder"
@@ -1744,4 +1759,35 @@ class ConfiguracaoWhatsAppBladder(models.Model):
     def __str__(self):
         status = "ATIVO" if self.habilitado else "DESATIVADO"
         return f"WhatsApp Bladder: {self.horario_envio.strftime('%H:%M')} ({status})"
+
+
+class EnvioWhatsAppBladder(models.Model):
+    """Registro durável: uma chave diária impede duplicação do resumo automático."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    configuracao = models.ForeignKey(ConfiguracaoWhatsAppBladder, on_delete=models.PROTECT, related_name='envios')
+    chave = models.CharField(max_length=100, unique=True, editable=False)
+    tipo = models.CharField(max_length=12, choices=[('AUTOMATICO', 'Automático'), ('TESTE', 'Teste')])
+    data_referencia = models.DateField()
+    destino = models.CharField(max_length=100)
+    status = models.CharField(max_length=20, default='PREPARANDO', choices=[
+        ('PREPARANDO', 'Preparando'), ('EM_FILA', 'Na fila'),
+        ('ENVIADO', 'Enviado ao WhatsApp'), ('FALHA', 'Falha'),
+        ('INCERTO', 'Resultado incerto — verificar antes de reenviar'),
+        ('LEGADO', 'Aceito pelo serviço anterior (sem confirmação de transmissão)'),
+    ])
+    tentativas = models.PositiveSmallIntegerField(default=0)
+    ultima_tentativa_em = models.DateTimeField(null=True, blank=True)
+    pode_repetir = models.BooleanField(default=False)
+    detalhe = models.TextField(blank=True)
+    solicitado_por = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    criado_em = models.DateTimeField(auto_now_add=True)
+    atualizado_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-criado_em']
+        verbose_name = 'Envio WhatsApp Bladder'
+        verbose_name_plural = 'Histórico de envios WhatsApp Bladder'
+
+    def __str__(self):
+        return f'{self.get_tipo_display()} {self.data_referencia}: {self.get_status_display()}'
 

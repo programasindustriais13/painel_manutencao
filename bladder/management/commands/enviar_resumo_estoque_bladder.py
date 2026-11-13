@@ -1,11 +1,14 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.conf import settings
 from bladder.services import enviar_resumo_whatsapp_estoque, gerar_texto_resumo_estoque_whatsapp
+from bladder.whatsapp import consultar_envios
 
 
 class Command(BaseCommand):
-    help = "Dispara o resumo matinal de estoque via WhatsApp (segunda a sexta às 07:30)."
+    help = "Verifica o horário configurado e envia no máximo um resumo diário do Bladder."
 
     def add_arguments(self, parser):
+        parser.add_argument('--verificar-instalacao', action='store_true', help='Valida produção sem executar consultas HTTP ou envios.')
         parser.add_argument(
             '--dry-run',
             action='store_true',
@@ -18,6 +21,11 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if options.get('verificar_instalacao'):
+            if settings.DEBUG or settings.WHATSAPP_DRY_RUN:
+                raise CommandError('O agendamento exige DEBUG=False e WHATSAPP_DRY_RUN=False no servidor.')
+            self.stdout.write('Ambiente de produção verificado. Nenhum envio executado.')
+            return
         dry_run = options.get('dry_run', False)
         preview = options.get('preview', False)
 
@@ -27,6 +35,8 @@ class Command(BaseCommand):
             self.stdout.write(texto)
             return
 
+        if not dry_run and not settings.DEBUG and not settings.WHATSAPP_DRY_RUN:
+            consultar_envios()
         resultado = enviar_resumo_whatsapp_estoque(dry_run=dry_run)
         status = resultado.get('status')
 
@@ -44,5 +54,5 @@ class Command(BaseCommand):
         elif status == 'desabilitado':
             self.stdout.write(self.style.NOTICE("Envio de resumo está desabilitado na configuração."))
         else:
-            self.stdout.write(self.style.ERROR(f"Falha no envio: {resultado}"))
+            self.stdout.write(f"{status}: {resultado.get('mensagem', '')}")
 

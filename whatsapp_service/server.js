@@ -4,11 +4,13 @@ const rateLimit = require('express-rate-limit');
 const qrcode = require('qrcode-terminal');
 const pino = require('pino');
 const path = require('path');
+const { createBladderTracking } = require('./bladder_tracking');
+const bladderTracking = createBladderTracking();
 
 const app = express();
 app.use(express.json());
 
-const PORT = 3000;
+const PORT = process.env.NODE_ENV === 'test' ? Number(process.env.WHATSAPP_TEST_PORT || 3000) : 3000;
 let sock = null;
 let isConnected = false;
 
@@ -110,12 +112,14 @@ async function processQueue() {
         if (!isConnected || !sock) {
             console.error(`Falha no envio para ${task.jid}: Servidor offline.`);
             handleSendFailure();
+            bladderTracking.update(task.message_id, 'failed');
             continue;
         }
 
         try {
             console.log(`Disparando mensagem para: ${task.jid}`);
             await sock.sendMessage(task.jid, { text: task.mensagem });
+            bladderTracking.update(task.message_id, 'sent');
             console.log(`Mensagem enviada com sucesso em background para: ${task.jid}`);
             
             // Sucesso reseta contador de falhas seguidas
@@ -123,6 +127,7 @@ async function processQueue() {
         } catch (error) {
             console.error(`Erro ao enviar mensagem para ${task.jid}:`, error);
             handleSendFailure();
+            bladderTracking.update(task.message_id, 'failed');
         }
     }
 
@@ -135,6 +140,17 @@ app.post('/send', sendLimiter, (req, res) => {
     
     if (!numero || !mensagem) {
         return res.status(400).json({ error: 'Os campos "numero" e "mensagem" são obrigatórios.' });
+    }
+
+    const isBladder = req.body.origem === 'bladder';
+    const messageId = isBladder ? req.body.message_id : null;
+    if (isBladder) {
+        if (typeof numero !== 'string' || typeof mensagem !== 'string' ||
+            typeof messageId !== 'string' || !/^bladder-[0-9a-f-]{36}$/.test(messageId)) {
+            return res.status(400).json({ error: 'Identificador ou dados do Bladder inválidos.' });
+        }
+        const existing = bladderTracking.lookup(messageId);
+        if (existing) return res.status(200).json({ success: true, ...existing });
     }
 
     // Verifica Circuit Breaker
@@ -166,20 +182,31 @@ app.post('/send', sendLimiter, (req, res) => {
     }
 
     // Adiciona na fila e inicia processamento
-    messageQueue.push({ jid, mensagem });
+    if (isBladder) {
+        const reservation = bladderTracking.reserve(messageId);
+        if (reservation.error) return res.status(reservation.code).json({ error: reservation.error });
+    }
+    messageQueue.push({ jid, mensagem, message_id: messageId });
     console.log(`Mensagem para ${jid} adicionada na fila de envio. Tamanho da fila: ${messageQueue.length}`);
     processQueue();
 
     // Retorna HTTP 202 imediatamente
     return res.status(202).json({
         success: true,
+        ...(isBladder ? { message_id: messageId, status: 'queued' } : {}),
         message: 'Mensagem aceita e enfileirada para envio.'
     });
 });
 
 // Rota de status para checar a conexão
 app.get('/status', (req, res) => {
-    res.json({ connected: isConnected, circuitTripped });
+    res.json({ connected: isConnected, circuitTripped, tracking_version: 1 });
+});
+
+app.get('/messages/:messageId', (req, res) => {
+    const record = bladderTracking.lookup(req.params.messageId);
+    if (!record) return res.status(404).json({ error: 'Mensagem não encontrada; confira o WhatsApp antes de reenviar.' });
+    return res.json(record);
 });
 
 // Rota GET /groups para listar os grupos participantes
