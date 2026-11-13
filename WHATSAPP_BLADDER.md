@@ -33,8 +33,8 @@ Nos grupos, entrega ou leitura significam confirmação de **pelo menos um parti
 ## Regras para reduzir disparos repetidos
 
 - Um resumo automático por configuração e data, com uma chave persistida antes de chamar o serviço e controle de concorrência no banco.
-- Até três testes por dia e intervalo mínimo de dez minutos entre tentativas do Bladder. Testes sem transmissão também contam no limite do administrador.
-- No serviço compartilhado, limite adicional para **todo o Bladder**: quatro mensagens aceitas por dia, separadas por pelo menos dez minutos. A contagem do serviço utiliza o fuso de Fortaleza.
+- Testes manuais sem limite diário, com intervalo mínimo de dez minutos entre tentativas do Bladder.
+- O serviço WhatsApp também mantém o intervalo de dez minutos, sem o antigo teto de quatro mensagens diárias. O automático continua limitado a um resumo por configuração e data.
 - A fila, o intervalo de dois a cinco segundos, o limite compartilhado de cinco requisições por minuto e a proteção contra falhas dos outros módulos continuam ativos. Seus formatos de solicitação e resposta de envio foram preservados.
 - Nenhum reenvio automático após aceitação na fila, falha durante a transmissão ou resultado incerto. Rejeições anteriores à fila têm no máximo três tentativas de transmissão, com intervalo de quinze minutos.
 - Se o WhatsApp estiver desligado, o sistema apenas verifica a disponibilidade a cada quinze minutos dentro da janela de quatro horas após o horário configurado. Essas verificações não consomem tentativas de transmissão.
@@ -73,3 +73,5 @@ A migração local foi aplicada após backup em `backups/db_pre_whatsapp_bladder
 Correção posterior em 13/11/2026: 46 testes Python (45 do Bladder e regressão do envio da Manutenção), 15 testes Node e ensaio Edge aprovados. Inclui retorno sem ACK, contato não confirmado, confirmação anterior ao retorno, entrega/leitura, preservação de registros legados e proteção contra regressão de status. Evidências em `logs/whatsapp_bladder_ack_testes.log` e `logs/whatsapp_bladder_ack_navegador.log`. A entrega real ao número de produção precisa ser conferida após atualizar e reiniciar o serviço no servidor.
 
 Referências do protocolo: [resolução de contatos e consulta de identidade](https://github.com/WhiskeySockets/Baileys/blob/master/src/Signal/lid-mapping.ts), [eventos de confirmação e falhas de mensagens](https://github.com/WhiskeySockets/Baileys/blob/master/src/Socket/messages-recv.ts). O retorno isolado de `sendMessage()` não foi tratado como recibo de entrega.
+
+Atualização de 13/11/2026 para validação manual: removidos os tetos diários de três testes no Django e quatro mensagens no Node. Reinicie o Node manualmente após atualizar para que o processo em execução também deixe de usar o teto antigo. Os intervalos, confirmações reais e bloqueios de duplicação permanecem. Validação: 46 testes Python, 15 testes Node e seis testes isolados do lançador de deploy aprovados, sem transmissão real ou deploy local.

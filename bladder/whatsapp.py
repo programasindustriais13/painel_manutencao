@@ -1,4 +1,4 @@
-"""Envio conservador: fila compartilhada, limite de testes e nenhuma repetição incerta."""
+"""Envio conservador: fila compartilhada, intervalo entre disparos e nenhuma repetição incerta."""
 import datetime
 import uuid
 from urllib.parse import urlsplit, urlunsplit
@@ -146,9 +146,6 @@ def enviar_resumo(config_id=None, teste=False, usuario=None, dry_run=False):
         if not reservado:
             return {'status': 'intervalo', 'mensagem': 'Aguarde ao menos dez minutos entre disparos do Bladder.'}
         if teste:
-            if config.envios.filter(tipo='TESTE', data_referencia=hoje).count() >= 3:
-                transaction.set_rollback(True)
-                return {'status': 'limite_testes', 'mensagem': 'Limite de três testes por dia atingido.'}
             envio = EnvioWhatsAppBladder.objects.create(
                 configuracao=config, chave=f'teste:{uuid.uuid4()}', tipo='TESTE',
                 data_referencia=hoje, destino=destino, solicitado_por=usuario,

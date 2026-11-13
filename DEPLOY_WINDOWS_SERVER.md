@@ -112,6 +112,32 @@ sem alterar nada, use `-CheckOnly` ou `-DryRun`. Se precisar concluir o deploy
 sem consultar o SCADA naquele momento, use `-SkipCaldeiraWarmup` e aqueça depois.
 As etapas abaixo documentam a execução manual e o provisionamento inicial.
 
+**Alternativa por duplo clique:** execute `executar_deploy_servidor.bat`. O lançador
+chama `scripts/deploy_servidor.ps1`, que verifica a branch `main`, recusa alterações
+locais em arquivos versionados e executa `git pull --ff-only origin main` antes do
+script mestre. Se o pull falhar, o deploy não começa. Nenhum merge, descarte de
+alterações ou troca automática de branch é feito. O `.bat` interpreta seu bloco
+antes da atualização para continuar corretamente se o próprio arquivo for alterado.
+
+Para os modos sem atualização do Git:
+
+```powershell
+.\executar_deploy_servidor.bat -CheckOnly
+.\executar_deploy_servidor.bat -DryRun
+```
+
+Esses parâmetros são repassados ao script mestre sem executar `git pull`.
+`-SkipCaldeiraWarmup` também pode ser utilizado. Uma falha no script mestre é
+reportada pelo lançador, sem mensagem de sucesso. O WhatsApp continua sendo
+iniciado/reiniciado manualmente; reinicie o Node após mudanças no seu código.
+
+Na primeira atualização deste lançador, faça `git pull --ff-only origin main`
+manualmente antes de usar a nova versão por duplo clique.
+
+Ensaio de regressão do lançador: `.\.venv\Scripts\python.exe scripts\test_deploy_servidor.py`.
+Usa repositórios Git locais temporários e um script mestre fictício, sem acessar
+o GitHub, o banco da aplicação ou os serviços reais do servidor.
+
 1. **Obter atualização do Git:**
    ```powershell
    git fetch origin

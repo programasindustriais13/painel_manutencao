@@ -4663,3 +4663,23 @@ CORREÇÃO WHATSAPP BLADDER — CONFIRMAÇÃO REAL E CONEXÃO (13/11/2026)
 - Validação: 46 testes Python, 15 Node e ensaio Edge aprovados, sem envio real.
 - Publicação: deploy habitual (inclui 0010) e reinício manual do Node.
   Não é necessário reinstalar a tarefa existente. Manual: WHATSAPP_BLADDER.md.
+
+BLADDER SEM TETO DIÁRIO DE TESTES E REVISÃO DO DEPLOY (13/11/2026)
+--------------------------------------------------------------------------------
+- Removido o bloqueio de três testes diários no Django e o teto de quatro
+  mensagens no Node. Testes sem limite diário, mantendo intervalo de dez minutos,
+  resumo automático único por data e todas as confirmações/antiduplicação.
+- Admin e WHATSAPP_BLADDER.md atualizados. Reiniciar manualmente o Node após
+  publicar para remover também o teto do processo WhatsApp que já está rodando.
+- executar_deploy_servidor.bat agora delega a scripts/deploy_servidor.ps1 em bloco
+  interpretado antes do pull, suportando atualização do próprio .bat.
+- Wrapper valida main e alterações locais versionadas, usa pull --ff-only e
+  interrompe em falha. CheckOnly/DryRun não atualizam o Git. Script mestre
+  deploy_production.ps1 mantém o fluxo atual e o WhatsApp permanece manual.
+- Primeira atualização: git pull --ff-only origin main antes do novo duplo clique.
+- Testes: 46 Python e 15 Node aprovados. Seis testes do lançador aprovados com
+  Git local temporário e deploy fictício: pull bem-sucedido com autoatualização,
+  falha no pull, alterações locais preservadas, branch incorreta, diagnóstico
+  sem pull e falha do mestre sem falso sucesso. Nenhum envio ou deploy real.
+- Validação sem novas migrações e manage.py check aprovado. Manual atualizado:
+  DEPLOY_WINDOWS_SERVER.md. Ensaio: scripts/test_deploy_servidor.py.

@@ -12,17 +12,15 @@ test('a mesma identidade não cria outro envio, inclusive após o intervalo', ()
     assert.equal(tracking.reserve('two').record.status, 'queued');
 });
 
-test('bloqueia rajadas e limita quatro mensagens por dia', () => {
+test('bloqueia rajadas e permite mais de quatro mensagens no mesmo dia com intervalo', () => {
     let time = Date.UTC(2026, 10, 13, 12);
     const tracking = createBladderTracking(() => time);
     assert.ok(tracking.reserve('one').record);
     assert.equal(tracking.reserve('two').code, 429);
-    for (let i = 2; i <= 4; i++) {
+    for (let i = 2; i <= 8; i++) {
         time += 10 * 60 * 1000;
         assert.ok(tracking.reserve(String(i)).record);
     }
-    time += 10 * 60 * 1000;
-    assert.equal(tracking.reserve('five').code, 429);
     time += 24 * 60 * 60 * 1000;
     assert.ok(tracking.reserve('next-day').record);
 });

@@ -120,15 +120,14 @@ class WhatsAppBladderTests(TestCase):
         self.assertEqual(enviar_resumo(teste=True)['status'], 'sem_destinatario')
         self.post.assert_not_called()
 
-    def test_intervalo_e_limite_de_tres_testes(self):
+    def test_intervalo_mantido_sem_limite_diario_de_testes(self):
         self.assertEqual(enviar_resumo(teste=True)['status'], 'em_fila')
         self.assertEqual(enviar_resumo(teste=True)['status'], 'intervalo')
-        for _ in range(2):
+        for _ in range(5):
             self.avancar(10)
             self.assertEqual(enviar_resumo(teste=True)['status'], 'em_fila')
-        self.avancar(10)
-        self.assertEqual(enviar_resumo(teste=True)['status'], 'limite_testes')
-        self.assertEqual(self.post.call_count, 3)
+        self.assertEqual(self.post.call_count, 6)
+        self.assertEqual(self.config.envios.filter(tipo='TESTE', data_referencia=self.agora.date()).count(), 6)
 
     def test_simulacao_nao_faz_http_nem_muda_banco(self):
         for opcoes in ({'dry_run': True}, {'teste': True, 'dry_run': True}):
