@@ -560,6 +560,9 @@ class SolicitacaoServicoMatrizaria(models.Model):
     class Meta:
         verbose_name = "Solicitação de Serviço da Matrizaria"
         verbose_name_plural = "Solicitações de Serviço da Matrizaria"
+        permissions = [
+            ("view_dashboard_matrizaria", "Pode visualizar o dashboard gerencial da Matrizaria"),
+        ]
         ordering = ["-data_solicitacao"]
         indexes = [
             models.Index(fields=["status", "-data_solicitacao"]),

@@ -11,7 +11,7 @@ from matrizaria.models import (
 
 
 class Command(BaseCommand):
-    help = "Provisiona de forma idempotente os grupos de usuários do módulo de Matrizaria (Operadores Vulcanização e Matrizaria)."
+    help = "Provisiona os grupos operacionais da Matrizaria e o acesso da liderança ao dashboard, de forma idempotente."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -76,5 +76,14 @@ class Command(BaseCommand):
         ))
 
         grupo_matz.permissions.set(perms_matz)
+
+        dashboard_perm, _ = Permission.objects.using(db).get_or_create(
+            content_type=solicitacao_ct,
+            codename="view_dashboard_matrizaria",
+            defaults={"name": "Pode visualizar o dashboard gerencial da Matrizaria"},
+        )
+        for name in ("Liderança de Produção", "Tecnicos_Lideres"):
+            group, _ = Group.objects.using(db).get_or_create(name=name)
+            group.permissions.add(dashboard_perm)
 
         self.stdout.write(self.style.SUCCESS(f"Grupos e permissões provisionados com sucesso no banco '{db}'."))

@@ -1,6 +1,7 @@
 import io
 import json
 from datetime import date, timedelta
+from urllib.parse import urlencode
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -23,6 +24,7 @@ from .models import (
     HistoricoTransicaoServicoMatrizaria,
 )
 from .services import MatrizariaService
+from .dashboard import MatrizariaDashboardService
 from .forms import (
     SolicitacaoServicoForm,
     FinalizarExecucaoForm,
@@ -31,9 +33,13 @@ from .forms import (
     CancelarServicoForm,
     RelatorioFiltroForm,
     EditarSolicitacaoForm,
+    DashboardFiltroForm,
 )
 from .decorators import (
     matrizaria_access_required,
+    matrizaria_dashboard_required,
+    matrizaria_detalhe_required,
+    _user_can_dashboard_matrizaria,
     matrizaria_kanban_required,
     matrizaria_solicitar_required,
     matrizaria_executar_required,
@@ -247,7 +253,7 @@ def solicitar_servico_view(request):
 
 
 @login_required
-@matrizaria_access_required
+@matrizaria_detalhe_required
 def detalhe_servico_view(request, pk):
     """
     Visualização detalhada da solicitação, ciclos de execução e histórico completo de transições.
@@ -276,7 +282,7 @@ def detalhe_servico_view(request, pk):
     # Isolamento estrito de chamados para operadores exclusivos de vulcanização:
     # Bloqueia a visualização de chamados de terceiros e restringe chamados próprios a somente leitura.
     is_exclusively_vulcanizacao = _user_is_exclusively_operador_vulcanizacao(user)
-    if is_exclusively_vulcanizacao:
+    if is_exclusively_vulcanizacao and not _user_can_dashboard_matrizaria(user):
         if solicitacao.solicitado_por_id != user.id:
             messages.error(request, "Acesso negado. Você só possui permissão para visualizar suas próprias solicitações.")
             return redirect("matrizaria:minhas_solicitacoes")
@@ -311,6 +317,7 @@ def detalhe_servico_view(request, pk):
     )
     can_editar = (
         not is_exclusively_vulcanizacao
+        and _user_can_access_matrizaria_kanban(user)
         and (is_solicitante_proprio or is_gestao)
         and solicitacao.status == "SOLICITADO"
         and solicitacao.ciclos_execucao.count() == 0
@@ -630,6 +637,69 @@ def cancelar_servico_view(request, pk):
     return redirect("matrizaria:detalhe_servico", pk=pk)
 
 
+@matrizaria_dashboard_required
+@require_GET
+def dashboard_view(request):
+    form = DashboardFiltroForm(request.GET)
+    context = {"form": form}
+    if form.is_valid():
+        service = MatrizariaDashboardService(form.cleaned_data)
+        context.update(service.build())
+        context["page_obj"] = Paginator(context.pop("pending_rows"), 20).get_page(request.GET.get("page"))
+        context["querystring"] = urlencode({**service.params(), "ordem": form.cleaned_data.get("ordem") or "prioridade"})
+        context["period_start"] = service.start_date
+        context["period_end"] = service.end_date
+        context["selection_title"] = "Pendências que exigem ação"
+        context["selection_description"] = "Fila atual: inclui chamados abertos antes do período selecionado."
+        context["links"] = {key: service.details_url(key) for key in
+                            ("abertas", "concluidas", "conferencias", "canceladas", "fila")}
+        context["links"]["urgent"] = service.details_url("urgentes")
+        context["links"]["waiting"] = service.details_url("fila", estado="AGUARDANDO_CONFERENCIA")
+    return render(request, "matrizaria/dashboard.html", context)
+
+
+@matrizaria_dashboard_required
+@require_GET
+def dashboard_detalhes_view(request):
+    form = DashboardFiltroForm(request.GET)
+    context = {"form": form, "is_detail": True}
+    if form.is_valid():
+        service = MatrizariaDashboardService(form.cleaned_data)
+        rows = service.detail_rows()
+        selection = form.cleaned_data.get("visao") or "fila"
+        context.update(
+            page_obj=Paginator(rows, 20).get_page(request.GET.get("page")),
+            selection_title=dict(form.fields["visao"].choices)[selection],
+            period_start=service.start_date, period_end=service.end_date,
+            updated_at=service.now,
+        )
+        descriptions = ["Posição atual, independente do período." if selection in ("fila", "urgentes") else
+                        f"Período: {service.start_date:%d/%m/%Y} a {service.end_date:%d/%m/%Y} (dias inclusivos)."]
+        params = {**service.params(), "visao": selection}
+        for key in ("estado", "dia", "ordem"):
+            value = form.cleaned_data.get(key)
+            if value:
+                params[key] = str(value)
+        for key in ("prensa", "tipo_servico", "matriz", "prioridade"):
+            value = form.cleaned_data.get(key)
+            if value:
+                label = (dict(form.fields[key].choices).get(value, value)
+                         if key in ("matriz", "prioridade") else
+                         "Matrizaria / serviço interno" if value == "__MATRIZARIA__" else
+                         "Máquina não informada" if value == "__SEM_PRENSA__" else str(value))
+                descriptions.append(f"{form.fields[key].label}: {label}.")
+        if form.cleaned_data.get("estado") and selection in ("fila", "urgentes"):
+            descriptions.append(dict(form.fields["estado"].choices)[form.cleaned_data["estado"]] + ".")
+        if form.cleaned_data.get("dia"):
+            descriptions.append(f"Dia: {form.cleaned_data['dia']:%d/%m/%Y}.")
+        if selection in ("retrabalho", "conferencias"):
+            descriptions.append("Cada chamado aparece uma vez, mesmo com várias conferências ou devoluções.")
+        context["selection_description"] = " ".join(descriptions)
+        context["querystring"] = urlencode(params)
+        context["back_querystring"] = urlencode(service.params())
+    return render(request, "matrizaria/dashboard_detalhes.html", context)
+
+
 @login_required
 @matrizaria_relatorios_required
 def relatorios_view(request):
@@ -691,9 +761,14 @@ def relatorios_view(request):
     page_number = request.GET.get("page")
     page_obj = paginator.get_page(page_number)
 
+    # Preserve os filtros sem repetir a página anterior nos links de navegação.
+    query_params = request.GET.copy()
+    query_params.pop("page", None)
+
     context = {
         "form": form,
         "page_obj": page_obj,
+        "querystring": query_params.urlencode(),
         "total_registros": len(todos_resultados),
         "criterio_temporal": criterio_temporal,
         "data_inicio": data_inicio,

@@ -4501,3 +4501,117 @@ AGORA:
      Causa da ocorrência PCP não confirmada; todos resultados preservados.
      QA aprovou publicação no escopo; suíte global não é declarada verde.
 ================================================================================
+
+2026-11-13 — MATRIZARIA: PAGINAÇÃO DOS RELATÓRIOS E PROPOSTA DE DASHBOARD
+================================================================================
+1. CORREÇÃO EM /matrizaria/relatorios/:
+   - Os links Anterior/Próxima repetiam o parâmetro page da consulta anterior.
+     Exemplo: ?page=3&page=2 fazia o Django continuar na página 2.
+   - relatorios_view copia os parâmetros GET, remove todas as ocorrências de
+     page e disponibiliza os filtros codificados em querystring no contexto.
+   - relatorios.html usa essa querystring nos links de navegação, com apenas
+     um número de página e preservação dos filtros selecionados.
+   - Mantidos os 20 registros por página e o comportamento do Paginator para
+     números inválidos ou fora do intervalo. Sem mudanças de banco/permissões.
+
+2. TESTES:
+   - Nova classe MatrizariaReportPaginationTestCase: 161 registros/9 páginas.
+   - Percurso das nove páginas sem filtros; ida e volta com todos os filtros;
+     descarte de parâmetros page duplicados; fallback para páginas inválidas.
+   - Antes da correção: 3 dos 4 testes falharam, reproduzindo a duplicação.
+   - Após a correção: python manage.py test matrizaria --noinput:
+     90 testes aprovados em 45,389s, incluindo os quatro novos testes.
+   - python manage.py check: sem problemas. git diff --check: sem erros.
+
+3. PROPOSTA, SEM IMPLEMENTAÇÃO DA NOVA TELA:
+   - Documento: PROPOSTA_DASHBOARD_MATRIZARIA.md.
+   - Rota sugerida: /matrizaria/dashboard/; resultados do período separados
+     da fila atual, indicadores de demanda, liberação, retrabalho e urgência,
+     cinco gráficos e lista de ação com detalhamento.
+   - Proposto acesso por permissão específica para Liderança de Produção e
+     Tecnicos_Lideres, com validação no backend e integração ao portal/menu.
+   - A proposta registra fórmulas, referências temporais, limites dos dados
+     e critérios de aceitação para uma implementação futura.
+   - O usuário solicitou explicitamente apenas a proposta do dashboard.
+   - Alterações locais; não foi executado deploy no servidor de produção.
+================================================================================
+
+2026-11-13 — IMPLEMENTAÇÃO DO DASHBOARD GERENCIAL DA MATRIZARIA
+================================================================================
+O usuário aprovou a implementação da proposta nesta etapa.
+
+1. TELAS E INDICADORES:
+   - /matrizaria/dashboard/ (name matrizaria:dashboard): oito indicadores,
+     cinco gráficos clicáveis e lista paginada de pendências.
+   - /matrizaria/dashboard/detalhes/ (name matrizaria:dashboard_detalhes):
+     chamados abertos, concluídos, com execução, devolvidos para retrabalho,
+     avaliados, cancelados, urgentes e fila atual, sem repetir chamados.
+   - Resultados do período e fila atual aparecem em blocos separados. Datas
+     não removem chamados antigos ainda pendentes. Outros filtros valem nos
+     dois blocos: prensa/serviço interno, tipo, matriz física e prioridade.
+   - Períodos de 7 e 30 dias inclusivos, mês atual ou personalizado (até 366
+     dias). Lista ordenável por prioridade, idade e tempo na etapa atual.
+   - Gráficos de evolução diária, Pareto de intervenções por prensa, tipos
+     demandados, top 10 matrizes com retrabalho e distribuição da fila.
+   - SVG e barras HTML nativos, com tabelas de valores nos gráficos SVG;
+     sem nova biblioteca de gráficos. CSS em matrizaria/static/matrizaria/.
+
+2. CÁLCULOS E RASTREABILIDADE:
+   - Serviço de leitura em matrizaria/dashboard.py, com quatro consultas no
+     carregamento normal e sem consultas adicionais por chamado na fila.
+   - Aprovações/devoluções/cancelamentos usam eventos do histórico no período;
+     contador acumulado de retrabalho não é usado para atribuir devoluções.
+   - Entregas e demanda contam chamados distintos; reprovações contam eventos.
+   - Tempo até liberação: mediana e P90 da abertura à aprovação. Sem avaliações,
+     taxa de reprovação mostra traço. Cancelados não contam como concluídos.
+   - Duração dos ciclos é limitada à interseção com o período e o momento da
+     consulta. Não representa tempo líquido em bancada nem parada de prensa.
+   - Tempo na etapa parte da última mudança real de estado; transferências e
+     alterações de dados não reiniciam a contagem. Histórico incompleto fica
+     sinalizado, mantendo o chamado nos totais. Sem ranking de produtividade.
+   - Matrizes são agrupadas pelo exemplar físico, e não pelo texto do snapshot;
+     não informadas e serviços internos têm seleção própria no detalhamento.
+
+3. ACESSO E MIGRAÇÃO:
+   - Permissão específica: matrizaria.view_dashboard_matrizaria.
+   - Migration matrizaria.0005_dashboard_matrizaria atribui a permissão aos
+     grupos Liderança de Produção e Tecnicos_Lideres, de forma aditiva.
+   - Superusuários acessam. Staff, matrizeiros, operadores de vulcanização e
+     contas TV precisam de atribuição explícita; perfil operacional não basta.
+   - provisionar_grupos_matrizaria também provisiona os dois grupos líderes,
+     preservando as demais permissões desses grupos.
+   - Rotas do dashboard/detalhamento exigem permissão no backend. Leitores
+     consultam chamados de terceiros sem receber novas ações operacionais.
+   - Entrada pós-login, portal e menus desktop/móvel incluem o dashboard.
+     Técnico líder com acesso à Manutenção e Matrizaria passa pelo portal;
+     o card de Manutenção leva ao gerenciamento, mantendo a restrição ao
+     dashboard geral. Perfis acumulados de líder e TV preservam essa escolha.
+   - Aplicada a migração no banco SQLite LOCAL após backup em
+     backups/db_pre_dashboard_matrizaria_20261113.sqlite3. Conferida a permissão
+     nos dois grupos. collectstatic executado localmente. Sem deploy remoto.
+
+4. VALIDAÇÃO E DOCUMENTAÇÃO:
+   - Novos 35 testes em matrizaria/test_dashboard.py: fórmulas, eventos versus
+     contadores, ciclos entre dias, durações, transferências, matriz ausente,
+     identidade dos exemplares, serviço interno, máquina histórica, filtros,
+     dados vazios/futuros, paginação, segurança dos rótulos e permissões.
+   - python manage.py test matrizaria --noinput: 125 testes aprovados.
+   - python manage.py test maintenance matrizaria --noinput:
+     199 testes aprovados em 109,096s. Os testes antigos de roteamento foram
+     atualizados para o novo acesso dos líderes a dois módulos.
+   - python manage.py check sem problemas; makemigrations --check --dry-run
+     sem alterações pendentes. git diff --check sem erros de espaços.
+   - Ensaio opcional: python scripts/validar_dashboard_matrizaria.py.
+     Usa apenas banco temporário de testes; requer Playwright no .venv de
+     desenvolvimento e Edge instalado, sem alterar requirements.txt.
+   - Verificados desktop 1440px, celular 375px e tablet 768px sem transbordamento
+     da página, cinco gráficos/oito indicadores, aplicação de filtros, clique
+     no gráfico, detalhamento e erro amigável para intervalo inválido.
+     Sem erros JavaScript. /management/ e /dashboard/: HTTP 200 como admin.
+   - Capturas: logs/dashboard_matrizaria/; logs de testes em logs/.
+   - Revisão final do roteamento/perfis acumulados: 5 testes aprovados em
+     7,954s. Ensaio final do navegador: aprovado em 8,315s.
+   - Documento de referência atualizado: PROPOSTA_DASHBOARD_MATRIZARIA.md.
+   - Publicação no servidor: fluxo habitual git pull + deploy_production.ps1,
+     que aplica a migração e coleta o CSS. Não foi publicado nesta sessão.
+================================================================================

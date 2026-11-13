@@ -22,6 +22,8 @@ urlpatterns = [
     path("servicos/<int:pk>/excluir/", views.excluir_solicitacao_view, name="excluir_solicitacao"),
 
     # Relatórios e Exportação
+    path("dashboard/", views.dashboard_view, name="dashboard"),
+    path("dashboard/detalhes/", views.dashboard_detalhes_view, name="dashboard_detalhes"),
     path("relatorios/", views.relatorios_view, name="relatorios"),
     path("relatorios/exportar-excel/", views.exportar_excel_view, name="exportar_excel"),
 

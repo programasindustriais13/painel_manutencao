@@ -60,7 +60,7 @@
 <div class="glass-card p-3 p-md-4 mb-4">
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
         <div class="d-flex align-items-center gap-3">
-            <a href="{% if is_operador_vulcanizacao %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="btn btn-outline-secondary btn-sm" title="{% if is_operador_vulcanizacao %}Voltar para Minhas Solicitações{% else %}Voltar ao Kanban{% endif %}">
+            <a href="{% if can_dashboard_matrizaria %}{% url 'matrizaria:dashboard' %}{% elif is_operador_vulcanizacao %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="btn btn-outline-secondary btn-sm" title="Voltar para o painel">
                 <i class="bi bi-arrow-left"></i>
             </a>
             <div>

@@ -1,0 +1,27 @@
+<form method="get" class="glass-card p-3 p-md-4 mb-4 dashboard-filters" id="dashboard-filters">
+    {% if form.errors %}<div class="alert alert-danger" role="alert">Revise os filtros destacados abaixo. {{ form.non_field_errors }}{% for hidden in form.hidden_fields %}{{ hidden.errors }}{% endfor %}</div>{% endif %}
+    <div class="row g-3">
+        <div class="col-12 col-md-4"><label class="form-label" for="{{ form.periodo.id_for_label }}">{{ form.periodo.label }}</label>{{ form.periodo }}{{ form.periodo.errors }}</div>
+        <div class="col-6 col-md-4"><label class="form-label" for="{{ form.data_inicio.id_for_label }}">{{ form.data_inicio.label }}</label>{{ form.data_inicio }}{{ form.data_inicio.errors }}</div>
+        <div class="col-6 col-md-4"><label class="form-label" for="{{ form.data_fim.id_for_label }}">{{ form.data_fim.label }}</label>{{ form.data_fim }}{{ form.data_fim.errors }}</div>
+        <div class="col-12 col-sm-6 col-xl-3"><label class="form-label" for="{{ form.prensa.id_for_label }}">{{ form.prensa.label }}</label>{{ form.prensa }}{{ form.prensa.errors }}</div>
+        <div class="col-12 col-sm-6 col-xl-3"><label class="form-label" for="{{ form.tipo_servico.id_for_label }}">{{ form.tipo_servico.label }}</label>{{ form.tipo_servico }}{{ form.tipo_servico.errors }}</div>
+        <div class="col-12 col-sm-6 col-xl-3"><label class="form-label" for="{{ form.matriz.id_for_label }}">{{ form.matriz.label }}</label>{{ form.matriz }}{{ form.matriz.errors }}</div>
+        <div class="col-12 col-sm-6 col-xl-3"><label class="form-label" for="{{ form.prioridade.id_for_label }}">{{ form.prioridade.label }}</label>{{ form.prioridade }}{{ form.prioridade.errors }}</div>
+        {% if is_detail %}{{ form.visao }}{{ form.estado }}{{ form.dia }}{% endif %}
+        <div class="col-12 col-md-5"><label class="form-label" for="{{ form.ordem.id_for_label }}">{{ form.ordem.label }}</label>{{ form.ordem }}{{ form.ordem.errors }}</div>
+        <div class="col-12 col-md-7 d-flex flex-wrap justify-content-md-end align-items-end gap-2">
+            <a href="{% url 'matrizaria:dashboard' %}" class="btn btn-outline-secondary">Limpar</a>
+            <button class="btn btn-primary" type="submit" style="background: #6D28D9; border-color: #8B5CF6;"><i class="bi bi-funnel me-1"></i> Aplicar filtros</button>
+        </div>
+    </div>
+    <p class="text-muted small mb-0 mt-3">As datas filtram os resultados do período. Prensa, tipo, matriz e prioridade também filtram a fila atual. Intervalo máximo: 366 dias.</p>
+</form>
+<script>
+(function () {
+    const period = document.getElementById('id_periodo');
+    ['id_data_inicio', 'id_data_fim'].forEach(function (id) {
+        document.getElementById(id).addEventListener('change', function () { period.value = 'personalizado'; });
+    });
+})();
+</script>

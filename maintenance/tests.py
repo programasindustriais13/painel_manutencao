@@ -251,12 +251,12 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertRedirects(response, reverse('tv_dashboard'))
         client.logout()
 
-        # 3. User with Tecnicos_Lideres group -> technician_management
+        # 3. Técnico líder acessa Manutenção e Dashboard da Matrizaria -> portal
         lider_user = User.objects.create_user('lider_test', 'lider@test.com', 'pwd123')
         lider_user.groups.add(self.lider_group)
         client.force_login(lider_user)
         response = client.get(reverse('home_redirect'))
-        self.assertRedirects(response, reverse('technician_management'))
+        self.assertRedirects(response, reverse('portal_select'))
         client.logout()
         
         # 4. User with dual access (like operador_user or admin) -> portal_select
@@ -265,13 +265,13 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertRedirects(response, reverse('portal_select'))
         client.logout()
 
-        # 5. User with Production access only -> production:dashboard
+        # 5. Liderança de Produção também acessa Matrizaria -> portal
         prod_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
         prod_user = User.objects.create_user('prod_leader_test', 'prod@test.com', 'pwd123')
         prod_user.groups.add(prod_group)
         client.force_login(prod_user)
         response = client.get(reverse('home_redirect'))
-        self.assertRedirects(response, reverse('production:dashboard'))
+        self.assertRedirects(response, reverse('portal_select'))
         client.logout()
 
     def test_portal_select_view(self):
@@ -296,13 +296,14 @@ class MaintenanceSystemTestCase(TestCase):
         self.assertRedirects(response, reverse('technician_management'))
         client.logout()
 
-        # 3. Pure production leader gets bypassed directly to production:dashboard
+        # 3. Liderança tem Produção e Dashboard da Matrizaria disponíveis
         prod_group, _ = Group.objects.get_or_create(name="Liderança de Produção")
         prod_user = User.objects.create_user('prod_user_bypass', 'pby@test.com', 'pwd123')
         prod_user.groups.add(prod_group)
         client.force_login(prod_user)
         response = client.get(reverse('portal_select'))
-        self.assertRedirects(response, reverse('production:dashboard'))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse('matrizaria:dashboard'))
         client.logout()
 
     def test_finish_service_validation_failure_redirect(self):
@@ -1812,11 +1813,12 @@ class OrdemServicoEndToEndQATestCase(TestCase):
         self.assertEqual(res_tech.status_code, 302)
         self.assertIn('/management/', res_tech.url)
 
-        # 2. Usuário de produção acessa portal_select -> redireciona direto para produção
+        # 2. Liderança de produção também possui Dashboard da Matrizaria -> portal
         client.force_login(self.user_prod)
         res_prod = client.get(reverse('portal_select'))
-        self.assertEqual(res_prod.status_code, 302)
-        self.assertIn('/producao/', res_prod.url)
+        self.assertEqual(res_prod.status_code, 200)
+        self.assertContains(res_prod, "card-producao")
+        self.assertContains(res_prod, reverse('matrizaria:dashboard'))
 
         # 3. Usuário com duplo acesso -> exibe a tela de portal para escolher
         client.force_login(self.user_dual)

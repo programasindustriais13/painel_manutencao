@@ -1,8 +1,10 @@
 import re
 import uuid
+from datetime import date, timedelta
 from django import forms
 from django.db.models import Q
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from maintenance.models import Machine
 from .models import (
     TipoServicoMatrizaria,
@@ -457,3 +459,104 @@ class RelatorioFiltroForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields["prensa"].queryset = get_prensas_queryset()
         self.fields["prensa"].label_from_instance = lambda obj: format_prensa_label(obj)
+
+
+class PrensaDashboardChoiceIterator(PrensaOuMatrizariaChoiceIterator):
+    def __iter__(self):
+        yield from super().__iter__()
+        yield ("__SEM_PRENSA__", "Máquina não informada")
+
+
+class PrensaDashboardChoiceField(PrensaOuMatrizariaChoiceField):
+    iterator = PrensaDashboardChoiceIterator
+
+    def to_python(self, value):
+        return value if value == "__SEM_PRENSA__" else super().to_python(value)
+
+    def validate(self, value):
+        if value != "__SEM_PRENSA__":
+            super().validate(value)
+
+
+class DashboardFiltroForm(forms.Form):
+    periodo = forms.ChoiceField(
+        choices=[("7", "Últimos 7 dias"), ("30", "Últimos 30 dias"),
+                 ("mes", "Mês atual"), ("personalizado", "Personalizado")],
+        label="Período", widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    data_inicio = forms.DateField(required=False, label="Data inicial",
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}))
+    data_fim = forms.DateField(required=False, label="Data final",
+        widget=forms.DateInput(attrs={"type": "date", "class": "form-control"}))
+    prensa = PrensaDashboardChoiceField(
+        queryset=Machine.objects.none(), required=False, empty_label="Todas / serviço interno",
+        label="Prensa / destino", widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    tipo_servico = forms.ModelChoiceField(
+        queryset=TipoServicoMatrizaria.objects.all(), required=False,
+        empty_label="Todos os tipos", label="Tipo de serviço",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    matriz = forms.ChoiceField(required=False, label="Matriz física",
+        widget=forms.Select(attrs={"class": "form-select"}))
+    prioridade = forms.ChoiceField(
+        required=False, choices=[("", "Todas")] + SolicitacaoServicoMatrizaria.PRIORIDADE_CHOICES,
+        label="Prioridade", widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    visao = forms.ChoiceField(required=False, choices=[
+        ("fila", "Fila atual"), ("urgentes", "Urgentes pendentes"), ("abertas", "Solicitações abertas"),
+        ("concluidas", "Serviços concluídos"), ("execucao", "Solicitações com execução"),
+        ("retrabalho", "Solicitações devolvidas para retrabalho"),
+        ("conferencias", "Solicitações avaliadas na conferência"),
+        ("canceladas", "Solicitações canceladas"),
+    ], widget=forms.HiddenInput())
+    estado = forms.ChoiceField(required=False, choices=[("", "Todos os estados")] +
+        [(key, label) for key, label in SolicitacaoServicoMatrizaria.STATUS_CHOICES
+         if key not in ("CONCLUIDO", "CANCELADO")], widget=forms.HiddenInput())
+    dia = forms.DateField(required=False, widget=forms.HiddenInput())
+    ordem = forms.ChoiceField(required=False, choices=[
+        ("prioridade", "Urgentes e mais antigas"), ("idade", "Maior idade da solicitação"),
+        ("etapa", "Maior tempo na etapa"),
+    ], label="Ordenar por", widget=forms.Select(attrs={"class": "form-select"}))
+
+    def __init__(self, data=None, *args, **kwargs):
+        data = data.copy() if data is not None else {}
+        data.setdefault("periodo", "7")
+        today = timezone.localdate()
+        if data.get("periodo") in ("7", "30", "mes"):
+            start = today.replace(day=1) if data["periodo"] == "mes" else today - timedelta(days=int(data["periodo"]) - 1)
+            data.setdefault("data_inicio", start.isoformat())
+            data.setdefault("data_fim", today.isoformat())
+        super().__init__(data, *args, **kwargs)
+        self.fields["prensa"].queryset = Machine.objects.filter(
+            Q(pk__in=get_prensas_queryset().values("pk")) | Q(solicitacoes_matrizaria__isnull=False)
+        ).select_related("setor").distinct().order_by("nome")
+        self.fields["prensa"].label_from_instance = format_prensa_label
+        self.fields["matriz"].choices = [("", "Todas as matrizes"),
+            ("__SEM_MATRIZ__", "Matriz não informada")] + [
+                (str(m.pk), f"{m.identificador_estavel} · {m.nome_exibicao}")
+                for m in MatrizFisica.objects.select_related("modelo").all()
+            ]
+
+    def clean(self):
+        cleaned = super().clean()
+        today = timezone.localdate()
+        period = cleaned.get("periodo")
+        if period in ("7", "30", "mes"):
+            cleaned["data_inicio"] = (today.replace(day=1) if period == "mes"
+                                      else today - timedelta(days=int(period) - 1))
+            cleaned["data_fim"] = today
+        elif period == "personalizado":
+            for field in ("data_inicio", "data_fim"):
+                if not cleaned.get(field) and field not in self.errors:
+                    self.add_error(field, "Informe a data para o período personalizado.")
+        start, end = cleaned.get("data_inicio"), cleaned.get("data_fim")
+        if start and end:
+            if end < start:
+                self.add_error("data_fim", "A data final deve ser igual ou posterior à inicial.")
+            elif (end - start).days >= 366 or end == date.max:
+                self.add_error("data_fim", "Selecione um intervalo de até 366 dias.")
+            day = cleaned.get("dia")
+            if day and not start <= day <= end:
+                self.add_error("dia", "O dia selecionado deve pertencer ao período consultado.")
+        return cleaned

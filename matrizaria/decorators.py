@@ -2,6 +2,41 @@ from functools import wraps
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import redirect
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
+
+
+def _user_can_dashboard_matrizaria(user) -> bool:
+    return bool(user and user.is_authenticated and user.is_active
+                and user.has_perm("matrizaria.view_dashboard_matrizaria"))
+
+
+def matrizaria_dashboard_required(view_func):
+    @login_required
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if not _user_can_dashboard_matrizaria(request.user):
+            raise PermissionDenied("Acesso restrito à liderança autorizada da Matrizaria.")
+        return view_func(request, *args, **kwargs)
+    return wrapper
+
+
+def matrizaria_detalhe_required(view_func):
+    @login_required
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if _user_can_dashboard_matrizaria(request.user):
+            return view_func(request, *args, **kwargs)
+        return matrizaria_access_required(view_func)(request, *args, **kwargs)
+    return wrapper
+
+
+def matrizaria_landing_name(user):
+    """Entrada do módulo sem conceder acesso operacional a leitores gerenciais."""
+    if _user_can_dashboard_matrizaria(user):
+        return "matrizaria:dashboard"
+    if _user_is_exclusively_operador_vulcanizacao(user):
+        return "matrizaria:minhas_solicitacoes"
+    return "matrizaria:kanban"
 
 
 def _user_can_access_matrizaria(user) -> bool:

@@ -105,7 +105,9 @@ def _user_can_access_matrizaria(user):
         ]
     ).exists():
         return True
-    if user.has_perm("matrizaria.view_solicitacaoservicomatrizaria") or user.has_perm("matrizaria.add_solicitacaoservicomatrizaria"):
+    if (user.has_perm("matrizaria.view_solicitacaoservicomatrizaria")
+            or user.has_perm("matrizaria.add_solicitacaoservicomatrizaria")
+            or user.has_perm("matrizaria.view_dashboard_matrizaria")):
         return True
     return False
 
@@ -268,10 +270,12 @@ class CustomLoginView(auth_views.LoginView):
 @login_required
 def home_redirect(request):
     user = request.user
+    from matrizaria.decorators import _user_can_dashboard_matrizaria
+    can_dashboard_matrizaria = _user_can_dashboard_matrizaria(user)
     # 1. Usuários de TV dedicados
-    if user.username == 'tv' or user.groups.filter(name='Visualizador').exists():
+    if not can_dashboard_matrizaria and (user.username == 'tv' or user.groups.filter(name='Visualizador').exists()):
         return redirect('tv_dashboard')
-    if user.username == 'tv_matrizaria' or user.groups.filter(name='Visualizador Matrizaria').exists():
+    if not can_dashboard_matrizaria and (user.username == 'tv_matrizaria' or user.groups.filter(name='Visualizador Matrizaria').exists()):
         return redirect('matrizaria:tv')
 
     accessible = _user_get_accessible_modules(user)
@@ -286,10 +290,8 @@ def home_redirect(request):
         if mod == 'production':
             return redirect('production:dashboard')
         elif mod == 'matrizaria':
-            from matrizaria.decorators import _user_is_exclusively_operador_vulcanizacao
-            if _user_is_exclusively_operador_vulcanizacao(user):
-                return redirect('matrizaria:minhas_solicitacoes')
-            return redirect('matrizaria:kanban')
+            from matrizaria.decorators import matrizaria_landing_name
+            return redirect(matrizaria_landing_name(user))
         elif mod == 'bladder':
             if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
                 return redirect('bladder:dashboard')
@@ -320,10 +322,8 @@ def portal_select(request):
         if 'production' in accessible:
             return redirect('production:dashboard')
         if 'matrizaria' in accessible:
-            from matrizaria.decorators import _user_is_exclusively_operador_vulcanizacao
-            if _user_is_exclusively_operador_vulcanizacao(user):
-                return redirect('matrizaria:minhas_solicitacoes')
-            return redirect('matrizaria:kanban')
+            from matrizaria.decorators import matrizaria_landing_name
+            return redirect(matrizaria_landing_name(user))
         if 'bladder' in accessible:
             if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
                 return redirect('bladder:dashboard')
@@ -343,7 +343,7 @@ def portal_select(request):
         return redirect('login')
 
     # Destino do botão de manutenção no portal
-    if _user_is_operador(user) or _user_is_lider_ou_operador(user):
+    if _user_is_operador(user):
         maintenance_url = 'dashboard'
     else:
         maintenance_url = 'technician_management'
@@ -353,11 +353,8 @@ def portal_select(request):
     else:
         bladder_url = 'bladder:operador'
 
-    from matrizaria.decorators import _user_is_exclusively_operador_vulcanizacao
-    if _user_is_exclusively_operador_vulcanizacao(user):
-        matrizaria_url = 'matrizaria:minhas_solicitacoes'
-    else:
-        matrizaria_url = 'matrizaria:kanban'
+    from matrizaria.decorators import matrizaria_landing_name
+    matrizaria_url = matrizaria_landing_name(user)
 
     context = {
         'maintenance_url': maintenance_url,

@@ -1,0 +1,86 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+{% load static l10n %}
+{% block title %}Dashboard da Matrizaria · Pneus Freedom{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'matrizaria/dashboard.css' %}">{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div><p class="dashboard-eyebrow mb-1">Visão gerencial</p><h1 class="h3 fw-bold mb-1">Dashboard da Matrizaria</h1><p class="text-muted small mb-0">Demanda, qualidade das entregas e pendências para orientar a liderança.</p></div>
+    {% if updated_at %}<span class="text-muted small"><i class="bi bi-clock me-1"></i> Atualizado em {{ updated_at|date:'d/m/Y H:i' }}</span>{% endif %}
+</div>
+{% include "matrizaria/includes/dashboard_filtros.html" %}
+{% if metrics %}
+<div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2 mb-3">
+    <h2 class="h5 fw-bold mb-0">Resultados do período</h2><span class="text-secondary small">{{ period_start|date:'d/m/Y' }} a {{ period_end|date:'d/m/Y' }} · dias inclusivos</span>
+</div>
+<div class="dashboard-grid mb-4">
+    <a href="{{ links.abertas }}" class="glass-card dashboard-kpi"><span class="label"><i class="bi bi-inbox me-1"></i> Solicitações abertas</span><strong class="value">{{ metrics.opened }}</strong><span class="hint">Entradas pela data de abertura</span></a>
+    <a href="{{ links.concluidas }}" class="glass-card dashboard-kpi"><span class="label"><i class="bi bi-check2-circle me-1 text-success"></i> Serviços concluídos</span><strong class="value text-success">{{ metrics.completed }}</strong><span class="hint">Aprovados pela conferência</span></a>
+    <a href="{{ links.concluidas }}" class="glass-card dashboard-kpi"><span class="label"><i class="bi bi-hourglass-split me-1"></i> Tempo até liberação</span><strong class="value">{{ metrics.median_release }}</strong><span class="hint">Mediana · P90: {{ metrics.p90_release }}<br>{{ metrics.release_samples }} chamado(s) com datas válidas</span></a>
+    <a href="{{ links.conferencias }}" class="glass-card dashboard-kpi"><span class="label"><i class="bi bi-arrow-repeat me-1 text-warning"></i> Reprovações na conferência</span><strong class="value text-warning">{% if metrics.rejection_rate is not None %}{{ metrics.rejection_rate }}%{% else %}—{% endif %}</strong><span class="hint">{{ metrics.rejected }} devolução(ões) / {{ metrics.inspections }} avaliação(ões)</span></a>
+</div>
+<div class="dashboard-charts">
+    <section class="glass-card dashboard-chart" aria-labelledby="daily-title">
+        <h3 id="daily-title">Entradas × conclusões</h3><p class="description">Volume por dia. Clique nos pontos para consultar os chamados.</p>
+        {% if daily.has_data %}
+        <svg class="dashboard-svg" viewBox="0 0 800 230" role="group" aria-label="Evolução diária de aberturas e conclusões">
+            <line class="axis" x1="45" y1="190" x2="765" y2="190"/><line class="axis" x1="45" y1="40" x2="765" y2="40"/>
+            <text x="15" y="194">0</text><text x="15" y="44">{{ daily.maximum }}</text>
+            <polyline points="{{ daily.opened_points }}" fill="none" stroke="#A78BFA" stroke-width="2.5"/>
+            <polyline points="{{ daily.completed_points }}" fill="none" stroke="#34D399" stroke-width="2.5"/>
+            {% for day in daily.days %}
+                {% if day.show_label %}<text x="{{ day.x }}" y="218" text-anchor="middle">{{ day.date }}</text>{% endif %}
+                <a href="{{ day.opened_url }}" aria-label="{{ day.date }}: {{ day.opened }} abertas"><circle cx="{{ day.x }}" cy="{{ day.opened_y }}" r="4" fill="#A78BFA"><title>{{ day.date }} · {{ day.opened }} abertas</title></circle></a>
+                <a href="{{ day.completed_url }}" aria-label="{{ day.date }}: {{ day.completed }} concluídas"><circle cx="{{ day.x }}" cy="{{ day.completed_y }}" r="4" fill="#34D399"><title>{{ day.date }} · {{ day.completed }} concluídas</title></circle></a>
+            {% endfor %}
+        </svg>
+        <div class="chart-legend"><span style="--legend-color:#A78BFA">Abertas</span><span style="--legend-color:#34D399">Concluídas</span></div>
+        <details class="mt-3 small text-secondary"><summary>Consultar valores por dia</summary><div class="table-responsive"><table class="table table-dark table-sm mt-2"><thead><tr><th>Dia</th><th>Abertas</th><th>Concluídas</th></tr></thead><tbody>{% for day in daily.days %}<tr><td>{{ day.date }}</td><td><a href="{{ day.opened_url }}">{{ day.opened }}</a></td><td><a href="{{ day.completed_url }}">{{ day.completed }}</a></td></tr>{% endfor %}</tbody></table></div></details>
+        {% else %}<p class="dashboard-empty">Sem aberturas ou conclusões neste período.</p>{% endif %}
+    </section>
+    <section class="glass-card dashboard-chart" aria-labelledby="press-title">
+        <h3 id="press-title">Prensas com mais intervenções</h3><p class="description">Pareto de chamados distintos com execução no período. A linha mostra o percentual acumulado.</p>
+        {% if pareto.items %}
+        <div class="chart-scroll">
+        <svg class="dashboard-svg" style="min-width: {{ pareto.minimum_width|unlocalize }}px" viewBox="0 0 {{ pareto.width|unlocalize }} 290" role="group" aria-label="Pareto de intervenções por prensa ou serviço interno">
+            <line class="axis" x1="40" y1="190" x2="{{ pareto.width|unlocalize }}" y2="190"/>
+            <text x="5" y="44">{{ pareto.maximum }}</text><text x="5" y="194">0</text>
+            {% for item in pareto.items %}
+            <a href="{{ item.url }}" aria-label="{{ item.label }}: {{ item.count }} chamados">
+                <rect x="{{ item.rect_x }}" y="{{ item.y }}" width="32" height="{{ item.height }}" fill="#8B5CF6"><title>{{ item.label }} · {{ item.count }} chamado(s) · {{ item.duration }} de intervenção · {{ item.cumulative }}% acumulado</title></rect>
+                <text x="{{ item.x }}" y="210" transform="rotate(25 {{ item.x }} 210)">{{ item.label|truncatechars:24 }}</text>
+            </a>
+            {% endfor %}
+            <polyline points="{{ pareto.points }}" fill="none" stroke="#FBBF24" stroke-width="2.5"/>
+            {% for item in pareto.items %}<a href="{{ item.url }}"><circle cx="{{ item.x }}" cy="{{ item.line_y }}" r="4" fill="#FBBF24"><title>{{ item.label }} · {{ item.cumulative }}% acumulado</title></circle></a>{% endfor %}
+        </svg></div>
+        <div class="chart-legend"><span style="--legend-color:#8B5CF6">Chamados (eixo esquerdo)</span><span style="--legend-color:#FBBF24">Acumulado de 0 a 100%</span></div>
+        <details class="mt-3 small text-secondary"><summary>Consultar quantidades e durações</summary><div class="table-responsive"><table class="table table-dark table-sm mt-2"><thead><tr><th>Prensa / destino</th><th>Chamados</th><th>Intervenção no período</th><th>Acumulado</th></tr></thead><tbody>{% for item in pareto.items %}<tr><td><a href="{{ item.url }}">{{ item.label }}</a></td><td>{{ item.count }}</td><td>{{ item.duration }}</td><td>{{ item.cumulative }}%</td></tr>{% endfor %}</tbody></table></div></details>
+        {% else %}<p class="dashboard-empty">Sem execução técnica neste período.</p>{% endif %}
+    </section>
+    <section class="glass-card dashboard-chart" aria-labelledby="type-title">
+        <h3 id="type-title">Tipos de serviço mais demandados</h3><p class="description">Solicitações abertas no período, agrupadas por tipo.</p>
+        <div class="dashboard-bars">{% for item in types %}<a class="dashboard-bar" href="{{ item.url }}"><div class="bar-label"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></div><div class="track"><div class="fill" style="width: {{ item.width }}%"></div></div></a>{% empty %}<p class="dashboard-empty">Sem solicitações abertas neste período.</p>{% endfor %}</div>
+    </section>
+    <section class="glass-card dashboard-chart" aria-labelledby="rework-title">
+        <h3 id="rework-title">Matrizes com mais retrabalho</h3><p class="description">Top 10 por devoluções no período, pela identidade do exemplar físico.</p>
+        <div class="dashboard-bars">{% for item in rework %}<a class="dashboard-bar" href="{{ item.url }}"><div class="bar-label"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></div><div class="track"><div class="fill" style="width: {{ item.width }}%; background: #F59E0B;"></div></div><small>{{ item.count }} devolução(ões) · {{ item.requests }} chamado(s) distinto(s)</small></a>{% empty %}<p class="dashboard-empty">Sem devoluções para retrabalho neste período.</p>{% endfor %}</div>
+    </section>
+</div>
+<section class="dashboard-section" aria-labelledby="current-title">
+    <div class="mb-3"><p class="dashboard-eyebrow mb-1">Posição em {{ updated_at|date:'d/m/Y H:i' }}</p><h2 class="h5 fw-bold" id="current-title">Fila atual</h2><p class="text-muted small">Inclui solicitações abertas antes de {{ period_start|date:'d/m/Y' }}. O filtro de datas não limita esta fila.</p></div>
+    <div class="dashboard-grid mb-4">
+        <a href="{{ links.fila }}" class="glass-card dashboard-kpi"><span class="label">Pendentes agora</span><strong class="value">{{ metrics.pending }}</strong><span class="hint">Todos os estados ainda em atendimento</span></a>
+        <a href="{{ links.urgent }}" class="glass-card dashboard-kpi"><span class="label">Urgentes pendentes</span><strong class="value text-danger">{{ metrics.urgent }}</strong><span class="hint">Prioridade para distribuição de atendimento</span></a>
+        <a href="{{ links.waiting }}" class="glass-card dashboard-kpi"><span class="label">Aguardando conferência</span><strong class="value text-info">{{ metrics.waiting }}</strong><span class="hint">Maior espera conhecida: {{ metrics.oldest_wait }}{% if metrics.waiting_incomplete %}<br>{{ metrics.waiting_incomplete }} com histórico incompleto{% endif %}</span></a>
+        <div class="glass-card dashboard-kpi"><span class="label">Pendente mais antiga</span><strong class="value">{% if metrics.oldest %}{{ metrics.oldest.age }}{% else %}Sem dados{% endif %}</strong><span class="hint">{% if metrics.oldest %}<a href="{% url 'matrizaria:detalhe_servico' metrics.oldest.id %}" class="text-light">SM #{{ metrics.oldest.id }}</a> · {{ metrics.oldest.status_label }}{% else %}Nenhuma pendência na seleção{% endif %}</span></div>
+    </div>
+    <div class="glass-card dashboard-chart">
+        <h3>Distribuição da fila atual</h3><p class="description">Quantidade por etapa e maior tempo conhecido na etapa atual. Clique para filtrar a lista.</p>
+        <div class="dashboard-bars">{% for item in stages %}<a class="dashboard-bar" href="{{ item.url }}"><div class="bar-label"><span>{{ item.label }}</span><strong>{{ item.count }}</strong></div><div class="track"><div class="fill" style="width: {{ item.width }}%"></div></div><small>Maior tempo na etapa: {{ item.oldest }}{% if item.incomplete %} · {{ item.incomplete }} com histórico incompleto{% endif %}</small></a>{% endfor %}</div>
+    </div>
+    {% if metrics.incomplete %}<p class="small text-warning mt-3"><i class="bi bi-info-circle me-1"></i> {{ metrics.incomplete }} pendência(s) sem histórico suficiente para calcular o tempo na etapa. Elas permanecem nos totais e na lista.</p>{% endif %}
+    {% include "matrizaria/includes/dashboard_lista.html" %}
+</section>
+<details class="glass-card p-3 mt-4 small text-secondary"><summary>Como interpretar estes indicadores</summary><div class="mt-3"><p>Aberturas usam a data da solicitação. Conclusões e reprovações usam os eventos de conferência dentro do período. Um chamado com vários ciclos conta uma vez na demanda; as reprovações contam cada devolução.</p><p>Tempo até liberação inclui espera e execução. P90 é o tempo em que 90% das entregas foram liberadas. A intervenção soma o trecho dos ciclos que cruza o período e não mede trabalho líquido nem parada da prensa. Transferências de responsável não reiniciam o tempo na etapa.</p><p class="mb-0"><a href="{{ links.canceladas }}">{{ metrics.cancelled }} chamado(s) cancelado(s) no período</a>, separados das conclusões. Os filtros de matriz usam a identidade do exemplar; “Matriz não informada” reúne registros sem vínculo físico.</p></div></details>
+{% endif %}
+{% endblock %}

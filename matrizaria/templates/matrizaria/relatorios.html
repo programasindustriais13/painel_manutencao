@@ -231,7 +231,7 @@
         <ul class="pagination pagination-sm mb-0">
             {% if page_obj.has_previous %}
             <li class="page-item">
-                <a class="page-link bg-dark border-secondary text-light" href="?page={{ page_obj.previous_page_number }}&{{ request.GET.urlencode }}">Anterior</a>
+                <a class="page-link bg-dark border-secondary text-light" href="?page={{ page_obj.previous_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">Anterior</a>
             </li>
             {% endif %}
             <li class="page-item active">
@@ -239,7 +239,7 @@
             </li>
             {% if page_obj.has_next %}
             <li class="page-item">
-                <a class="page-link bg-dark border-secondary text-light" href="?page={{ page_obj.next_page_number }}&{{ request.GET.urlencode }}">Próxima</a>
+                <a class="page-link bg-dark border-secondary text-light" href="?page={{ page_obj.next_page_number }}{% if querystring %}&{{ querystring }}{% endif %}">Próxima</a>
             </li>
             {% endif %}
         </ul>

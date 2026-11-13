@@ -1,0 +1,12 @@
+{% extends "matrizaria/base_matrizaria.html" %}
+{% load static %}
+{% block title %}Detalhamento gerencial · Matrizaria{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'matrizaria/dashboard.css' %}">{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between gap-3 mb-4">
+    <div><p class="dashboard-eyebrow mb-1">Matrizaria · Detalhamento</p><h1 class="h4 fw-bold">{{ selection_title|default:'Solicitações da Matrizaria' }}</h1></div>
+    <a class="btn btn-outline-secondary align-self-start" href="{% url 'matrizaria:dashboard' %}{% if back_querystring %}?{{ back_querystring }}{% endif %}"><i class="bi bi-arrow-left me-1"></i> Voltar ao dashboard</a>
+</div>
+{% include "matrizaria/includes/dashboard_filtros.html" %}
+{% if not form.errors %}{% include "matrizaria/includes/dashboard_lista.html" %}{% endif %}
+{% endblock %}

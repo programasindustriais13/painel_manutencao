@@ -256,7 +256,7 @@
         <div class="container-fluid d-flex justify-content-between align-items-center">
             <!-- Brand -->
             <div class="d-flex align-items-center gap-3">
-                <a href="{% if is_operador_vulcanizacao and not can_access_matrizaria_kanban %}{% url 'matrizaria:minhas_solicitacoes' %}{% else %}{% url 'matrizaria:kanban' %}{% endif %}" class="matriz-brand">
+                <a href="{% url matrizaria_landing|default:'matrizaria:kanban' %}" class="matriz-brand">
                     <img src="{% static 'maintenance/img/logo_pneus_freedom_gold.png' %}" alt="Pneus Freedom" style="height: 32px;">
                     <div class="d-none d-md-block">
                         <span class="fw-bold fs-6">PNEUS FREEDOM</span>
@@ -271,7 +271,12 @@
                         <i class="bi bi-list-check"></i> Minhas Solicitações
                     </a>
                     {% endif %}
-                    {% if can_access_matrizaria_kanban or not is_operador_vulcanizacao %}
+                    {% if can_dashboard_matrizaria %}
+                    <a href="{% url 'matrizaria:dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' or request.resolver_match.url_name == 'dashboard_detalhes' %}active{% endif %}">
+                        <i class="bi bi-graph-up-arrow"></i> Dashboard
+                    </a>
+                    {% endif %}
+                    {% if can_access_matrizaria_kanban %}
                     <a href="{% url 'matrizaria:kanban' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'kanban' %}active{% endif %}">
                         <i class="bi bi-kanban"></i> Kanban
                     </a>
@@ -316,6 +321,13 @@
                 </form>
             </div>
         </div>
+        <nav class="d-flex d-lg-none gap-2 overflow-auto mt-2" aria-label="Navegação da Matrizaria">
+            {% if can_dashboard_matrizaria %}<a href="{% url 'matrizaria:dashboard' %}" class="nav-link-custom text-nowrap"><i class="bi bi-graph-up-arrow"></i> Dashboard</a>{% endif %}
+            {% if can_access_matrizaria_kanban %}<a href="{% url 'matrizaria:kanban' %}" class="nav-link-custom text-nowrap">Kanban</a>{% endif %}
+            {% if is_operador_vulcanizacao %}<a href="{% url 'matrizaria:minhas_solicitacoes' %}" class="nav-link-custom text-nowrap">Minhas Solicitações</a>{% endif %}
+            {% if can_solicitar %}<a href="{% url 'matrizaria:solicitar_servico' %}" class="nav-link-custom text-nowrap">Abrir Chamado</a>{% endif %}
+            {% if can_relatorios and not is_operador_vulcanizacao %}<a href="{% url 'matrizaria:relatorios' %}" class="nav-link-custom text-nowrap">Relatórios</a>{% endif %}
+        </nav>
     </header>
 
     <!-- Alert Messages -->

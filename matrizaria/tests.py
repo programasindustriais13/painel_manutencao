@@ -1,4 +1,7 @@
 from datetime import datetime, date, time, timedelta
+from html import unescape
+import re
+from urllib.parse import parse_qs, urlencode, urlsplit
 from unittest.mock import patch
 import openpyxl
 from django.test import TestCase, Client
@@ -447,6 +450,106 @@ class MatrizariaReportingAndTemporalTestCase(MatrizariaBaseTestCase):
         item_dia11 = [r for r in res_dia11 if r["id"] == sol.id][0]
         self.assertEqual(item_dia11["status_atual"], "CONCLUIDO")
         self.assertEqual(item_dia11["status_fim_periodo"], "EM_EXECUCAO")
+
+
+class MatrizariaReportPaginationTestCase(MatrizariaBaseTestCase):
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        now = timezone.now()
+        SolicitacaoServicoMatrizaria.objects.bulk_create([
+            SolicitacaoServicoMatrizaria(
+                prensa=cls.prensa_01,
+                tipo_servico=cls.tipo_ajuste,
+                solicitado_por=cls.solicitante_user,
+                descricao_solicitacao=f"Paginação {i}",
+                status="EM_EXECUCAO",
+                data_solicitacao=now - timedelta(minutes=i + 2),
+            )
+            for i in range(161)
+        ])
+        cls.report_ids = set(SolicitacaoServicoMatrizaria.objects.values_list("id", flat=True))
+        CicloExecucaoMatrizaria.objects.bulk_create([
+            CicloExecucaoMatrizaria(
+                solicitacao_id=pk,
+                numero_ciclo=1,
+                usuario_inicio=cls.tecnico_matrizaria_1,
+                data_inicio=now - timedelta(minutes=1),
+            )
+            for pk in cls.report_ids
+        ])
+
+    def setUp(self):
+        self.client.force_login(self.lider_user)
+        self.url = reverse("matrizaria:relatorios")
+
+    def _pagination_link(self, response, label, page, filters):
+        match = re.search(
+            rf'href="([^"]+)"[^>]*>\s*{label}</a>',
+            response.content.decode(),
+        )
+        self.assertIsNotNone(match, f"Link {label} não encontrado")
+        link = unescape(match.group(1))
+        params = parse_qs(urlsplit(link).query, keep_blank_values=True)
+        self.assertEqual(params.pop("page"), [str(page)])
+        self.assertEqual(params, filters)
+        return link
+
+    def _visit_all_pages(self, filters):
+        expected_filters = parse_qs(urlencode(filters), keep_blank_values=True)
+        response = self.client.get(self.url, filters)
+        seen_ids = []
+        for number in range(1, 10):
+            self.assertEqual(response.status_code, 200)
+            page = response.context["page_obj"]
+            self.assertEqual(page.number, number)
+            self.assertEqual(page.paginator.num_pages, 9)
+            seen_ids.extend(item["id"] for item in page)
+            if number < 9:
+                link = self._pagination_link(response, "Próxima", number + 1, expected_filters)
+                response = self.client.get(self.url + link)
+        self.assertEqual(len(seen_ids), 161)
+        self.assertEqual(set(seen_ids), self.report_ids)
+        self.assertNotContains(response, ">Próxima</a>")
+        return response, expected_filters
+
+    def test_navigate_nine_pages_without_filters(self):
+        self._visit_all_pages({})
+
+    def test_navigate_nine_pages_forward_and_backward_preserving_all_filters(self):
+        today = timezone.localdate()
+        filters = {
+            "criterio_temporal": "COM_EXECUCAO",
+            "data_inicio": (today - timedelta(days=7)).isoformat(),
+            "data_fim": today.isoformat(),
+            "prensa": str(self.prensa_01.pk),
+            "tipo_servico": str(self.tipo_ajuste.pk),
+            "status": "EM_EXECUCAO",
+            "solicitante": str(self.solicitante_user.pk),
+            "executante": str(self.tecnico_matrizaria_1.pk),
+        }
+        response, expected_filters = self._visit_all_pages(filters)
+        for number in range(8, 0, -1):
+            link = self._pagination_link(response, "Anterior", number, expected_filters)
+            response = self.client.get(self.url + link)
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.context["page_obj"].number, number)
+        self.assertNotContains(response, ">Anterior</a>")
+
+    def test_existing_duplicate_page_parameters_are_not_propagated(self):
+        response = self.client.get(self.url + "?page=3&page=2&status=EM_EXECUCAO")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["page_obj"].number, 2)
+        filters = {"status": ["EM_EXECUCAO"]}
+        self._pagination_link(response, "Anterior", 1, filters)
+        self._pagination_link(response, "Próxima", 3, filters)
+
+    def test_invalid_page_numbers_keep_paginator_fallback(self):
+        for value, expected in [("invalida", 1), ("0", 9), ("999", 9)]:
+            with self.subTest(page=value):
+                response = self.client.get(self.url, {"page": value})
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.context["page_obj"].number, expected)
 
 
 class MatrizariaExcelAndExportTestCase(MatrizariaBaseTestCase):
