@@ -18,26 +18,36 @@ def _url_status(envio):
     return urlunsplit((partes.scheme, partes.netloc, f'{base}/messages/bladder-{envio.pk}', '', ''))
 
 
-def _registrar(envio, status, detalhe, pode_repetir=False):
-    envio.status, envio.detalhe, envio.pode_repetir = status, detalhe, pode_repetir
-    envio.save(update_fields=['status', 'detalhe', 'pode_repetir', 'atualizado_em'])
+def _registrar(envio, status, detalhe, pode_repetir=False, dados=None):
+    # Consultas concorrentes não podem apagar uma confirmação já recebida.
+    ordem = {'PREPARANDO': 0, 'EM_FILA': 1, 'AGUARDANDO': 2, 'ENVIADO': 3, 'ENTREGUE': 4, 'LIDO': 5}
+    superiores = [s for s, prioridade in ordem.items() if prioridade > ordem.get(status, 2)]
+    if status == 'FALHA':
+        superiores = ['ENTREGUE', 'LIDO']
+    alteracoes = dict(status=status, detalhe=detalhe, pode_repetir=pode_repetir, atualizado_em=timezone.now())
+    if dados:
+        for origem, campo in [('whatsapp_message_id', 'whatsapp_message_id'), ('resolved_jid', 'destino_resolvido')]:
+            if isinstance(dados.get(origem), str):
+                alteracoes[campo] = dados[origem][:100]
+    EnvioWhatsAppBladder.objects.filter(pk=envio.pk).exclude(status__in=superiores).update(**alteracoes)
+    envio.refresh_from_db()
     # A reconciliação de um envio antigo não deve sobrescrever o mais recente.
     mais_recente = envio.configuracao.envios.first()
     if mais_recente and mais_recente.pk == envio.pk:
         ConfiguracaoWhatsAppBladder.objects.filter(pk=envio.configuracao_id).update(
-            ultimo_status=status, ultimo_log=detalhe,
+            ultimo_status=envio.status, ultimo_log=envio.detalhe,
             ultimo_envio=envio.criado_em, updated_at=timezone.now(),
         )
-    return {'status': status.lower(), 'mensagem': detalhe, 'envio_id': str(envio.pk)}
+    return {'status': envio.status.lower(), 'mensagem': envio.detalhe, 'envio_id': str(envio.pk)}
 
 
 def consultar_envios(config_id=None):
     """Só consulta; nunca reenvia mensagens já aceitas ou com resultado incerto."""
-    envios = EnvioWhatsAppBladder.objects.filter(status__in=['PREPARANDO', 'EM_FILA', 'INCERTO'])
+    envios = EnvioWhatsAppBladder.objects.filter(status__in=['PREPARANDO', 'EM_FILA', 'AGUARDANDO', 'INCERTO', 'ENVIADO', 'ENTREGUE'])
     if config_id is not None:
         envios = envios.filter(configuracao_id=config_id)
     agora = timezone.now()
-    envios = envios.exclude(status='INCERTO', criado_em__lt=agora - datetime.timedelta(hours=48))
+    envios = envios.exclude(status__in=['INCERTO', 'ENVIADO', 'ENTREGUE'], criado_em__lt=agora - datetime.timedelta(hours=48))
     for envio in envios.select_related('configuracao').order_by('criado_em')[:100]:
         inicio_tentativa = envio.ultima_tentativa_em or envio.criado_em
         # INCERTO permanece auditável, mas deixa de consultar após 48h.
@@ -51,16 +61,32 @@ def consultar_envios(config_id=None):
                 dados = resposta.json()
                 if not isinstance(dados, dict):
                     raise ValueError('Resposta de acompanhamento inválida')
-                if dados.get('status') == 'sent':
-                    _registrar(envio, 'ENVIADO', 'O serviço confirmou o envio ao WhatsApp. Isso não confirma leitura ou entrega ao destinatário.')
+                situacao = dados.get('status')
+                if situacao in ('server_ack', 'delivered', 'read'):
+                    grupo = envio.destino.endswith('@g.us')
+                    status, detalhe = {
+                        'server_ack': ('ENVIADO', 'O servidor WhatsApp confirmou a aceitação. A entrega ao destinatário ainda não foi confirmada.'),
+                        'delivered': ('ENTREGUE', 'Recebimento confirmado por pelo menos um participante do grupo.' if grupo else 'O WhatsApp confirmou o recebimento em um dispositivo do destinatário.'),
+                        'read': ('LIDO', 'Leitura confirmada por pelo menos um participante do grupo.' if grupo else 'O WhatsApp confirmou a leitura pelo destinatário.'),
+                    }[situacao]
+                    _registrar(envio, status, detalhe, dados=dados)
                 elif dados.get('status') == 'failed':
-                    _registrar(envio, 'FALHA', 'A transmissão falhou. Confira o WhatsApp antes de realizar outro teste.')
-                elif dados.get('status') == 'queued':
+                    detalhe = {
+                        'DESTINO_NAO_CONFIRMADO': 'O WhatsApp não confirmou o cadastro deste número. Confira DDI, DDD e número. Nenhuma mensagem foi transmitida.',
+                        'CONSULTA_DESTINO_FALHOU': 'Não foi possível consultar o contato no WhatsApp. Nenhuma mensagem foi transmitida.',
+                        'WHATSAPP_REJEITOU': 'O WhatsApp rejeitou a mensagem após a solicitação. Confira a conexão e o destinatário; não haverá reenvio automático.',
+                    }.get(dados.get('error_code'), 'A transmissão falhou. Confira o WhatsApp antes de realizar outro teste.')
+                    _registrar(envio, 'FALHA', detalhe, dados=dados)
+                elif situacao in ('queued', 'submitted'):
                     if agora - inicio_tentativa > datetime.timedelta(minutes=15):
                         if envio.status != 'INCERTO':
-                            _registrar(envio, 'INCERTO', 'Mensagem sem confirmação há mais de 15 minutos. Não será reenviada automaticamente.')
+                            _registrar(envio, 'INCERTO', 'Mensagem sem confirmação há mais de 15 minutos. Não será reenviada automaticamente.', dados=dados)
+                    elif situacao == 'submitted':
+                        _registrar(envio, 'AGUARDANDO', 'A biblioteca processou a solicitação, mas o WhatsApp ainda não confirmou aceitação ou entrega.', dados=dados)
                     elif envio.status != 'EM_FILA':
-                        _registrar(envio, 'EM_FILA', 'Mensagem na fila compartilhada do WhatsApp.')
+                        _registrar(envio, 'EM_FILA', 'Mensagem na fila compartilhada do WhatsApp.', dados=dados)
+                elif situacao == 'sent':
+                    _registrar(envio, 'INCERTO', 'O serviço antigo informou somente retorno da biblioteca. Isso não comprova aceitação ou entrega. Atualize e reinicie o Node; não haverá reenvio automático.')
                 else:
                     _registrar(envio, 'INCERTO', 'Resposta de acompanhamento desconhecida. Reenvio automático bloqueado.')
             elif resposta.status_code == 404 and envio.status != 'INCERTO' and agora - inicio_tentativa > datetime.timedelta(minutes=2):
@@ -149,7 +175,7 @@ def enviar_resumo(config_id=None, teste=False, usuario=None, dry_run=False):
         dados = saude.json() if saude.status_code == 200 else {}
         if not isinstance(dados, dict):
             raise ValueError('Resposta de conexão inválida')
-        if dados.get('tracking_version') != 1:
+        if dados.get('tracking_version') != 2:
             return _registrar(envio, 'FALHA', 'Atualize e reinicie manualmente o serviço WhatsApp para habilitar o acompanhamento do Bladder.', pode_repetir=True)
         if not dados.get('connected') or dados.get('circuitTripped'):
             return _registrar(envio, 'FALHA', 'WhatsApp desconectado ou temporariamente bloqueado; nenhum envio solicitado.', pode_repetir=True)

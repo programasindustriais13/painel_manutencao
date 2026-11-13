@@ -35,7 +35,7 @@ class WhatsAppBrowserTest(StaticLiveServerTestCase):
         artifacts.mkdir(parents=True, exist_ok=True)
         with patch('bladder.whatsapp.requests.get') as get, patch('bladder.whatsapp.requests.post') as post, sync_playwright() as playwright:
             get.return_value = Mock(status_code=200)
-            get.return_value.json.return_value = {'connected': True, 'tracking_version': 1, 'circuitTripped': False}
+            get.return_value.json.return_value = {'connected': True, 'tracking_version': 2, 'circuitTripped': False}
             post.return_value = Mock(status_code=202)
             browser = playwright.chromium.launch(channel='msedge', headless=True)
             context = browser.new_context(viewport={'width': 1440, 'height': 1000})
@@ -57,10 +57,18 @@ class WhatsAppBrowserTest(StaticLiveServerTestCase):
             page.wait_for_load_state('networkidle')
             self.assertIn('Aguarde ao menos dez minutos', page.locator('body').inner_text())
             self.assertEqual(post.call_count, 1)
-            get.return_value.json.return_value = {'status': 'sent'}
+            get.return_value.json.return_value = {'status': 'submitted', 'whatsapp_message_id': 'WA-TESTE', 'resolved_jid': '5585999998888@s.whatsapp.net'}
             page.locator('input[name="_consultar_envios"]').click()
             page.wait_for_load_state('networkidle')
-            self.assertIn('Enviado ao WhatsApp', page.locator('fieldset table').inner_text())
+            self.assertIn('Aguardando confirmação do WhatsApp', page.locator('fieldset table').inner_text())
+            get.return_value.json.return_value = {'status': 'server_ack'}
+            page.locator('input[name="_consultar_envios"]').click()
+            page.wait_for_load_state('networkidle')
+            self.assertIn('Aceito pelo servidor WhatsApp', page.locator('fieldset table').inner_text())
+            get.return_value.json.return_value = {'status': 'delivered'}
+            page.locator('input[name="_consultar_envios"]').click()
+            page.wait_for_load_state('networkidle')
+            self.assertIn('Entrega confirmada', page.locator('fieldset table').inner_text())
             page.screenshot(path=str(artifacts / 'admin-envio-confirmado.png'), full_page=True)
             for url in ('/management/', '/dashboard/'):
                 self.assertEqual(page.goto(self.live_server_url + url, wait_until='domcontentloaded').status, 200)
@@ -68,7 +76,7 @@ class WhatsAppBrowserTest(StaticLiveServerTestCase):
             browser.close()
         envio = EnvioWhatsAppBladder.objects.get()
         self.assertEqual(envio.solicitado_por_id, admin.pk)
-        self.assertEqual(envio.status, 'ENVIADO')
+        self.assertEqual(envio.status, 'ENTREGUE')
         print('Admin: salvar, enviar, bloquear repetição, confirmar status; /management/ e /dashboard/: OK')
 
 

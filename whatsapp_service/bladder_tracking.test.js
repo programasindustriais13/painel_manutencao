@@ -6,9 +6,9 @@ test('a mesma identidade não cria outro envio, inclusive após o intervalo', ()
     let time = Date.UTC(2026, 10, 13, 12);
     const tracking = createBladderTracking(() => time);
     tracking.reserve('one');
-    tracking.update('one', 'sent');
+    tracking.update('one', 'server_ack');
     time += 11 * 60 * 1000;
-    assert.equal(tracking.reserve('one').existing.status, 'sent');
+    assert.equal(tracking.reserve('one').existing.status, 'server_ack');
     assert.equal(tracking.reserve('two').record.status, 'queued');
 });
 

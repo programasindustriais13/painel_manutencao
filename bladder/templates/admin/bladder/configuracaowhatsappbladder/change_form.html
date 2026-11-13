@@ -7,7 +7,7 @@
   <div class="form-row">
     <p>O teste envia o resumo atual do estoque ao <strong>número individual salvo neste formulário</strong>, mesmo com um grupo selecionado. As alterações serão salvas antes do teste.</p>
     <p>Máximo de três testes por dia e intervalo mínimo de dez minutos entre disparos. O teste funciona mesmo com o envio automático desabilitado.</p>
-    <p>“Na fila” indica que o serviço aceitou a mensagem. Após alguns segundos, consulte o status. “Enviado ao WhatsApp” confirma a transmissão pelo serviço, sem confirmar entrega ou leitura pelo destinatário.</p>
+    <p>“Na fila” e “Aguardando confirmação” ainda não comprovam envio. Consulte o status após alguns segundos. “Aceito pelo servidor WhatsApp” confirma a aceitação; “Entrega confirmada” e “Leitura confirmada” dependem das confirmações do destinatário. Para grupos, consulte o detalhe.</p>
     <input type="submit" name="_enviar_teste" value="Salvar e enviar teste ao número individual">
     <input type="submit" name="_consultar_envios" value="Salvar e atualizar status dos envios">
   </div>
@@ -18,10 +18,10 @@
   <h2>Últimos envios</h2>
   <p>O automático usa o primeiro cadastro, respeita os dias e o horário e aguarda até quatro horas pelo serviço WhatsApp. A tarefa do servidor também atualiza estes status a cada minuto.</p>
   <div style="overflow-x: auto"><table>
-    <thead><tr><th>Solicitado em</th><th>Tipo</th><th>Destino</th><th>Situação</th><th>Detalhe</th></tr></thead>
+    <thead><tr><th>Solicitado em</th><th>Tipo</th><th>Destino</th><th>Situação</th><th>Detalhe</th><th>ID no WhatsApp / endereço confirmado</th></tr></thead>
     <tbody>{% for envio in ultimos_envios %}
-      <tr><td>{{ envio.criado_em|date:"d/m/Y H:i:s" }}</td><td>{{ envio.get_tipo_display }}</td><td>{{ envio.destino }}</td><td>{{ envio.get_status_display }}</td><td>{{ envio.detalhe }}</td></tr>
-    {% empty %}<tr><td colspan="5">Nenhum envio registrado.</td></tr>{% endfor %}</tbody>
+      <tr><td>{{ envio.criado_em|date:"d/m/Y H:i:s" }}</td><td>{{ envio.get_tipo_display }}</td><td>{{ envio.destino }}</td><td>{{ envio.get_status_display }}</td><td>{{ envio.detalhe }}</td><td>{{ envio.whatsapp_message_id|default:"—" }}<br>{{ envio.destino_resolvido }}</td></tr>
+    {% empty %}<tr><td colspan="6">Nenhum envio registrado.</td></tr>{% endfor %}</tbody>
   </table></div>
 </fieldset>
 {% endif %}

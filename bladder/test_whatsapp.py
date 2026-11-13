@@ -28,7 +28,7 @@ class WhatsAppBladderTests(TestCase):
         self.post = patch('bladder.whatsapp.requests.post').start()
         self.addCleanup(patch.stopall)
         self.get.return_value = Mock(status_code=200)
-        self.get.return_value.json.return_value = {'connected': True, 'tracking_version': 1, 'circuitTripped': False}
+        self.get.return_value.json.return_value = {'connected': True, 'tracking_version': 2, 'circuitTripped': False}
         self.post.return_value = Mock(status_code=202)
         self.config = ConfiguracaoWhatsAppBladder.objects.create(numero_destino='5585999999999')
         self.user = User.objects.create_superuser('admin_whatsapp', password='test-pass', email='admin@example.test')
@@ -198,7 +198,7 @@ class WhatsAppBladderTests(TestCase):
             )
             EnvioWhatsAppBladder.objects.filter(pk=envio.pk).update(criado_em=antigo, atualizado_em=antigo)
         enviar_resumo()
-        self.get.return_value.json.return_value = {'status': 'sent'}
+        self.get.return_value.json.return_value = {'status': 'server_ack'}
         consultar_envios()
         self.assertEqual(self.config.envios.first().status, 'ENVIADO')
 
@@ -232,7 +232,7 @@ class WhatsAppBladderTests(TestCase):
         enviar_resumo()
         self.config.refresh_from_db()
         self.assertEqual(self.config.ultimo_status, 'EM_FILA')
-        self.get.return_value.json.return_value = {'status': 'sent'}
+        self.get.return_value.json.return_value = {'status': 'server_ack'}
         consultar_envios()
         self.config.refresh_from_db()
         self.assertEqual(self.config.ultimo_status, 'ENVIADO')
@@ -257,9 +257,84 @@ class WhatsAppBladderTests(TestCase):
     def test_confirmacao_tardia_recupera_resultado_incerto(self):
         self.post.side_effect = requests.Timeout()
         enviar_resumo()
-        self.get.return_value.json.return_value = {'status': 'sent'}
+        self.get.return_value.json.return_value = {'status': 'server_ack'}
         consultar_envios()
         self.assertEqual(self.config.envios.get().status, 'ENVIADO')
+
+    def test_retorno_sem_ack_nao_confirma_envio(self):
+        enviar_resumo()
+        self.get.return_value.json.return_value = {'status': 'submitted', 'whatsapp_message_id': 'WA-TESTE', 'resolved_jid': '5585999999999@s.whatsapp.net'}
+        consultar_envios()
+        envio = self.config.envios.get()
+        self.assertEqual(envio.status, 'AGUARDANDO')
+        self.assertEqual(envio.whatsapp_message_id, 'WA-TESTE')
+        self.assertEqual(envio.destino_resolvido, '5585999999999@s.whatsapp.net')
+
+    def test_status_v1_nao_e_mais_considerado_confirmacao(self):
+        enviar_resumo()
+        self.get.return_value.json.return_value = {'status': 'sent'}
+        consultar_envios()
+        self.assertEqual(self.config.envios.get().status, 'INCERTO')
+        self.avancar(15)
+        self.assertEqual(enviar_resumo()['status'], 'ja_processado')
+        self.assertEqual(self.post.call_count, 1)
+
+    def test_entrega_e_leitura_exigem_confirmacoes_distintas(self):
+        enviar_resumo()
+        for estado, esperado in [('server_ack', 'ENVIADO'), ('delivered', 'ENTREGUE'), ('read', 'LIDO')]:
+            self.get.return_value.json.return_value = {'status': estado}
+            consultar_envios()
+            self.assertEqual(self.config.envios.get().status, esperado)
+
+    def test_entrega_nao_regride_quando_evento_antigo_ou_404_chega(self):
+        enviar_resumo()
+        self.get.return_value.json.return_value = {'status': 'delivered'}
+        consultar_envios()
+        self.get.return_value.json.return_value = {'status': 'submitted'}
+        consultar_envios()
+        self.get.return_value.status_code = 404
+        self.avancar(20)
+        consultar_envios()
+        self.assertEqual(self.config.envios.get().status, 'ENTREGUE')
+
+    def test_numero_nao_confirmado_exibe_motivo_sem_reenvio(self):
+        enviar_resumo()
+        self.get.return_value.json.return_value = {'status': 'failed', 'error_code': 'DESTINO_NAO_CONFIRMADO'}
+        consultar_envios()
+        envio = self.config.envios.get()
+        self.assertEqual(envio.status, 'FALHA')
+        self.assertIn('Nenhuma mensagem foi transmitida', envio.detalhe)
+        self.assertFalse(envio.pode_repetir)
+
+    def test_retorno_antigo_nao_apaga_confirmacao(self):
+        from .whatsapp import _registrar
+        enviar_resumo()
+        envio = self.config.envios.get()
+        _registrar(envio, 'ENTREGUE', 'Entrega confirmada')
+        _registrar(envio, 'EM_FILA', 'Resposta antiga')
+        envio.refresh_from_db()
+        self.assertEqual(envio.status, 'ENTREGUE')
+
+    def test_grupo_nao_afirma_entrega_a_todos_os_participantes(self):
+        self.config.grupo_destino = WhatsAppGroup.objects.create(nome='Grupo', jid='123@g.us')
+        self.config.save()
+        enviar_resumo()
+        self.get.return_value.json.return_value = {'status': 'delivered', 'delivery_scope': 'participant'}
+        consultar_envios()
+        self.assertIn('pelo menos um participante', self.config.envios.get().detalhe)
+
+    def test_migracao_nao_preserva_falsa_confirmacao_v1(self):
+        from importlib import import_module
+        from django.apps import apps
+        from django.db import connection
+        enviar_resumo()
+        EnvioWhatsAppBladder.objects.update(status='ENVIADO')
+        ConfiguracaoWhatsAppBladder.objects.update(ultimo_status='ENVIADO')
+        migration = import_module('bladder.migrations.0010_whatsapp_confirmacoes_reais')
+        migration.preservar_confirmacoes_antigas(apps, Mock(connection=connection))
+        self.config.refresh_from_db()
+        self.assertEqual(self.config.ultimo_status, 'LEGADO')
+        self.assertEqual(self.config.envios.get().status, 'LEGADO')
 
     def test_validacao_de_numero_e_dias(self):
         for numero in ('abc', '85999999999', '55 85 999999999', '５５８５９９９９９９９９９'):

@@ -1771,7 +1771,9 @@ class EnvioWhatsAppBladder(models.Model):
     destino = models.CharField(max_length=100)
     status = models.CharField(max_length=20, default='PREPARANDO', choices=[
         ('PREPARANDO', 'Preparando'), ('EM_FILA', 'Na fila'),
-        ('ENVIADO', 'Enviado ao WhatsApp'), ('FALHA', 'Falha'),
+        ('AGUARDANDO', 'Aguardando confirmação do WhatsApp'),
+        ('ENVIADO', 'Aceito pelo servidor WhatsApp'),
+        ('ENTREGUE', 'Entrega confirmada'), ('LIDO', 'Leitura confirmada'), ('FALHA', 'Falha'),
         ('INCERTO', 'Resultado incerto — verificar antes de reenviar'),
         ('LEGADO', 'Aceito pelo serviço anterior (sem confirmação de transmissão)'),
     ])
@@ -1779,6 +1781,8 @@ class EnvioWhatsAppBladder(models.Model):
     ultima_tentativa_em = models.DateTimeField(null=True, blank=True)
     pode_repetir = models.BooleanField(default=False)
     detalhe = models.TextField(blank=True)
+    whatsapp_message_id = models.CharField(max_length=100, blank=True, default='')
+    destino_resolvido = models.CharField(max_length=100, blank=True, default='')
     solicitado_por = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
     criado_em = models.DateTimeField(auto_now_add=True)
     atualizado_em = models.DateTimeField(auto_now=True)

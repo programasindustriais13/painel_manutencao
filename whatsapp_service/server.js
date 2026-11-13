@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, generateMessageIDV2 } = require('@whiskeysockets/baileys');
 const express = require('express');
 const rateLimit = require('express-rate-limit');
 const qrcode = require('qrcode-terminal');
@@ -6,6 +6,7 @@ const pino = require('pino');
 const path = require('path');
 const { createBladderTracking } = require('./bladder_tracking');
 const bladderTracking = createBladderTracking();
+const { sendBladderMessage, attachBladderTracking } = require('./bladder_delivery');
 
 const app = express();
 app.use(express.json());
@@ -13,6 +14,16 @@ app.use(express.json());
 const PORT = process.env.NODE_ENV === 'test' ? Number(process.env.WHATSAPP_TEST_PORT || 3000) : 3000;
 let sock = null;
 let isConnected = false;
+let reconnectTimer = null;
+let connecting = false;
+
+function scheduleReconnect() {
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectToWhatsApp();
+    }, 5000);
+}
 
 // Configuração do Rate Limit (5 requisições por 1 minuto por IP)
 const sendLimiter = rateLimit({
@@ -35,51 +46,69 @@ const messageQueue = [];
 let isProcessingQueue = false;
 
 async function connectToWhatsApp() {
-    console.log('Iniciando conexão com o WhatsApp...');
-    const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
-    
-    // Busca a versão mais recente do WhatsApp Web suportada
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    console.log(`Usando WhatsApp Web v${version.join('.')}, é a mais recente: ${isLatest}`);
+    if (connecting) return;
+    connecting = true;
+    try {
+        console.log('Iniciando conexão com o WhatsApp...');
+        const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, 'auth_info_baileys'));
 
-    sock = makeWASocket({
-        version,
-        auth: state,
-        printQRInTerminal: false,
-        logger: pino({ level: 'warn' }),
-        browser: ["Ubuntu", "Chrome", "20.0.04"]
-    });
+        // Busca a versão mais recente do WhatsApp Web suportada
+        const { version, isLatest } = await fetchLatestBaileysVersion();
+        console.log(`Usando WhatsApp Web v${version.join('.')}, é a mais recente: ${isLatest}`);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            console.log('\n==================================================');
-            console.log('SCAN NESTE QR CODE NO SEU CELULAR PARA CONECTAR:');
-            console.log('==================================================\n');
-            qrcode.generate(qr, { small: true });
-        }
-        
-        if (connection === 'close') {
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`Conexão fechada. Código de status: ${statusCode}. Tentando reconectar: ${shouldReconnect}`);
-            isConnected = false;
-            
-            if (shouldReconnect) {
-                setTimeout(connectToWhatsApp, 5000); // Tenta reconectar após 5 segundos
-            } else {
-                console.log('Deslogado do WhatsApp. Delete a pasta auth_info_baileys para gerar um novo QR Code.');
+        sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: false,
+            logger: pino({ level: 'warn' }),
+            browser: ["Ubuntu", "Chrome", "20.0.04"],
+            shouldIgnoreJid: jid => jid === 'status@broadcast'
+        });
+
+        const connectionSock = sock;
+        connectionSock.ev.on('connection.update', (update) => {
+            if (sock !== connectionSock) return;
+            const { connection, lastDisconnect, qr } = update;
+
+            if (qr) {
+                console.log('\n==================================================');
+                console.log('SCAN NESTE QR CODE NO SEU CELULAR PARA CONECTAR:');
+                console.log('==================================================\n');
+                qrcode.generate(qr, { small: true });
             }
-        } else if (connection === 'open') {
-            console.log('==================================================');
-            console.log('WhatsApp conectado e pronto para enviar mensagens!');
-            console.log('==================================================');
-            isConnected = true;
-        }
-    });
 
-    sock.ev.on('creds.update', saveCreds);
+            if (connection === 'close') {
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                console.log(`Conexão fechada. Código de status: ${statusCode}. Tentando reconectar: ${shouldReconnect}`);
+                isConnected = false;
+
+                if (shouldReconnect) {
+                    scheduleReconnect();
+                } else {
+                    if (reconnectTimer) clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
+                    console.log('Sessao encerrada pelo WhatsApp. Confira Aparelhos conectados antes de refazer a vinculacao.');
+                }
+            } else if (connection === 'open') {
+                if (reconnectTimer) clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+                console.log('==================================================');
+                console.log('WhatsApp conectado e pronto para enviar mensagens!');
+                console.log('==================================================');
+                isConnected = true;
+            }
+        });
+
+        connectionSock.ev.on('creds.update', saveCreds);
+        attachBladderTracking(connectionSock, bladderTracking);
+    } catch (error) {
+        isConnected = false;
+        console.error('Falha ao conectar WhatsApp; nova verificacao em cinco segundos. Codigo:', error?.output?.statusCode || error?.code || 'indisponivel');
+        scheduleReconnect();
+    } finally {
+        connecting = false;
+    }
 }
 
 function handleSendFailure() {
@@ -92,6 +121,14 @@ function handleSendFailure() {
         console.error('DISJUNTOR DE FALHAS DISPARADO (CIRCUIT BREAKER)!');
         console.error('O envio de mensagens foi bloqueado por 60 segundos.');
         console.error('==================================================');
+    }
+}
+
+function resetCircuitIfExpired() {
+    if (circuitTripped && Date.now() - circuitTrippedAt > COOLDOWN_MS) {
+        circuitTripped = false;
+        consecutiveFailures = 0;
+        console.log('Protecao de falhas liberada apos o intervalo de espera.');
     }
 }
 
@@ -118,9 +155,19 @@ async function processQueue() {
 
         try {
             console.log(`Disparando mensagem para: ${task.jid}`);
-            await sock.sendMessage(task.jid, { text: task.mensagem });
-            bladderTracking.update(task.message_id, 'sent');
-            console.log(`Mensagem enviada com sucesso em background para: ${task.jid}`);
+            if (task.message_id) {
+                await sendBladderMessage(sock, task, bladderTracking, generateMessageIDV2);
+                const result = bladderTracking.lookup(task.message_id);
+                if (result?.status === 'failed') {
+                    console.warn(`Bladder ${task.message_id}: ${result.error_code}. Sem repeticao automatica.`);
+                    handleSendFailure();
+                    continue;
+                }
+                console.log(`Bladder ${task.message_id}: ${result?.status}; aguardando eventos de confirmacao do WhatsApp.`);
+            } else {
+                await sock.sendMessage(task.jid, { text: task.mensagem });
+                console.log(`Solicitacao processada para: ${task.jid}. Entrega nao confirmada por este retorno.`);
+            }
             
             // Sucesso reseta contador de falhas seguidas
             consecutiveFailures = 0;
@@ -200,7 +247,8 @@ app.post('/send', sendLimiter, (req, res) => {
 
 // Rota de status para checar a conexão
 app.get('/status', (req, res) => {
-    res.json({ connected: isConnected, circuitTripped, tracking_version: 1 });
+    resetCircuitIfExpired();
+    res.json({ connected: isConnected, circuitTripped, tracking_version: 2 });
 });
 
 app.get('/messages/:messageId', (req, res) => {
@@ -250,12 +298,19 @@ app.listen(PORT, '127.0.0.1', () => {
 if (process.env.NODE_ENV === 'test') {
     isConnected = true;
     sock = {
-        sendMessage: async (jid, content) => {
+        user: { id: '5585000000000@s.whatsapp.net' },
+        onWhatsApp: async number => [{ exists: true, jid: `${number}@s.whatsapp.net` }],
+        sendMessage: async (jid, content, options = {}) => {
             if (content.text && content.text.includes('FAIL_TRIGGER')) {
                 throw new Error('Mock send failure');
             }
             console.log(`[MOCK SEND] Enviada mensagem para ${jid}: ${content.text}`);
-            return { key: { id: 'mock_id' } };
+            if (options.messageId && !content.text.includes('NO_ACK')) {
+                setTimeout(() => bladderTracking.applyMessageUpdates([
+                    { key: { id: options.messageId, fromMe: true }, update: { status: 2 } }
+                ]), 10);
+            }
+            return { key: { id: options.messageId || 'mock_id' } };
         }
     };
     console.log('Serviço rodando em MODO TESTE com WhatsApp mockado.');
