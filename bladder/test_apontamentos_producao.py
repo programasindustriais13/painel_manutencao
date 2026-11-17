@@ -55,10 +55,11 @@ class ApontamentosProducaoTestCase(TestCase):
 
     def dados(self, codigo='01', qtd=27):
         if codigo in ('01', '02'):
-            return dict(tempo_vulcanizacao='120.5', pressao='10.25', condicao='Bom', lote_produto='000123', volume='00001')
+            return dict(tempo_vulcanizacao='120.5', pressao='10.25', temperatura='190', condicao='Bom', lote_produto='000123', volume='00001')
         if codigo in ('03', '04'):
             return dict(quantidade_realizada=qtd, temperatura='90.5', velocidade_esteira='2.5', velocidade_fuso='35.25',
-                        temperatura_tcu_1='50.1', temperatura_tcu_2='50.2', temperatura_tcu_3='50.3', temperatura_tcu_4='50.4')
+                        temperatura_tcu_1='50.1', temperatura_tcu_2='50.2', temperatura_tcu_3='50.3', temperatura_tcu_4='50.4',
+                        **({'tipo_processamento': 'Material normal', 'resfriamento': 'Tanque de água'} if codigo == '03' else {}))
         if codigo == '05':
             return dict(tempo_vulcanizacao='8.25', temperatura='100.5', pressao='5.5', condicao='Bons', observacoes='Inspeção confirmada')
         return dict(lote_produto='000123', materia_prima='Composto 001', lote_material='000999', observacoes='Amostragem real')

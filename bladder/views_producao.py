@@ -6,7 +6,8 @@ from django.db import OperationalError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.urls import reverse
-from .decorators import operador_ou_lider_bladder_required
+from django.views.decorators.http import require_POST
+from .decorators import operador_ou_lider_bladder_required, lider_bladder_required, user_is_lider_bladder
 from .models import ApontamentoTurnoBladder, OrdemProducaoBladder, CategoriaDesvioBladder, ProcessoBladder
 from .forms_producao import formulario_processo, formulario_amostras, numero_amostras
 from .producao import (validar_op, validar_extrusao, registrar_producao, corrigir_producao,
@@ -127,6 +128,30 @@ def detalhe(request, pk):
     registro = get_object_or_404(ApontamentoTurnoBladder.objects.select_related('ordem', 'operador', 'produto_registrado', 'processo_registrado', 'equipamento', 'extrusao_origem'), pk=pk)
     form = formulario_processo(registro.codigo_processo) if registro.origem != 'LEGADO' else None
     valores = [(field.label, getattr(registro, nome)) for nome, field in form.fields.items() if nome in PARAMETROS] if form else []
+    controle = registro.controle_dr
+    from .sincronizacao_drs import DESTINOS
+    cfg = DESTINOS.get(controle.destino) if controle else None
+    linha_conferencia = (controle.payload_tentativa or controle.payload_enviado or controle.payload) if controle else []
     return render(request, 'bladder/producao_detalhe.html', {'registro': registro, 'valores': valores,
                   'pode_corrigir': pode_corrigir(registro, request.user), 'theme_class': 'theme-light',
-                  'is_operador_view': True})
+                  'is_operador_view': True, 'controle_dr': controle,
+                  'url_dr': f"https://docs.google.com/spreadsheets/d/{cfg['id']}/edit#gid={cfg['gid']}" if cfg else '',
+                  'valores_conferencia_dr': [(label, valor) for label, valor in zip(cfg['cabecalhos'], linha_conferencia)
+                                             if label != 'Coluna 18'] if cfg else [],
+                  'lider_dr': request.user.is_active and user_is_lider_bladder(request.user)})
+
+
+@lider_bladder_required
+@require_POST
+def reprocessar_dr(request, pk):
+    from .models import SincronizacaoDRBladder
+    from .sincronizacao_drs import solicitar_reenvio
+    fila = get_object_or_404(SincronizacaoDRBladder, apontamento_id=pk)
+    try:
+        solicitar_reenvio(fila.pk, request.user, confirmar_ausencia=request.POST.get('confirmar_ausencia') == 'sim',
+                         justificativa=request.POST.get('justificativa', ''),
+                         reconferir=request.POST.get('acao') == 'conferir')
+        messages.success(request, 'Solicitação registrada. A integração fará a conferência na próxima execução.')
+    except (ValueError, PermissionError) as erro:
+        messages.error(request, str(erro))
+    return redirect('bladder:producao_detalhe', pk=pk)

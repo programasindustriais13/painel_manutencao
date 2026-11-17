@@ -49,7 +49,8 @@ class ExecucaoForm(forms.Form):
 class VulcanizacaoForm(ExecucaoForm):
     tempo_vulcanizacao = numero('Tempo de vulcanização (min)', positivo=True)
     pressao = numero('Pressão aplicada', positivo=True)
-    condicao = forms.ChoiceField(label='Condição do Bladder', choices=[('', 'Selecione'), ('Bom', 'Bom'), ('IA', 'IA'), ('Lixo', 'Lixo')], widget=forms.Select(attrs={'class': 'form-select form-select-lg'}))
+    temperatura = numero('Temperatura de vulcanização', positivo=True)
+    condicao = forms.ChoiceField(label='Condição do Bladder', choices=[('', 'Selecione'), ('Bom', 'Bom'), ('IA', 'IA — Imperfeição Aparente'), ('Lixo', 'Lixo')], widget=forms.Select(attrs={'class': 'form-select form-select-lg'}))
     lote_produto = texto('Lote do produto')
     volume = texto('Volume')
 
@@ -66,6 +67,11 @@ class ExtrusaoForm(ExecucaoForm):
     temperatura_tcu_4 = numero('Temperatura TCU 4')
 
 
+class ExtrusaoBladderForm(ExtrusaoForm):
+    tipo_processamento = texto('Tipo de processamento', limite=150)
+    resfriamento = texto('Resfriamento', limite=150)
+
+
 class AneisForm(ExecucaoForm):
     tempo_vulcanizacao = numero('Tempo de vulcanização (min)', positivo=True)
     temperatura = numero('Temperatura')
@@ -75,7 +81,7 @@ class AneisForm(ExecucaoForm):
 
 class ManuseioForm(ExecucaoForm):
     lote_produto = texto('Lote do produto')
-    materia_prima = texto('Matéria-prima', limite=150)
+    materia_prima = texto('Fornecedor e matéria-prima (ex.: TORTUGA - FBB0001)', limite=150)
     lote_material = texto('Lote do material')
 
 
@@ -85,7 +91,7 @@ class AmostraForm(forms.Form):
     peso = numero('Peso (kg)', positivo=True)
 
 
-FORMULARIOS = {'01': VulcanizacaoForm, '02': VulcanizacaoForm, '03': ExtrusaoForm,
+FORMULARIOS = {'01': VulcanizacaoForm, '02': VulcanizacaoForm, '03': ExtrusaoBladderForm,
               '04': ExtrusaoForm, '05': AneisForm, '06': ManuseioForm}
 CAMPOS_PROCESSOS = set().union(*(set(form.base_fields) for form in FORMULARIOS.values())) - {'token', 'observacoes'}
 

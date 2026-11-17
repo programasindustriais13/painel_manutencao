@@ -114,10 +114,14 @@ class ApontamentosBrowserTest(StaticLiveServerTestCase):
                     if codigo in ('01', '02'):
                         self.assertEqual(page.locator('#id_tempo_vulcanizacao').input_value(), '')
                         self.assertEqual(page.locator('#id_pressao').input_value(), '')
+                        self.assertEqual(page.locator('#id_temperatura').input_value(), '')
+                        self.assertIn('Imperfeição Aparente', page.locator('#id_condicao').inner_text())
                         self.assertEqual(page.locator('#id_temperatura_tcu_1').count(), 0)
                     elif codigo in ('03', '04'):
                         self.assertEqual(page.locator('#id_temperatura_tcu_4').count(), 1)
                         self.assertEqual(page.locator('#id_pressao').count(), 0)
+                        self.assertEqual(page.locator('#id_tipo_processamento').count(), 1 if codigo == '03' else 0)
+                        self.assertEqual(page.locator('#id_resfriamento').count(), 1 if codigo == '03' else 0)
                     else:
                         self.assertEqual(page.locator('#id_quantidade_realizada').count(), 0)
                         self.assertIn('Parcialmente Bons', page.locator('#id_condicao').inner_text())
@@ -170,6 +174,11 @@ class ApontamentosBrowserTest(StaticLiveServerTestCase):
                     self.assertEqual(media, Decimal('38.03'))
                 abrir(f'/bladder/operador/producao/{manuseio_id}/')
                 self.assertIn('Amostras preservadas', page.locator('body').inner_text())
+                self.assertIn('DR.114 — Pendente', page.locator('body').inner_text())
+                self.assertEqual(page.get_by_role('link', name='Abrir DR', exact=True).count(), 1)
+                self.assertEqual(page.get_by_role('button', name='Tentar novamente', exact=True).count(), 0)
+                self.assertFalse(page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+                page.screenshot(path=str(artifacts / f'dr114-detalhe-{quantidade}.png'), full_page=True)
 
             formulario('04'); preencher(ApontamentosProducaoTestCase.dados(self, '04', 7)); salvar()
             self.assertEqual(page.get_by_role('link', name='REGISTRAR MANUSEIO', exact=True).count(), 0)

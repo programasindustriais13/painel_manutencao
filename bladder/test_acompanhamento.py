@@ -38,7 +38,7 @@ class AcompanhamentoLiderTestCase(TestCase):
 
     def apontar(self, op, condicao='Bom'):
         return registrar_producao(op.pk, self.operador, {
-            'tempo_vulcanizacao': '120', 'pressao': '10', 'condicao': condicao,
+            'tempo_vulcanizacao': '120', 'pressao': '10', 'temperatura': '190', 'condicao': condicao,
             'lote_produto': '000123', 'volume': '00001',
         }, uuid.uuid4())[0]
 
@@ -109,6 +109,7 @@ class AcompanhamentoLiderTestCase(TestCase):
             'quantidade_realizada': 10, 'temperatura': '90', 'velocidade_esteira': '2',
             'velocidade_fuso': '35', 'temperatura_tcu_1': '50', 'temperatura_tcu_2': '50',
             'temperatura_tcu_3': '50', 'temperatura_tcu_4': '50',
+            'tipo_processamento': 'Material normal', 'resfriamento': 'Tanque de água',
         }, uuid.uuid4())[0]
         manuseio = registrar_producao(extrusao_op.pk, self.operador, {
             'lote_produto': '000123', 'materia_prima': 'Composto', 'lote_material': '000999',

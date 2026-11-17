@@ -4880,3 +4880,58 @@ AVISO DE META NOS CARDS DO OPERADOR (17/11/2026)
   no script validar_apontamentos_bladder.py. Resultado:56/56 testes focados
   e1/1 ensaio Edge aprovados; cards375/768px inspecionados, sem overflow.
   SPEC do processo atualizada.
+
+AUTOMAÇÃO DAS DR.114 E DR.115 — PRODUÇÃO BLADDER (17/11/2026)
+--------------------------------------------------------------------------------
+- Vulcanização01/02 exige também temperatura efetiva. IA = Imperfeição Aparente;
+  exportação equivalente ao texto histórico IMPERFEIÇÕES DE VULCANIZAÇÃO.
+- Extrusão03 exige Tipo de processamento e Resfriamento, ambos textos livres.
+  Apex04 não recebe esses campos. Matéria-prima do manuseio mantém fornecedor
+  e composto juntos (ex.: TORTUGA - FBB0001), com lote do material separado.
+- DR.115: uma linha A:J por vulcanização. DR.114: uma linha A:U por execução03,
+  somente após manuseio06 completo; operador e carimbo são os da extrusão.
+  TCU1..4 correspondem às zonas; médias numéricas de peso/comprimento/diâmetro;
+  Volumes = quantidade produzida. Observações das duas etapas são identificadas.
+- Nenhuma coluna/aba/nota/metadado é criada nas DRs. Volume individual continua
+  somente no sistema. Coluna18 permanece vazia no APPEND e é preservada em
+  correções. Não há novo cadastro de prensa3 ou integração de outras operações.
+- Migration0012 aditiva: dois textos opcionais/default vazio nos históricos,
+  fila persistente, concessão de execução por destino e histórico de envios.
+  Não há preenchimento retroativo fictício, mudança na DR-201 ou no estoque.
+- Serviço bladder/sincronizacao_drs.py: fila gravada na mesma transação da
+  produção/correção; rede somente pelo comando periódico. Bibliotecas existentes
+  gspread/google-auth e credentials.json; acesso de edição necessário nas duas DRs.
+- Comando manual (envia dados reais quando executado no servidor):
+  .\.venv\Scripts\python.exe manage.py sincronizar_producao_drs
+  Opções: --destino DR114/DR115; --limite 10 (padrão por destino).
+  --verificar-instalacao apenas verifica DEBUG=False e credentials.json, sem rede.
+- INSTALAÇÃO NO SERVIDOR, APÓS O DEPLOY NORMAL E MIGRATIONS:
+  powershell -ExecutionPolicy Bypass -File .\scripts\instalar_sincronizacao_drs_bladder.ps1
+  Executar uma vez como administrador. Tarefa "Painel Manutencao - DRs Producao
+  Bladder", a cada minuto, SYSTEM, IgnoreNew, inclusive sem usuário conectado.
+  -CheckOnly faz somente pré-verificação. O instalador não aplica migrations.
+  Runner: scripts/executar_sincronizacao_drs_bladder.ps1.
+  Logs: logs/drs_producao_bladder_YYYY-MM-DD.log.
+- Liderança acompanha status na consulta de produção; operador e liderança veem
+  status/detalhes e link Abrir DR em cada registro. Só liderança pode solicitar
+  nova tentativa; ações exigem POST/CSRF e ficam auditadas. Admin somente leitura.
+- Sem chave adicional na planilha, falha de confirmação não autoriza APPEND cego:
+  tentativa fica durável ENVIANDO/CONFERIR. Conteúdo completo único permite
+  reconciliação automática, mesmo com linha movida. Ausência/duplicidade/edição
+  externa exige conferência. Releituras ambíguas têm intervalo de cinco minutos;
+  falhas anteriores à escrita têm intervalo crescente até uma hora.
+- Em CONFERIR, consultar Registro a conferir na DR. "Conferir novamente" tenta
+  reconciliar. Para inserção inicialmente não confirmada, liderança pode declarar
+  ausência na DR com justificativa >=10 caracteres e liberar novo envio.
+  Tentativas antigas permanecem verificáveis para detectar respostas tardias.
+  Para correção, restaure conteúdo conhecido único se houve edição externa;
+  reconferência verifica versão nova ou antiga antes de atualizar. Nunca converte
+  UPDATE de registro enviado em APPEND. Alterações concorrentes na planilha durante
+  leitura/escrita não oferecem garantia distribuída de exatamente uma gravação;
+  evite editar/ordenar manualmente a DR enquanto a integração estiver escrevendo.
+- Correções em qualquer etapa atualizam a mesma projeção, com revisão. Mudança
+  durante um envio permanece pendente depois de confirmar a versão anterior.
+  Fechamento do turno não gera novo envio. Exportação Excel local inclui os campos.
+- SPEC: regras_programacao/SPEC_AUTOMACAO_DR114_DR115_BLADDER.md. Testes com Google
+  simulado e bancos temporários; nenhum envio real, instalação de tarefa ou migrate
+  operacional é executado durante o desenvolvimento desta melhoria.

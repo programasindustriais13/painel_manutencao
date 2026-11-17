@@ -80,6 +80,7 @@
                         <strong class="font-monospace" style="overflow-wrap:anywhere">{{ registro.ordem.numero_ordem }}</strong>
                         <span class="badge bg-secondary">{% if registro.origem == 'LEGADO' %}Legado{% elif registro.origem == 'MANUSEIO' %}Manuseio{% else %}{{ registro.processo_registrado.nome|default:registro.codigo_processo }}{% endif %}</span>
                         {% if registro.foi_corrigido %}<span class="badge bg-warning text-dark">Corrigido</span>{% endif %}
+                        {% with controle=registro.controle_dr %}{% if controle %}<span class="badge {% if controle.status == 'SINCRONIZADO' %}bg-success{% elif controle.status == 'ERRO' or controle.status == 'CONFERIR' %}bg-danger{% else %}bg-secondary{% endif %}">{{ controle.get_destino_display }} · {{ controle.get_status_display }}</span>{% endif %}{% endwith %}
                     </div>
                     <div class="small text-secondary">{{ registro.data_hora_inicio|date:'d/m/Y H:i' }} · {{ registro.get_turma_display }} · {{ registro.operador.get_full_name|default:registro.operador.username }}</div>
                     <div class="small">{% if registro.origem == 'LEGADO' %}Produto histórico: {{ registro.ordem.produto.codigo|default:'Não informado' }}{% else %}{{ registro.identificacao_registrada.produto|default:registro.produto_registrado.codigo|default:'Produto não informado' }}{% endif %}{% if registro.condicao %} · Condição: {{ registro.condicao }}{% endif %}</div>

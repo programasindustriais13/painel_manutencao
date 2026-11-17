@@ -322,3 +322,42 @@ Caso ocorra falha crítica em produção:
    Confirmar que o painel de manutenção `/management/` funciona normalmente.
 
 7. **Documentar a ocorrência em `Instrucoes.txt`.**
+
+## Automação das DR.114 / DR.115 do Bladder
+
+Após publicar o código pelo fluxo normal (`git pull` e `deploy_production.ps1`),
+que inclui a migration aditiva0012, instale uma vez a tarefa em PowerShell como
+administrador no servidor:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\instalar_sincronizacao_drs_bladder.ps1
+```
+
+O instalador exige `DEBUG=False`, `credentials.json` e migrations aplicadas. Não
+envia dados durante a instalação; a primeira execução ocorre em um minuto.
+A conta de serviço das credenciais deve ter acesso de edição às duas DRs.
+Defina a virada operacional: novos registros passam a ser feitos somente no
+sistema, evitando repetir o mesmo lançamento no Google Forms antigo. A integração
+não importa nem reenvia automaticamente o histórico anterior à fila.
+`-CheckOnly` faz pré-verificação sem cadastrar a tarefa. A tarefa roda como SYSTEM,
+a cada minuto e sem instâncias simultâneas. Não inicia nem altera os outros serviços.
+Verifique acesso aos arquivos e saída HTTPS dessa conta no servidor.
+
+Logs diários: `logs/drs_producao_bladder_YYYY-MM-DD.log`. Para inspecionar a tarefa:
+
+```powershell
+Get-ScheduledTask -TaskName 'Painel Manutencao - DRs Producao Bladder'
+```
+
+O comando `manage.py sincronizar_producao_drs` processa dados reais da fila. Não
+é teste de instalação. Consulte status, tentativas e recuperação em cada registro
+de produção e na seção correspondente de `Instrucoes.txt`.
+
+Antes de reverter o código ou restaurar um backup do banco, desabilite a tarefa:
+
+```powershell
+Disable-ScheduledTask -TaskName 'Painel Manutencao - DRs Producao Bladder'
+```
+
+Restaurar o banco não desfaz escritas nas DRs. Reconcilie a fila com as linhas
+remotas antes de reativar a tarefa, evitando reenvio de dados já existentes.

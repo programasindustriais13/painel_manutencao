@@ -27,7 +27,38 @@ from .models import (
     ConfiguracaoWhatsAppBladder,
     EnvioWhatsAppBladder,
     AmostraManuseioBladder,
+    SincronizacaoDRBladder,
+    HistoricoSincronizacaoDRBladder,
 )
+
+
+class ConsultaDRAdmin(admin.ModelAdmin):
+    def has_view_permission(self, request, obj=None):
+        from .decorators import user_is_lider_bladder
+        return request.user.is_active and user_is_lider_bladder(request.user)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(SincronizacaoDRBladder)
+class SincronizacaoDRBladderAdmin(ConsultaDRAdmin):
+    list_display = ('apontamento', 'destino', 'status', 'revisao', 'revisao_enviada', 'tentativas', 'sincronizado_em')
+    list_filter = ('destino', 'status')
+    search_fields = ('apontamento__ordem__numero_ordem',)
+    readonly_fields = tuple(f.name for f in SincronizacaoDRBladder._meta.fields)
+
+
+@admin.register(HistoricoSincronizacaoDRBladder)
+class HistoricoSincronizacaoDRBladderAdmin(ConsultaDRAdmin):
+    list_display = ('sincronizacao', 'evento', 'usuario', 'created_at')
+    readonly_fields = tuple(f.name for f in HistoricoSincronizacaoDRBladder._meta.fields)
 
 
 @admin.register(ProcessoBladder)

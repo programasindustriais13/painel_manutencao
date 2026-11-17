@@ -11,6 +11,7 @@ urlpatterns = [
     path("operador/extrusoes/<int:pk>/manuseio/", views_producao.registrar_manuseio, name="manuseio_registrar"),
     path("operador/producao/<int:pk>/", views_producao.detalhe, name="producao_detalhe"),
     path("operador/producao/<int:pk>/corrigir/", views_producao.corrigir, name="producao_corrigir"),
+    path("operador/producao/<int:pk>/reprocessar-dr/", views_producao.reprocessar_dr, name="producao_reprocessar_dr"),
     path("operador/fechar-turno/", views.fechamento_turno, name="fechamento_turno"),
     path("operador/iniciar/<int:pk>/", views.operador_iniciar, name="operador_iniciar"),
     path("operador/apontar/<int:pk>/", views.operador_apontar, name="operador_apontar"),

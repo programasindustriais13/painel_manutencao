@@ -1,4 +1,4 @@
-"""Execução operacional e qualidade. Nunca movimenta estoque ou integra serviços externos."""
+"""Execução operacional e qualidade; integrações são enfileiradas sem acesso à rede."""
 import time
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
@@ -17,7 +17,8 @@ from .decorators import user_is_operador_bladder, user_is_lider_bladder
 PARAMETROS = ('tempo_vulcanizacao', 'pressao', 'temperatura', 'velocidade_esteira',
               'velocidade_fuso', 'temperatura_tcu_1', 'temperatura_tcu_2',
               'temperatura_tcu_3', 'temperatura_tcu_4', 'condicao', 'lote_produto',
-              'volume', 'materia_prima', 'lote_material', 'observacoes')
+              'volume', 'materia_prima', 'lote_material', 'tipo_processamento',
+              'resfriamento', 'observacoes')
 
 
 def repetir_concorrencia(func):
@@ -186,7 +187,8 @@ def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostr
             produto_registrado=produto, extrusao_origem=extrusao,
             identificacao_registrada={'op': op.numero_ordem, 'produto': produto.codigo if produto else '',
                                      'medida': produto.medida if produto else '', 'processo': processo.nome,
-                                     'equipamento': str(processo.maquina) if processo.maquina_id else ''})
+                                     'equipamento': str(processo.maquina) if processo.maquina_id else '',
+                                     'operador': usuario.get_full_name() or usuario.username})
         for campo in PARAMETROS:
             if campo in valores:
                 setattr(apontamento, campo, valores[campo])
@@ -200,6 +202,8 @@ def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostr
             op.quantidade_realizada = total_executado(op)
             op.status = 'EM_EXECUCAO'
             op.save(using='default', update_fields=['exige_execucoes', 'quantidade_apurada', 'quantidade_realizada', 'status', 'updated_at'])
+        from .sincronizacao_drs import enfileirar
+        enfileirar(apontamento)
         return apontamento, True
 
 
@@ -281,4 +285,6 @@ def corrigir_producao(apontamento_id, usuario, dados, motivo, amostras=None, cat
             quantidade_anterior=qtd_anterior, quantidade_nova=registro.quantidade_realizada,
             situacao_anterior=registro.situacao, situacao_nova=registro.situacao,
             valores_anteriores=antes, valores_novos=snapshot(registro))
+        from .sincronizacao_drs import enfileirar
+        enfileirar(registro)
         return registro

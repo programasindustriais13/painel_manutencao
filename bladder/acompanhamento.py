@@ -94,6 +94,7 @@ def preparar_consulta(parametros, hoje=None):
         registros = registros.filter(foi_corrigido=True)
     return form, registros.select_related(
         'ordem', 'operador', 'processo_registrado', 'produto_registrado', 'extrusao_origem',
+        'sincronizacao_dr', 'extrusao_origem__sincronizacao_dr',
     ).order_by('-data_hora_inicio', '-pk')
 
 
@@ -134,7 +135,7 @@ def exportar_excel(registros, filtros):
     consulta.append(['Nota', 'Manuseio não acrescenta produção. Anéis podem ter quantidade não apurada. Registros legados podem ser início ou consolidação.'])
 
     linhas = wb.create_sheet('Registros')
-    linhas.append(['ID registro', 'Data do turno', 'Registrado em', 'OP', 'Tipo', 'Código processo', 'Processo', 'Produto', 'Turma', 'Operador', 'Quantidade', 'Apuração', 'Condição', 'Lote produto', 'Volume', 'Equipamento', 'Extrusão origem ID', 'Fechamento ID', 'Corrigido', 'Observações'])
+    linhas.append(['ID registro', 'Data do turno', 'Registrado em', 'OP', 'Tipo', 'Código processo', 'Processo', 'Produto', 'Turma', 'Operador', 'Quantidade', 'Apuração', 'Condição', 'Lote produto', 'Volume', 'Equipamento', 'Extrusão origem ID', 'Fechamento ID', 'Corrigido', 'Observações', 'Tipo de processamento', 'Resfriamento', 'Temperatura', 'Situação da DR'])
     ids = registros.order_by().values('pk')
     for ap in registros.iterator(chunk_size=500):
         identidade = ap.identificacao_registrada or {}
@@ -150,6 +151,8 @@ def exportar_excel(registros, filtros):
             _texto_excel(ap.condicao), _texto_excel(ap.lote_produto), _texto_excel(ap.volume),
             _texto_excel(identidade.get('equipamento', '')), ap.extrusao_origem_id, ap.fechamento_id,
             'Sim' if ap.foi_corrigido else 'Não', _texto_excel(ap.observacoes),
+            _texto_excel(ap.tipo_processamento), _texto_excel(ap.resfriamento), ap.temperatura,
+            ap.controle_dr.get_status_display() if ap.controle_dr else 'Sem integração',
         ])
 
     amostras = wb.create_sheet('Amostras')

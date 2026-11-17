@@ -561,7 +561,7 @@ class BladderViewsEndToEndTestCase(BladderBaseTestCase):
         url = reverse('bladder:producao_registrar', args=[op.pk])
         token = self.client_op.get(url).context['form']['token'].value()
         resposta = self.client_op.post(url, {
-            'token': token, 'tempo_vulcanizacao': '120.5', 'pressao': '10.25',
+            'token': token, 'tempo_vulcanizacao': '120.5', 'pressao': '10.25', 'temperatura': '190',
             'condicao': 'Bom', 'lote_produto': '000123', 'volume': '00001',
         })
         self.assertEqual(resposta.status_code, 302)

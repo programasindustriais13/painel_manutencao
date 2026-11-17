@@ -1244,6 +1244,8 @@ class ApontamentoTurnoBladder(models.Model):
     volume = models.CharField(max_length=60, blank=True, default='')
     materia_prima = models.CharField(max_length=150, blank=True, default='')
     lote_material = models.CharField(max_length=60, blank=True, default='')
+    tipo_processamento = models.CharField(max_length=150, blank=True, default='')
+    resfriamento = models.CharField(max_length=150, blank=True, default='')
     media_diametro = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     media_comprimento = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     media_peso = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
@@ -1311,6 +1313,59 @@ class ApontamentoTurnoBladder(models.Model):
         if self.origem == 'MANUSEIO':
             return 'Etapa de manuseio (sem produção adicional)'
         return f'{self.quantidade_realizada} un' if self.quantidade_apurada else 'Quantidade não apurada'
+
+    @property
+    def controle_dr(self):
+        origem = self.extrusao_origem if self.origem == 'MANUSEIO' else self
+        if origem is None:
+            return None
+        try:
+            return origem.sincronizacao_dr
+        except SincronizacaoDRBladder.DoesNotExist:
+            return None
+
+
+class SincronizacaoDRBladder(models.Model):
+    """Projeção da execução nas DRs; dados de controle existem apenas no banco."""
+    STATUS = [('AGUARDANDO', 'Aguardando manuseio / dados'), ('PENDENTE', 'Pendente'),
+              ('ENVIANDO', 'Envio em andamento'), ('SINCRONIZADO', 'Sincronizado'),
+              ('ERRO', 'Erro; nova tentativa agendada'), ('CONFERIR', 'Conferência necessária')]
+    apontamento = models.OneToOneField(ApontamentoTurnoBladder, on_delete=models.PROTECT, related_name='sincronizacao_dr')
+    destino = models.CharField(max_length=5, choices=[('DR114', 'DR.114'), ('DR115', 'DR.115')])
+    status = models.CharField(max_length=15, choices=STATUS, default='PENDENTE', db_index=True)
+    revisao = models.PositiveIntegerField(default=1)
+    revisao_enviada = models.PositiveIntegerField(default=0)
+    payload = models.JSONField(default=list, blank=True)
+    payload_enviado = models.JSONField(default=list, blank=True)
+    payload_tentativa = models.JSONField(default=list, blank=True)
+    payloads_nao_confirmados = models.JSONField(default=list, blank=True)
+    revisao_tentativa = models.PositiveIntegerField(default=0)
+    operacao_tentativa = models.CharField(max_length=8, blank=True, default='')
+    linha_planilha = models.PositiveIntegerField(null=True, blank=True)
+    tentativas = models.PositiveIntegerField(default=0)
+    proxima_tentativa = models.DateTimeField(null=True, blank=True)
+    sincronizado_em = models.DateTimeField(null=True, blank=True)
+    erro = models.TextField(blank=True, default='')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Sincronização de produção nas DRs'
+        verbose_name_plural = 'Sincronizações de produção nas DRs'
+
+
+class BloqueioDRBladder(models.Model):
+    """Concessão por destino, compartilhada entre processos Windows/MySQL/SQLite."""
+    destino = models.CharField(max_length=5, unique=True)
+    token = models.UUIDField(null=True, blank=True)
+    expira_em = models.DateTimeField(null=True, blank=True)
+
+
+class HistoricoSincronizacaoDRBladder(models.Model):
+    sincronizacao = models.ForeignKey(SincronizacaoDRBladder, on_delete=models.PROTECT, related_name='historico')
+    usuario = models.ForeignKey(User, null=True, blank=True, on_delete=models.PROTECT)
+    evento = models.CharField(max_length=40)
+    descricao = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class AmostraManuseioBladder(models.Model):

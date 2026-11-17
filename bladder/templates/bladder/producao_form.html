@@ -16,7 +16,7 @@
 <div><small>Processo</small><strong>{% if codigo == '06' %}06 — Manuseio de Tarugo{% else %}{{ op.processo }}{% endif %}</strong><small>Equipamento: {{ equipamento_executado|default:'Sem vínculo cadastrado' }}</small></div>
 <div><small>Operador autenticado</small><strong>{{ request.user.get_full_name|default:request.user.username }}</strong><small>Data/hora registrada automaticamente ao salvar. {{ agora|date:'d/m/Y H:i' }}</small></div>
 </div>
-{% if codigo == '01' or codigo == '02' %}<p class="alert alert-info mt-3 mb-0">Uma unidade por registro. Digite o tempo e a pressão medidos para este Bladder.</p>{% endif %}
+{% if codigo == '01' or codigo == '02' %}<p class="alert alert-info mt-3 mb-0">Uma unidade por registro. Digite o tempo, a pressão e a temperatura medidos para este Bladder.</p>{% endif %}
 {% if codigo == '05' %}<p class="alert alert-info mt-3 mb-0">Registro de parâmetros e qualidade. Quantidade não apurada: a quantidade por apontamento de anéis ainda depende de definição.</p>{% endif %}
 {% if extrusao %}<p class="alert alert-info mt-3 mb-0">Execução de extrusão #{{ extrusao.pk }} — {{ extrusao.quantidade_realizada }} tarugos, {{ extrusao.data_hora_fim|date:'d/m/Y H:i' }}. Amostragem: {{ numero_amostras }} (10%, arredondado para cima). O manuseio não acrescenta produção à OP.</p>{% endif %}
 </div>

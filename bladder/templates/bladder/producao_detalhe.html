@@ -10,6 +10,33 @@
 <dl class="row">{% for label, valor in valores %}<dt class="col-12 col-md-6">{{ label }}</dt><dd class="col-12 col-md-6">{{ valor|default_if_none:'—' }}</dd>{% endfor %}</dl>
 {% if registro.amostras.exists %}<h2 class="h4">Amostras preservadas</h2>{% for amostra in registro.amostras.all %}<p>Amostra {{ amostra.sequencia }}: diâmetro {{ amostra.diametro }} mm / comprimento {{ amostra.comprimento }} cm / peso {{ amostra.peso }} kg.</p>{% endfor %}<p>Médias: {{ registro.media_diametro }} mm / {{ registro.media_comprimento }} cm / {{ registro.media_peso }} kg.</p>{% endif %}
 {% if pode_corrigir and registro.origem != 'LEGADO' %}<a class="btn btn-warning btn-lg mb-3" href="{% url 'bladder:producao_corrigir' registro.pk %}">Corrigir com justificativa</a>{% endif %}
+{% if controle_dr %}
+<section class="border rounded p-3 mb-3" aria-labelledby="titulo-dr">
+<h2 class="h5" id="titulo-dr">{{ controle_dr.get_destino_display }} — {{ controle_dr.get_status_display }}</h2>
+<a href="{{ url_dr }}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-secondary mb-2">Abrir DR</a>
+{% if controle_dr.sincronizado_em %}<p class="small">Última confirmação: {{ controle_dr.sincronizado_em|date:'d/m/Y H:i:s' }} · Revisão {{ controle_dr.revisao_enviada }} de {{ controle_dr.revisao }}</p>{% endif %}
+{% if controle_dr.erro %}<p class="mb-2">{{ controle_dr.erro }}</p>{% endif %}
+{% if controle_dr.status == 'CONFERIR' %}<details class="mb-3"><summary>Registro a conferir na DR</summary><dl class="row mt-2">{% for label, valor in valores_conferencia_dr %}<dt class="col-12 col-md-6">{{ label }}</dt><dd class="col-12 col-md-6">{{ valor|default_if_none:'—' }}</dd>{% endfor %}</dl></details>{% endif %}
+{% if lider_dr %}
+{% if controle_dr.status == 'ERRO' or controle_dr.status == 'PENDENTE' or controle_dr.status == 'CONFERIR' %}
+<form method="post" action="{% url 'bladder:producao_reprocessar_dr' controle_dr.apontamento_id %}">{% csrf_token %}
+{% if controle_dr.status == 'CONFERIR' %}<input type="hidden" name="acao" value="conferir">{% endif %}
+<button class="btn btn-outline-primary" type="submit">{% if controle_dr.status == 'CONFERIR' %}Conferir novamente{% else %}Tentar novamente{% endif %}</button>
+</form>
+{% endif %}
+{% if controle_dr.status == 'CONFERIR' and not controle_dr.payload_enviado %}
+<details class="mt-3"><summary>Liberação após conferência da planilha</summary>
+<p class="small mt-2">Use somente depois de verificar que a linha desta execução não consta na DR. A liberação e a justificativa ficam no histórico.</p>
+<form method="post" action="{% url 'bladder:producao_reprocessar_dr' controle_dr.apontamento_id %}">{% csrf_token %}
+<label class="d-block"><input type="checkbox" name="confirmar_ausencia" value="sim" required> Conferi a DR e confirmo que o registro não foi gravado.</label>
+<label class="d-block mt-2" for="justificativa-dr">Justificativa da liberação</label><textarea id="justificativa-dr" class="form-control" name="justificativa" minlength="10" required></textarea>
+<button class="btn btn-warning mt-2" type="submit">Registrar conferência e liberar envio</button>
+</form></details>
+{% endif %}
+{% endif %}
+<details class="mt-3"><summary>Histórico de sincronização</summary>{% for evento in controle_dr.historico.all %}<p class="small mb-1">{{ evento.created_at|date:'d/m/Y H:i:s' }} · {{ evento.evento }} · {{ evento.descricao }}{% if evento.usuario %} · {{ evento.usuario }}{% endif %}</p>{% empty %}<p>Sem tentativas de envio.</p>{% endfor %}</details>
+</section>
+{% endif %}
 <h2 class="h4">Histórico de correções</h2>
 {% for historico in registro.historico_correcoes.all %}<article class="border rounded p-3 mb-2"><strong>{{ historico.usuario }} — {{ historico.created_at|date:'d/m/Y H:i:s' }}</strong><p>{{ historico.motivo_correcao }}</p><details><summary>Valores anteriores e novos</summary><dl>{% for campo, valor in historico.valores_anteriores.items %}<dt>{{ campo }}</dt><dd>Antes: {{ valor }}</dd>{% endfor %}{% for campo, valor in historico.valores_novos.items %}<dt>{{ campo }}</dt><dd>Depois: {{ valor }}</dd>{% endfor %}</dl></details></article>{% empty %}<p>Nenhuma correção.</p>{% endfor %}
 </div>
