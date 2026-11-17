@@ -1,11 +1,16 @@
 from django.urls import path
-from . import views
+from . import views, views_producao
 
 app_name = "bladder"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("acompanhar/exportar-excel/", views.acompanhamento_exportar_excel, name="acompanhamento_exportar_excel"),
     path("operador/", views.operador_turno, name="operador"),
+    path("operador/producao/<int:pk>/registrar/", views_producao.registrar, name="producao_registrar"),
+    path("operador/extrusoes/<int:pk>/manuseio/", views_producao.registrar_manuseio, name="manuseio_registrar"),
+    path("operador/producao/<int:pk>/", views_producao.detalhe, name="producao_detalhe"),
+    path("operador/producao/<int:pk>/corrigir/", views_producao.corrigir, name="producao_corrigir"),
     path("operador/fechar-turno/", views.fechamento_turno, name="fechamento_turno"),
     path("operador/iniciar/<int:pk>/", views.operador_iniciar, name="operador_iniciar"),
     path("operador/apontar/<int:pk>/", views.operador_apontar, name="operador_apontar"),

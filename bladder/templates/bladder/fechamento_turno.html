@@ -25,6 +25,13 @@
             </div>
         </div>
 
+        {% if manuseios_turno %}
+        <section class="glass-card mb-4">
+            <h2 class="h5">Manuseios de Tarugo executados neste turno</h2>
+            <p class="small">Etapas vinculadas às extrusões de origem, sem acrescentar produção. O fechamento também pode consolidar somente essas etapas, sem nova OP.</p>
+            {% for registro in manuseios_turno %}<p><a href="{% url 'bladder:producao_detalhe' registro.pk %}">Manuseio #{{ registro.pk }}</a> — extrusão #{{ registro.extrusao_origem_id }}, {{ registro.ordem.numero_ordem_curto }} — {{ registro.operador }}</p>{% endfor %}
+        </section>
+        {% endif %}
         {% if fechamento_existente %}
             <!-- Turno Já Encerrado: Visualização Auditada em Somente Leitura -->
             <div class="glass-card mb-4 border-success border-opacity-50">
@@ -60,7 +67,7 @@
                                     <td>{{ item.ordem.processo.nome }}</td>
                                     <td class="fw-semibold text-light">{{ item.ordem.produto.codigo }}</td>
                                     <td class="text-center font-monospace">{{ item.quantidade_programada }} un</td>
-                                    <td class="text-center font-monospace fw-bold text-success">{{ item.quantidade_realizada }} un</td>
+                                    <td class="text-center font-monospace fw-bold text-success">{% if item.quantidade_apurada %}{{ item.quantidade_realizada }} un{% else %}Não apurada{% endif %}</td>
                                     <td class="text-center font-monospace {% if item.saldo_gerado > 0 %}text-danger fw-bold{% else %}text-muted{% endif %}">
                                         {{ item.saldo_gerado }} un
                                     </td>
@@ -83,7 +90,7 @@
                 {% endif %}
             </div>
 
-        {% elif not ordens %}
+        {% elif not ordens and not manuseios_turno %}
             <!-- Sem OPs Programadas -->
             <div class="glass-card text-center py-5">
                 <i class="bi bi-exclamation-circle text-warning fs-1 d-block mb-3"></i>
@@ -94,7 +101,7 @@
 
         {% else %}
             <!-- Formulário de Fechamento do Turno -->
-            <form method="post" id="form-fechamento-turno" onsubmit="desabilitarSubmitFechamento(this)">
+            <form method="post" id="form-fechamento-turno" onsubmit="return desabilitarSubmitFechamento(this)">
                 {% csrf_token %}
 
                 <div class="glass-card mb-4 border-warning border-opacity-50">
@@ -132,16 +139,18 @@
                                         <label class="form-label small text-warning fw-bold mb-1" for="qtd_realizada_{{ op.id }}">
                                             Quantidade Realizada (un) *
                                         </label>
-                                        <input type="number" 
+                                        <input type="{% if op.quantidade_apurada %}number{% else %}hidden{% endif %}"
+                                               data-apurada="{{ op.quantidade_apurada|yesno:'true,false' }}"
                                                name="qtd_realizada_{{ op.id }}" 
                                                id="qtd_realizada_{{ op.id }}" 
-                                               value="{{ op.quantidade_planejada }}" 
+                                               value="{{ op.quantidade_realizada }}"
+                                               {% if op.exige_execucoes or op.tem_execucoes or op.processo.codigo == '06' %}readonly{% endif %}
                                                min="0" 
                                                class="form-control form-control-lg font-monospace fw-bold text-center input-qtd-fechamento" 
                                                data-op-id="{{ op.id }}" 
                                                data-meta="{{ op.quantidade_planejada }}"
                                                required>
-                                        <div class="small text-muted text-center mt-1">A produção pode superar a meta.</div>
+                                        <div class="small text-muted text-center mt-1">{% if not op.quantidade_apurada %}Quantidade não apurada; parâmetros e qualidade registrados, sem geração de saldo quantitativo.{% elif op.processo.codigo == '06' %}OP histórica de manuseio: somente o total já registrado pode ser consolidado. Novas etapas exigem extrusão de origem.{% elif op.exige_execucoes or op.tem_execucoes %}Total apurado nos registros de produção. Registre cada execução na OP; sem registros, o total é zero.{% else %}OP legada em transição: informe somente o realizado histórico. A produção pode superar a meta.{% endif %}</div>
                                     </div>
 
                                     <!-- Indicador de Saldo, Excedente e Situação -->
@@ -399,6 +408,7 @@
         const inputsQtd = document.querySelectorAll(".input-qtd-fechamento");
         for (const input of inputsQtd) {
             const opId = input.dataset.opId;
+            if(input.dataset.apurada === "false") {const saldo=document.getElementById(`txt-saldo-${opId}`);if(saldo) saldo.textContent="Não apurada";const badge=document.getElementById(`badge-status-${opId}`);if(badge) badge.textContent="REGISTRO DE QUALIDADE";continue;}
             const meta = parseInt(input.dataset.meta || 0, 10);
             const realizada = parseInt(input.value || 0, 10);
 
@@ -433,6 +443,7 @@
 
         function atualizarCardOP(input) {
             const opId = input.dataset.opId;
+            if(input.dataset.apurada === "false") {const saldo=document.getElementById(`txt-saldo-${opId}`);if(saldo) saldo.textContent="Não apurada";const badge=document.getElementById(`badge-status-${opId}`);if(badge) badge.textContent="REGISTRO DE QUALIDADE";return;}
             const meta = parseInt(input.dataset.meta || 0, 10);
             const realizada = parseInt(input.value || 0, 10);
 

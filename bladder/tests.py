@@ -50,6 +50,18 @@ from maintenance.views import _user_can_access_bladder, _user_get_accessible_mod
 from bladder.forms import OrdemProducaoBladderForm, MensagemPassagemTurnoForm
 
 
+def marcar_fixture_como_op_legada(op):
+    """Representa OP anterior à transição, só nas regressões do fluxo manual antigo."""
+    op.exige_execucoes = False
+    op.save(update_fields=['exige_execucoes'])
+    return op
+
+
+def criar_op_legada_para_regressao(*args, **kwargs):
+    """Cria explicitamente o histórico que já existia antes dos apontamentos por processo."""
+    return marcar_fixture_como_op_legada(criar_ordem_producao_com_saldos(*args, **kwargs))
+
+
 class BladderBaseTestCase(TestCase):
     def setUp(self):
         self.grupo_lider, _ = Group.objects.get_or_create(name="Liderança Bladder")
@@ -236,7 +248,7 @@ class BladderSaldoLedgerTestCase(BladderBaseTestCase):
         hoje = timezone.localdate()
 
         # 1. Cria OP 001
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla1,
             data_programada=hoje,
@@ -276,7 +288,7 @@ class BladderSaldoLedgerTestCase(BladderBaseTestCase):
 
         # 5. Líder cria a PRÓXIMA OP para o MESMO produto (demanda nova = 100) e decide INCORPORAR a pendência
         amanha = hoje + datetime.timedelta(days=1)
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla1,
             data_programada=amanha,
@@ -310,8 +322,8 @@ class BladderSaldoLedgerTestCase(BladderBaseTestCase):
         hoje = timezone.localdate()
 
         # 1. Cria OP A e OP B em paralelo no mesmo dia (ex: dois turnos ou dois processos)
-        op_a = criar_ordem_producao_com_saldos(self.processo, self.produto_bla2, hoje, 50, usuario=self.lider)
-        op_b = criar_ordem_producao_com_saldos(self.processo, self.produto_bla2, hoje, 40, usuario=self.lider)
+        op_a = criar_op_legada_para_regressao(self.processo, self.produto_bla2, hoje, 50, usuario=self.lider)
+        op_b = criar_op_legada_para_regressao(self.processo, self.produto_bla2, hoje, 40, usuario=self.lider)
 
         # 2. Executa ambas com fechamento parcial
         registrar_ou_atualizar_apontamento(op_a.pk, self.operador1, 35, "PARCIAL")
@@ -326,7 +338,7 @@ class BladderSaldoLedgerTestCase(BladderBaseTestCase):
 
         # Próxima OP com demanda 60, líder decide incorporar ambos os saldos
         saldos_ids = list(saldos.values_list('id', flat=True))
-        op_c = criar_ordem_producao_com_saldos(
+        op_c = criar_op_legada_para_regressao(
             self.processo, self.produto_bla2, hoje, 60,
             saldos_selecionados_ids=saldos_ids,
             usuario=self.lider
@@ -341,13 +353,13 @@ class BladderSaldoLedgerTestCase(BladderBaseTestCase):
     def test_cancelamento_op_com_saldo_reabre_ledger(self):
         """Ao cancelar uma OP que incorporou saldo, os saldos anteriores não podem ser perdidos (voltam a PENDENTE)."""
         hoje = timezone.localdate()
-        op1 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, hoje, 50, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.processo, self.produto_bla1, hoje, 50, usuario=self.lider)
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 30, "PARCIAL")
         encerrar_op_parcial_ou_total(op1.pk, self.lider)
         saldo_op1 = SaldoPendenteBladder.objects.get(op_origem=op1)
 
         # OP2 incorpora os 20 por decisão explícita
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, hoje, 80,
             saldos_selecionados_ids=[saldo_op1.id],
             usuario=self.lider
@@ -406,7 +418,7 @@ class BladderPermissoesTestCase(BladderBaseTestCase):
 
     def test_correcao_apontamento_mesmo_turno(self):
         """Operador pode corrigir lançamento próprio no mesmo turno do dia."""
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, timezone.localdate(), 100, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, timezone.localdate(), 100, usuario=self.lider)
         ap = registrar_ou_atualizar_apontamento(op.pk, self.operador1, 20, "CONCLUIDA")
 
         # Correção
@@ -496,7 +508,7 @@ class BladderViewsEndToEndTestCase(BladderBaseTestCase):
     def test_criar_op_via_post_com_saldo(self):
         """Líder cria OP via POST no formulário com decisão explícita de INCORPORAR pendência."""
         # Cria saldo pendente prévio de 30 un
-        op_ant = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, timezone.localdate(), 50, usuario=self.lider)
+        op_ant = criar_op_legada_para_regressao(self.processo, self.produto_bla1, timezone.localdate(), 50, usuario=self.lider)
         registrar_ou_atualizar_apontamento(op_ant.pk, self.operador1, 20, "PARCIAL")
         encerrar_op_parcial_ou_total(op_ant.pk, self.lider)
 
@@ -521,7 +533,10 @@ class BladderViewsEndToEndTestCase(BladderBaseTestCase):
         self.assertEqual(nova_op.quantidade_planejada, 100)
 
     def test_fluxo_operador_iniciar_e_apontar(self):
-        """Operador inicia e conclui apontamento via POST."""
+        """Início legado é preservado; prensa exige registro individual contextual."""
+        self.config_escala.data_referencia = timezone.localdate()
+        self.config_escala.turma_referencia = 'TURMA_A'
+        self.config_escala.save()
         op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, timezone.localdate(), 50, usuario=self.lider)
 
         # 1. Iniciar
@@ -530,7 +545,7 @@ class BladderViewsEndToEndTestCase(BladderBaseTestCase):
         op.refresh_from_db()
         self.assertEqual(op.status, "EM_EXECUCAO")
 
-        # 2. Apontar 50 un (conclusão total)
+        # 2. A rota genérica não pode mais lançar 50 Bladders de uma vez.
         res_apo = self.client_op.post(reverse("bladder:operador_apontar", args=[op.pk]), {
             "quantidade_realizada": 50,
             "situacao": "CONCLUIDA",
@@ -538,9 +553,22 @@ class BladderViewsEndToEndTestCase(BladderBaseTestCase):
             "observacoes": "Turno normal",
         })
         self.assertEqual(res_apo.status_code, 302)
+        self.assertEqual(res_apo.url, reverse('bladder:producao_registrar', args=[op.pk]))
         op.refresh_from_db()
-        self.assertEqual(op.quantidade_realizada, 50)
-        self.assertEqual(op.status, "CONCLUIDA")
+        self.assertEqual(op.quantidade_realizada, 0)
+
+        # 3. O operador informa parâmetros reais para uma única unidade.
+        url = reverse('bladder:producao_registrar', args=[op.pk])
+        token = self.client_op.get(url).context['form']['token'].value()
+        resposta = self.client_op.post(url, {
+            'token': token, 'tempo_vulcanizacao': '120.5', 'pressao': '10.25',
+            'condicao': 'Bom', 'lote_produto': '000123', 'volume': '00001',
+        })
+        self.assertEqual(resposta.status_code, 302)
+        op.refresh_from_db()
+        self.assertEqual(op.quantidade_realizada, 1)
+        self.assertEqual(op.status, 'EM_EXECUCAO')
+        self.assertEqual(op.apontamentos.filter(origem='PROCESSO').count(), 1)
 
     def test_api_saldo_produto(self):
         """API JSON de saldo do produto retorna contagem correta."""
@@ -614,7 +642,7 @@ class BladderComplementarPermissoesPerfisTestCase(BladderBaseTestCase):
         self.user_matriz.groups.add(grp_matriz)
 
         # OP de teste
-        self.op_teste = criar_ordem_producao_com_saldos(
+        self.op_teste = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 50, usuario=self.lider
         )
 
@@ -848,7 +876,7 @@ class BladderEtapa1OrdensListaTestCase(BladderBaseTestCase):
 
     def test_ordens_lista_op_parcial_exibe_bloco_pendencia_completo(self):
         """Valida que OP parcial exibe claramente o saldo pendente, motivo, turma e data de fechamento."""
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 50, usuario=self.lider
         )
         # Operador aponta 35 un e encerra parcial com motivo
@@ -893,7 +921,7 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
     def test_criar_op_com_pendencia_decisao_ignorar(self):
         """Quando o líder escolhe IGNORAR, o saldo continua PENDENTE e nova OP tem apenas a demanda nova."""
         # 1. OP Origem com saldo de 3 un
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 30, usuario=self.lider
         )
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 27, "PARCIAL", motivo_desvio="Problema no equipamento")
@@ -927,7 +955,7 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
 
     def test_criar_op_com_pendencia_decisao_incorporar(self):
         """Quando o líder escolhe INCORPORAR, o saldo é incorporado e vinculado à nova OP destino."""
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 30, usuario=self.lider
         )
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 27, "PARCIAL", motivo_desvio="Problema no equipamento")
@@ -958,7 +986,7 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
 
     def test_evitar_consumo_duplo_apos_incorporacao(self):
         """Saldo já incorporado não pode ser consumido em uma terceira OP."""
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 30, usuario=self.lider
         )
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 27, "PARCIAL")
@@ -966,14 +994,14 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
         saldo = SaldoPendenteBladder.objects.get(op_origem=op1)
 
         # Incorpora na OP 2
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 20,
             saldos_selecionados_ids=[saldo.id], usuario=self.lider
         )
         self.assertEqual(op2.saldo_anterior_incorporado, 3)
 
         # Tenta incorporar na OP 3 passando o mesmo ID de saldo
-        op3 = criar_ordem_producao_com_saldos(
+        op3 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 15,
             saldos_selecionados_ids=[saldo.id], usuario=self.lider
         )
@@ -984,18 +1012,18 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
     def test_multiplas_pendencias_incorporacao_seletiva(self):
         """Permite selecionar apenas uma das pendências quando houver várias."""
         # Cria 2 OPs parciais gerando 2 saldos: 4 un e 6 un
-        op1 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, timezone.localdate(), 10, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.processo, self.produto_bla1, timezone.localdate(), 10, usuario=self.lider)
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 6, "PARCIAL")
         encerrar_op_parcial_ou_total(op1.pk, self.lider)
         saldo1 = SaldoPendenteBladder.objects.get(op_origem=op1)  # 4 un
 
-        op2 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, timezone.localdate(), 10, usuario=self.lider)
+        op2 = criar_op_legada_para_regressao(self.processo, self.produto_bla1, timezone.localdate(), 10, usuario=self.lider)
         registrar_ou_atualizar_apontamento(op2.pk, self.operador1, 4, "PARCIAL")
         encerrar_op_parcial_ou_total(op2.pk, self.lider)
         saldo2 = SaldoPendenteBladder.objects.get(op_origem=op2)  # 6 un
 
         # Seleciona apenas saldo1 (4 un)
-        op3 = criar_ordem_producao_com_saldos(
+        op3 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 25,
             saldos_selecionados_ids=[saldo1.id], usuario=self.lider
         )
@@ -1012,12 +1040,12 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
         """Ao cancelar uma OP que incorporou saldo, o saldo volta para PENDENTE."""
         from .services import cancelar_ordem_producao
 
-        op1 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, timezone.localdate(), 30, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.processo, self.produto_bla1, timezone.localdate(), 30, usuario=self.lider)
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 25, "PARCIAL")
         encerrar_op_parcial_ou_total(op1.pk, self.lider)
         saldo = SaldoPendenteBladder.objects.get(op_origem=op1)
 
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 20,
             saldos_selecionados_ids=[saldo.id], usuario=self.lider
         )
@@ -1034,7 +1062,7 @@ class BladderEtapa2PendenciasTestCase(BladderBaseTestCase):
 
     def test_api_saldo_produto_retorna_pendencias_detalhadas(self):
         """API retorna lista rica de pendências para exibição do card de aviso."""
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, timezone.localdate(), 30, usuario=self.lider
         )
         registrar_ou_atualizar_apontamento(op1.pk, self.operador1, 27, "PARCIAL", motivo_desvio="Problema na prensa")
@@ -1146,7 +1174,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
         from .models import FechamentoTurnoBladder
 
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider
         )
         fechamento = executar_fechamento_turno(
@@ -1170,7 +1198,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Fechamento parcial: OP fica PARCIAL, gera SaldoPendenteBladder e exige motivo."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider
         )
         fechamento = executar_fechamento_turno(
@@ -1198,7 +1226,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """OP com zero peças produzidas: gera saldo integral no ledger com justificativa."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, self.hoje, 20, usuario=self.lider
         )
         fechamento = executar_fechamento_turno(
@@ -1223,8 +1251,8 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Fechamento consolidado contendo múltiplas OPs do turno simultaneamente."""
         from .services import executar_fechamento_turno
 
-        op1 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 25, usuario=self.lider)
-        op2 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla2, self.hoje, 35, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 25, usuario=self.lider)
+        op2 = criar_op_legada_para_regressao(self.processo, self.produto_bla2, self.hoje, 35, usuario=self.lider)
 
         fechamento = executar_fechamento_turno(
             data_turno=self.hoje,
@@ -1246,7 +1274,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Falha se OP não foi cumprida integralmente e o motivo não foi fornecido."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         with self.assertRaises(ValueError) as cm:
             executar_fechamento_turno(
                 data_turno=self.hoje,
@@ -1265,7 +1293,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Se o motivo for 'OUTRO', a descrição textual é mandatória."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         with self.assertRaises(ValueError) as cm:
             executar_fechamento_turno(
                 data_turno=self.hoje,
@@ -1284,7 +1312,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Permite quantidade realizada superior à meta programada, marcando CONCLUIDA com excedente."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         fechamento = executar_fechamento_turno(
             data_turno=self.hoje,
             operador=self.operador1,
@@ -1307,7 +1335,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Tentativa de fechar um mesmo turno mais de uma vez é impedida com erro claro."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         executar_fechamento_turno(
             data_turno=self.hoje,
             operador=self.operador1,
@@ -1325,7 +1353,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """Operador da Turma B não pode fechar turno da Turma A."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         # self.operador2 é da Turma B, mas a escala de hoje (1/1/2026 em diante) é Turma A
         with self.assertRaises(PermissionError) as cm:
             executar_fechamento_turno(
@@ -1339,7 +1367,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
         """O líder não realiza o fechamento operacional normal do turno (função do operador)."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         with self.assertRaises(PermissionError) as cm:
             executar_fechamento_turno(
                 data_turno=self.hoje,
@@ -1362,7 +1390,7 @@ class BladderEtapa4FechamentoTurnoTestCase(BladderBaseTestCase):
 
     def test_fechamento_fluxo_web_post(self):
         """Operador acessa a tela de fechamento via GET e submete o formulário via POST com sucesso."""
-        op = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
 
         # GET carrega tela
         res_get = self.client_op1.get(reverse("bladder:fechamento_turno"))
@@ -1438,9 +1466,9 @@ class BladderEtapa5DashboardTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
 
         # Cria OP e fecha parcialmente com motivo EQUIPAMENTO
-        op1 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider)
         # Cria segunda OP e fecha com motivo QUALIDADE
-        op2 = criar_ordem_producao_com_saldos(self.processo, self.produto_bla2, self.hoje, 25, usuario=self.lider)
+        op2 = criar_op_legada_para_regressao(self.processo, self.produto_bla2, self.hoje, 25, usuario=self.lider)
 
         executar_fechamento_turno(
             data_turno=self.hoje,
@@ -1571,7 +1599,7 @@ class BladderEtapa6RelatoriosTestCase(BladderBaseTestCase):
         """Relatório reflete a produção realizada através dos fechamentos de turno."""
         from .services import executar_fechamento_turno
 
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, self.hoje, 30, usuario=self.lider
         )
 
@@ -1628,7 +1656,7 @@ class BladderEtapa6RelatoriosTestCase(BladderBaseTestCase):
         op_fechamento1 = self.operador1 if turma1 == 'TURMA_A' else self.operador2
         op_fechamento2 = self.operador2 if turma1 == 'TURMA_A' else self.operador1
 
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, data_op1, 30, usuario=self.lider
         )
         executar_fechamento_turno(
@@ -1645,7 +1673,7 @@ class BladderEtapa6RelatoriosTestCase(BladderBaseTestCase):
 
         # 2. OP 2 no dia seguinte (mesmo mês)
         saldo_aberto = SaldoPendenteBladder.objects.get(status='PENDENTE', op_origem=op1)
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla1, data_op2, 20,
             saldos_selecionados_ids=[saldo_aberto.id],
             usuario=self.lider
@@ -1847,7 +1875,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
 
         # 1. Líder cria OP BLA006 = 30
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, self.hoje, 30, usuario=self.lider
         )
         self.assertEqual(op.quantidade_planejada, 30)
@@ -1903,7 +1931,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
 
         # 1. Líder cria BLA006 = 30
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, self.hoje, 30, usuario=self.lider
         )
 
@@ -1953,7 +1981,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
 
         # 1. Gera pendência de 3 BLA006
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, self.hoje, 30, usuario=self.lider
         )
         executar_fechamento_turno(
@@ -1982,7 +2010,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
 
         # 3. Líder cria nova programação BLA006 = 20 e seleciona IGNORAR POR ENQUANTO (lista vazia)
         amanha = self.hoje + datetime.timedelta(days=1)
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, amanha, 20,
             saldos_selecionados_ids=[],
             usuario=self.lider
@@ -2003,7 +2031,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
 
         # 1. Gera pendência de 3 BLA006
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, self.hoje, 30, usuario=self.lider
         )
         executar_fechamento_turno(
@@ -2021,7 +2049,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
 
         # 2. Líder cria nova demanda = 20 e escolhe INCORPORAR
         amanha = self.hoje + datetime.timedelta(days=1)
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, amanha, 20,
             saldos_selecionados_ids=[saldo_3.id],
             usuario=self.lider
@@ -2064,7 +2092,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
         from .services import executar_fechamento_turno
 
         # 1. Cria OP1 (30), fecha com 27 -> saldo 3
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, self.hoje, 30, usuario=self.lider
         )
         executar_fechamento_turno(
@@ -2082,7 +2110,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
 
         # 2. Cria OP2 (20 + 3 = 23)
         amanha = self.hoje + datetime.timedelta(days=1)
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, amanha, 20,
             saldos_selecionados_ids=[saldo_antigo.id],
             usuario=self.lider
@@ -2126,7 +2154,7 @@ class BladderEtapa8FluxoCompletoTestCase(BladderBaseTestCase):
         self.config_escala.hora_fim = datetime.time(0, 0, 1)
         self.config_escala.save()
 
-        op = criar_ordem_producao_com_saldos(
+        op = criar_op_legada_para_regressao(
             self.processo, self.produto_bla6, self.hoje, 30, usuario=self.lider
         )
 
@@ -2715,7 +2743,7 @@ class BladderBloco2RelatoriosTestCase(TestCase):
         saldo_item = SaldoPendenteBladder.objects.filter(op_origem=op1, status='PENDENTE').first()
         self.assertIsNotNone(saldo_item)
 
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla4,
             data_programada=d2,
@@ -2974,7 +3002,7 @@ class BladderBloco3OrdensTestCase(TestCase):
 
         # 2. Nova OP incorpora o saldo de 4
         from bladder.services import criar_ordem_producao_com_saldos
-        op_nova = criar_ordem_producao_com_saldos(
+        op_nova = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla4,
             data_programada=d2,
@@ -3046,7 +3074,7 @@ class BladderBloco3OrdensTestCase(TestCase):
 
         # Nova OP incorpora ambos os saldos: Qtd Nova = 20, Pendência = 3 + 2 = 5, Meta Total = 25
         from bladder.services import criar_ordem_producao_com_saldos
-        op_multi = criar_ordem_producao_com_saldos(
+        op_multi = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla4,
             data_programada=d_nova,
@@ -3127,7 +3155,7 @@ class BladderBloco3OrdensTestCase(TestCase):
 
         # 1. Líder cria OP: BLA004, Qtd. Nova = 20, sem pendência
         from bladder.services import criar_ordem_producao_com_saldos
-        op1 = criar_ordem_producao_com_saldos(
+        op1 = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla4,
             data_programada=d1,
@@ -3205,7 +3233,7 @@ class BladderBloco3OrdensTestCase(TestCase):
         self.assertEqual(saldo_ledger.quantidade, 2)
 
         # 12. Nova OP: Qtd. Nova = 30, Pendência Incorporada = 2, Meta Total = 32
-        op2 = criar_ordem_producao_com_saldos(
+        op2 = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla4,
             data_programada=d2,
@@ -3739,7 +3767,7 @@ class HomologacaoChaoDeFabricaFichaTecnicaTestCase(TestCase):
         self.assertEqual(saldo_ledger.quantidade, 3)
 
         # 2. Nova OP no dia seguinte: Qtd. Nova = 25, incorporando os 3 de pendência
-        op_destino = criar_ordem_producao_com_saldos(
+        op_destino = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.produto_bla6,
             data_programada=d2,
@@ -3980,7 +4008,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
     def test_10_fechamento_meta_20_realizado_20_concluida(self):
         """10: Meta 20 / Realizado 20 -> Concluída, saldo 0, excedente 0, sem justificativa."""
         d = datetime.date(2026, 10, 1)
-        op = criar_ordem_producao_com_saldos(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
         fechamento = executar_fechamento_turno(
             data_turno=d,
             operador=self.operador1,
@@ -3996,7 +4024,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
     def test_11_12_fechamento_meta_20_realizado_22_concluida_com_excedente(self):
         """11-12: Meta 20 / Realizado 22 -> Concluída, excedente 2, sem pendência e sem exigir justificativa."""
         d = datetime.date(2026, 10, 1)
-        op = criar_ordem_producao_com_saldos(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
         fechamento = executar_fechamento_turno(
             data_turno=d,
             operador=self.operador1,
@@ -4013,7 +4041,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
     def test_13_a_15_fechamento_meta_20_realizado_18_exige_categoria_e_descricao(self):
         """13-15: Meta 20 / Realizado 18 -> Parcial, pendência 2, exigindo categoria e descrição livre."""
         d = datetime.date(2026, 10, 1)
-        op = criar_ordem_producao_com_saldos(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
 
         # 14: Sem categoria falha
         with self.assertRaises(ValueError) as cm1:
@@ -4055,7 +4083,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
     def test_16_17_fechamento_meta_20_realizado_0_nao_realizada_exige_categoria_e_descricao(self):
         """16-17: Meta 20 / Realizado 0 -> Não realizada, pendência 20, exigindo categoria + descrição."""
         d = datetime.date(2026, 10, 1)
-        op = criar_ordem_producao_com_saldos(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
 
         with self.assertRaises(ValueError):
             executar_fechamento_turno(
@@ -4083,7 +4111,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
     def test_18_fechamento_suporta_multiplas_categorias(self):
         """18: Múltiplas categorias de desvio podem ser vinculadas ao mesmo item de fechamento."""
         d = datetime.date(2026, 10, 1)
-        op = criar_ordem_producao_com_saldos(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
+        op = criar_op_legada_para_regressao(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
         fechamento = executar_fechamento_turno(
             data_turno=d,
             operador=self.operador1,
@@ -4108,7 +4136,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
     def test_19_a_24_ledger_rastreabilidade_e_sem_consumo_duplo(self):
         """19-24: Pendência nasce somente no fechamento, não cria OP automática, pode ser incorporada manualmente e não duplica consumo."""
         d1 = datetime.date(2026, 10, 1)
-        op_origem = criar_ordem_producao_com_saldos(self.processo, self.prod_bla6, d1, 30, usuario=self.lider)
+        op_origem = criar_op_legada_para_regressao(self.processo, self.prod_bla6, d1, 30, usuario=self.lider)
 
         # 19: Antes do fechamento, ledger não tem pendência
         self.assertEqual(SaldoPendenteBladder.objects.filter(op_origem=op_origem).count(), 0)
@@ -4132,7 +4160,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
 
         # 21 & 22: Líder posteriormente decide incorporar manualmente em nova OP
         d3 = datetime.date(2026, 10, 3)
-        op_destino = criar_ordem_producao_com_saldos(
+        op_destino = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.prod_bla6,
             data_programada=d3,
@@ -4151,7 +4179,7 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
         self.assertEqual(saldo_item.op_destino, op_destino)
 
         # 24: Não existe consumo duplo do mesmo saldo (tentar reutilizar saldo já incorporado não o incorpora)
-        op_terceira = criar_ordem_producao_com_saldos(
+        op_terceira = criar_op_legada_para_regressao(
             processo=self.processo,
             produto=self.prod_bla6,
             data_programada=d3,
@@ -4170,11 +4198,11 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
         d = datetime.date(2026, 10, 1)
 
         # OP1: 20 meta / 20 realizada -> 100%
-        op1 = criar_ordem_producao_com_saldos(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.processo, self.prod_bla4, d, 20, usuario=self.lider)
         # OP2: 20 meta / 22 realizada -> 110%, Excedente = 2
-        op2 = criar_ordem_producao_com_saldos(self.proc_prensa2, self.prod_bla6, d, 20, usuario=self.lider)
+        op2 = criar_op_legada_para_regressao(self.proc_prensa2, self.prod_bla6, d, 20, usuario=self.lider)
         # OP3: 20 meta / 18 realizada -> 90%, Pendência = 2
-        op3 = criar_ordem_producao_com_saldos(self.proc_extrusora, self.prod_bla7, d, 20, usuario=self.lider)
+        op3 = criar_op_legada_para_regressao(self.proc_extrusora, self.prod_bla7, d, 20, usuario=self.lider)
 
         fechamento = executar_fechamento_turno(
             data_turno=d,
@@ -4268,10 +4296,10 @@ class BladderHomologacaoNovasRegrasNegocioTestCase(BladderBaseTestCase):
         self.assertEqual(turma, "TURMA_A")
 
         # 1. Programação
-        op1 = criar_ordem_producao_com_saldos(self.proc_prensa1, self.prod_bla4, d, 20, usuario=self.lider)
-        op2 = criar_ordem_producao_com_saldos(self.proc_prensa2, self.prod_bla6, d, 30, usuario=self.lider)
-        op3 = criar_ordem_producao_com_saldos(self.proc_extrusora, self.prod_bla7, d, 15, usuario=self.lider)
-        op4 = criar_ordem_producao_com_saldos(self.proc_extrusora, self.prod_bla9, d, 10, usuario=self.lider)
+        op1 = criar_op_legada_para_regressao(self.proc_prensa1, self.prod_bla4, d, 20, usuario=self.lider)
+        op2 = criar_op_legada_para_regressao(self.proc_prensa2, self.prod_bla6, d, 30, usuario=self.lider)
+        op3 = criar_op_legada_para_regressao(self.proc_extrusora, self.prod_bla7, d, 15, usuario=self.lider)
+        op4 = criar_op_legada_para_regressao(self.proc_extrusora, self.prod_bla9, d, 10, usuario=self.lider)
 
         # Sistema deriva Turma A para todas
         self.assertEqual(op1.turma_prevista, "TURMA_A")

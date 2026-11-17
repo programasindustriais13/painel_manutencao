@@ -1,13 +1,13 @@
 {% extends "bladder/base_bladder.html" %}
 
-{% block title %}Dashboard &bull; Setor de Bladder{% endblock %}
+{% block title %}Acompanhamento da Produção &bull; Setor de Bladder{% endblock %}
 
 {% block content %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
-        <h1 class="h3 fw-bold mb-1 text-light">Dashboard Operacional do Setor de Bladder</h1>
+        <h1 class="h3 fw-bold mb-1 text-light">Produção do Setor de Bladder</h1>
         <p class="text-secondary small mb-0">
-            Acompanhamento em tempo real das programações, execução das turmas e saldos de produção.
+            Consulte os apontamentos salvos e acompanhe as pendências do setor.
         </p>
     </div>
     <div class="d-flex flex-wrap align-items-center gap-2">
@@ -34,6 +34,11 @@
     </div>
 </div>
 
+{% include 'bladder/includes/acompanhamento_producao.html' %}
+
+<details class="glass-card p-3 mb-4">
+<summary class="h5 fw-bold mb-3" style="cursor:pointer">Programação, estoque e outros indicadores</summary>
+
 <!-- Cards de Indicadores Principais do Chão de Fábrica -->
 <div class="row g-3 mb-4">
     <div class="col-6 col-md-3">
@@ -45,7 +50,7 @@
     </div>
     <div class="col-6 col-md-3">
         <div class="glass-card text-center p-3">
-            <span class="text-muted small d-block mb-1">Realizado Hoje</span>
+            <span class="text-muted small d-block mb-1">Realizado Hoje — OPs programadas</span>
             <div class="fs-3 fw-bold text-success font-monospace">{{ realizado_dia }} <span class="fs-6 text-muted">un</span></div>
             <div class="d-flex justify-content-center align-items-center gap-1 flex-wrap mt-1">
                 <span class="text-secondary small">
@@ -198,12 +203,12 @@
                             </td>
                             <td class="text-center" style="width: 140px;">
                                 <div class="progress bg-dark" style="height: 10px;">
-                                    <div class="progress-bar {% if op.percentual_conclusao >= 100 %}bg-success{% elif op.status == 'PARCIAL' %}bg-warning{% else %}bg-info{% endif %}" role="progressbar" style="width: {% if op.percentual_conclusao > 100 %}100{% else %}{{ op.percentual_conclusao }}{% endif %}%;"></div>
+                                    <div class="progress-bar {% if op.percentual_conclusao >= 100 %}bg-success{% elif op.status == 'PARCIAL' %}bg-warning{% else %}bg-info{% endif %}" role="progressbar" style="width: {% if not op.quantidade_apurada %}0{% elif op.percentual_conclusao > 100 %}100{% else %}{{ op.percentual_conclusao }}{% endif %}%;"></div>
                                 </div>
-                                <span class="small text-muted">{{ op.percentual_conclusao }}%</span>
+                                <span class="small text-muted">{% if op.quantidade_apurada %}{{ op.percentual_conclusao }}%{% else %}Não apurada{% endif %}</span>
                             </td>
                             <td class="text-center font-monospace">
-                                <span class="fw-bold text-success">{{ op.quantidade_realizada }}</span>
+                                <span class="fw-bold text-success">{% if op.quantidade_apurada %}{{ op.quantidade_realizada }}{% else %}Não apurada{% endif %}</span>
                                 <span class="text-muted">/</span>
                                 <span class="fw-bold text-light">{{ op.quantidade_planejada }}</span>
                                 {% if op.excedente > 0 %}
@@ -256,4 +261,5 @@
         </div>
     {% endif %}
 </div>
+</details>
 {% endblock %}

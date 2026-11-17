@@ -1,0 +1,104 @@
+<section class="mb-4" aria-labelledby="titulo-acompanhamento">
+    <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+        <div>
+            <h2 id="titulo-acompanhamento" class="h4 fw-bold mb-1">Acompanhamento da produção</h2>
+            <p class="text-secondary small mb-0">Registros salvos no período. Use a OP ou os filtros para consultar o histórico.</p>
+        </div>
+        {% if filtro_producao.is_valid %}
+        <a class="btn btn-success fw-bold" href="{% url 'bladder:acompanhamento_exportar_excel' %}{% if query_filtros %}?{{ query_filtros }}{% endif %}">
+            <i class="bi bi-file-earmark-excel-fill"></i> Exportar Excel
+        </a>
+        {% endif %}
+    </div>
+
+    <div class="row g-3 mb-3">
+        <div class="col-12 col-sm-4">
+            <div class="glass-card p-3 h-100">
+                <span class="small text-secondary d-block">Registros no filtro</span>
+                <strong class="fs-3 font-monospace">{{ total_registros_producao }}</strong>
+                <span class="small text-muted d-block">{% if ultimo_registro_producao %}Último em {{ ultimo_registro_producao.data_hora_inicio|date:'d/m H:i' }}{% else %}Nenhum registro encontrado{% endif %}</span>
+            </div>
+        </div>
+        <div class="col-12 col-sm-4">
+            <div class="glass-card p-3 h-100">
+                <span class="small text-secondary d-block">OPs com registros no filtro</span>
+                <strong class="fs-3 font-monospace">{{ total_ops_com_registros }}</strong>
+                <span class="small text-muted d-block">Execuções e etapas identificadas por OP</span>
+            </div>
+        </div>
+        <div class="col-12 col-sm-4">
+            <div class="glass-card p-3 h-100">
+                <span class="small text-secondary d-block">Manuseios pendentes</span>
+                <strong class="fs-3 font-monospace">{{ pendencias_manuseio }}</strong>
+                <a class="small d-block" href="{% url 'bladder:operador' %}?producao=pendentes#tab-atividades">Todos os turnos · ver pendências</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="glass-card p-3 mb-3">
+        <div class="d-flex flex-wrap gap-2 mb-3" aria-label="Períodos rápidos">
+            <a class="btn btn-sm btn-outline-secondary" href="?{{ atalho_hoje }}">Hoje</a>
+            <a class="btn btn-sm btn-outline-secondary" href="?{{ atalho_sete_dias }}">Últimos 7 dias</a>
+            <a class="btn btn-sm btn-outline-secondary" href="?{{ atalho_mes }}">Este mês</a>
+        </div>
+        <form method="get" action="{% url 'bladder:dashboard' %}" id="filtros-producao">
+            {% if filtro_producao.non_field_errors %}<div class="alert alert-danger">{{ filtro_producao.non_field_errors }}</div>{% endif %}
+            <div class="row g-2 align-items-end">
+                <div class="col-6 col-lg-2"><label class="form-label small" for="{{ filtro_producao.data_inicial.id_for_label }}">De</label>{{ filtro_producao.data_inicial }}{% for erro in filtro_producao.data_inicial.errors %}<div class="text-danger small">{{ erro }}</div>{% endfor %}</div>
+                <div class="col-6 col-lg-2"><label class="form-label small" for="{{ filtro_producao.data_final.id_for_label }}">Até</label>{{ filtro_producao.data_final }}{% for erro in filtro_producao.data_final.errors %}<div class="text-danger small">{{ erro }}</div>{% endfor %}</div>
+                <div class="col-12 col-sm-6 col-lg-3"><label class="form-label small" for="{{ filtro_producao.op.id_for_label }}">Número da OP</label>{{ filtro_producao.op }}{% for erro in filtro_producao.op.errors %}<div class="text-danger small">{{ erro }}</div>{% endfor %}</div>
+                <div class="col-12 col-sm-6 col-lg-3"><label class="form-label small" for="{{ filtro_producao.processo.id_for_label }}">Processo</label>{{ filtro_producao.processo }}{% for erro in filtro_producao.processo.errors %}<div class="text-danger small">{{ erro }}</div>{% endfor %}</div>
+                <div class="col-12 col-lg-2 d-flex gap-2"><button type="submit" class="btn btn-warning fw-bold flex-grow-1">Filtrar</button><a href="{% url 'bladder:dashboard' %}" class="btn btn-outline-secondary" title="Limpar filtros">Limpar</a></div>
+            </div>
+            <details class="mt-3" {% if filtro_producao.turma.value or filtro_producao.produto.value or filtro_producao.operador.value or filtro_producao.condicao.value or filtro_producao.fechamento.value or filtro_producao.corrigidos.value or filtro_producao.incluir_legados.value %}open{% endif %}>
+                <summary class="fw-semibold" style="cursor:pointer">Mais filtros</summary>
+                <div class="row g-2 align-items-end mt-1">
+                    <div class="col-12 col-sm-4"><label class="form-label small" for="{{ filtro_producao.turma.id_for_label }}">Turma</label>{{ filtro_producao.turma }}</div>
+                    <div class="col-12 col-sm-4"><label class="form-label small" for="{{ filtro_producao.produto.id_for_label }}">Produto</label>{{ filtro_producao.produto }}</div>
+                    <div class="col-12 col-sm-4"><label class="form-label small" for="{{ filtro_producao.operador.id_for_label }}">Operador</label>{{ filtro_producao.operador }}</div>
+                    <div class="col-12 col-sm-6"><label class="form-label small" for="{{ filtro_producao.condicao.id_for_label }}">Condição</label>{{ filtro_producao.condicao }}</div>
+                    <div class="col-12 col-sm-6"><label class="form-label small" for="{{ filtro_producao.fechamento.id_for_label }}">Fechamento</label>{{ filtro_producao.fechamento }}</div>
+                    <div class="col-12 col-sm-6"><label class="form-check-label d-flex gap-2 align-items-center py-2">{{ filtro_producao.corrigidos }} Somente corrigidos</label></div>
+                    <div class="col-12 col-sm-6"><label class="form-check-label d-flex gap-2 align-items-center py-2">{{ filtro_producao.incluir_legados }} Incluir históricos legados</label></div>
+                </div>
+                <p class="small text-muted mb-0">Históricos legados podem representar início ou consolidação e não comprovam parâmetros de processo.</p>
+                <button type="submit" class="btn btn-sm btn-warning mt-2">Aplicar todos os filtros</button>
+            </details>
+        </form>
+    </div>
+
+    <div class="glass-card p-3">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+            <h3 class="h5 mb-0">Registros encontrados</h3>
+            <span class="small text-secondary">{{ pagina_registros.start_index }}–{{ pagina_registros.end_index }} de {{ total_registros_producao }}</span>
+        </div>
+        {% for registro in pagina_registros %}
+        <article class="border rounded p-3 mb-2">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2">
+                <div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+                        <strong class="font-monospace" style="overflow-wrap:anywhere">{{ registro.ordem.numero_ordem }}</strong>
+                        <span class="badge bg-secondary">{% if registro.origem == 'LEGADO' %}Legado{% elif registro.origem == 'MANUSEIO' %}Manuseio{% else %}{{ registro.processo_registrado.nome|default:registro.codigo_processo }}{% endif %}</span>
+                        {% if registro.foi_corrigido %}<span class="badge bg-warning text-dark">Corrigido</span>{% endif %}
+                    </div>
+                    <div class="small text-secondary">{{ registro.data_hora_inicio|date:'d/m/Y H:i' }} · {{ registro.get_turma_display }} · {{ registro.operador.get_full_name|default:registro.operador.username }}</div>
+                    <div class="small">{% if registro.origem == 'LEGADO' %}Produto histórico: {{ registro.ordem.produto.codigo|default:'Não informado' }}{% else %}{{ registro.identificacao_registrada.produto|default:registro.produto_registrado.codigo|default:'Produto não informado' }}{% endif %}{% if registro.condicao %} · Condição: {{ registro.condicao }}{% endif %}</div>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <strong>{% if registro.origem == 'LEGADO' %}{{ registro.quantidade_display }} · histórico{% else %}{{ registro.quantidade_display }}{% endif %}</strong>
+                    <a class="btn btn-sm btn-outline-info" href="{% if registro.origem == 'LEGADO' %}{% url 'bladder:ordem_detalhe' registro.ordem_id %}{% else %}{% url 'bladder:producao_detalhe' registro.pk %}{% endif %}">Ver detalhes</a>
+                </div>
+            </div>
+        </article>
+        {% empty %}
+        <p class="text-secondary mb-0">Nenhum registro encontrado. Ajuste o período ou os filtros.</p>
+        {% endfor %}
+        {% if pagina_registros.paginator.num_pages > 1 %}
+        <nav class="d-flex justify-content-between align-items-center mt-3" aria-label="Páginas dos registros">
+            {% if pagina_registros.has_previous %}<a class="btn btn-outline-light btn-sm" href="?{{ query_filtros }}&amp;pagina={{ pagina_registros.previous_page_number }}">← Anterior</a>{% else %}<span></span>{% endif %}
+            <span class="small">Página {{ pagina_registros.number }} de {{ pagina_registros.paginator.num_pages }}</span>
+            {% if pagina_registros.has_next %}<a class="btn btn-outline-light btn-sm" href="?{{ query_filtros }}&amp;pagina={{ pagina_registros.next_page_number }}">Próxima →</a>{% else %}<span></span>{% endif %}
+        </nav>
+        {% endif %}
+    </div>
+</section>

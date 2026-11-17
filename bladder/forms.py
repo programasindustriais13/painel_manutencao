@@ -41,7 +41,8 @@ class OrdemProducaoBladderForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['processo'].queryset = ProcessoBladder.objects.filter(ativo=True)
+        self.fields['processo'].queryset = ProcessoBladder.objects.filter(ativo=True).exclude(codigo='06')
+        self.fields['processo'].help_text = 'Manuseio de Tarugo é registrado a partir de uma extrusão salva, sem nova OP.'
         self.fields['produto'].queryset = ProdutoBladder.objects.filter(ativo=True)
         self.fields['produto'].label_from_instance = lambda obj: obj.codigo_com_medida
         self.fields['produto'].required = False

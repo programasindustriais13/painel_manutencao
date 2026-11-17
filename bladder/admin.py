@@ -26,6 +26,7 @@ from .models import (
     HistoricoEdicaoMensagemTurnoBladder,
     ConfiguracaoWhatsAppBladder,
     EnvioWhatsAppBladder,
+    AmostraManuseioBladder,
 )
 
 
@@ -191,6 +192,36 @@ class OrdemProducaoBladderAdmin(admin.ModelAdmin):
     list_filter = ('status', 'turma_prevista', 'prioridade', 'processo', 'data_programada')
     search_fields = ('numero_ordem', 'produto__codigo', 'produto__descricao')
     date_hierarchy = 'data_programada'
+    exclude = ('exige_execucoes',)
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if (obj is None or obj.exige_execucoes) and 'processo' in form.base_fields:
+            form.base_fields['processo'].queryset = form.base_fields['processo'].queryset.exclude(codigo='06')
+        return form
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = super().get_readonly_fields(request, obj)
+        if obj is None or obj.exige_execucoes:
+            return (*fields, 'quantidade_realizada', 'quantidade_apurada', 'status')
+        return fields
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.exige_execucoes = obj.processo.codigo in ('01', '02', '03', '04', '05')
+            obj.quantidade_realizada = 0
+            obj.quantidade_apurada = True
+            obj.status = 'PENDENTE'
+        super().save_model(request, obj, form, change)
+
+    def has_change_permission(self, request, obj=None):
+        if obj and obj.apontamentos.exclude(origem='LEGADO').exists():
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        # OPs industriais mantêm a exclusão lógica pelo fluxo da liderança.
+        return False
 
 
 @admin.register(SaldoPendenteBladder)
@@ -199,6 +230,17 @@ class SaldoPendenteBladderAdmin(admin.ModelAdmin):
     list_filter = ('status', 'created_at')
     search_fields = ('op_origem__numero_ordem', 'produto__codigo')
 
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        if obj and obj.op_origem.apontamentos.exclude(origem='LEGADO').exists():
+            return False
+        return super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(ApontamentoTurnoBladder)
 class ApontamentoTurnoBladderAdmin(admin.ModelAdmin):
@@ -206,11 +248,46 @@ class ApontamentoTurnoBladderAdmin(admin.ModelAdmin):
     list_filter = ('turma', 'situacao', 'data_turno')
     search_fields = ('ordem__numero_ordem', 'operador__username', 'operador__first_name')
 
+    readonly_fields = tuple(f.name for f in ApontamentoTurnoBladder._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(AmostraManuseioBladder)
+class AmostraManuseioBladderAdmin(admin.ModelAdmin):
+    list_display = ('apontamento', 'sequencia', 'diametro', 'comprimento', 'peso')
+    readonly_fields = tuple(f.name for f in AmostraManuseioBladder._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(HistoricoApontamentoBladder)
 class HistoricoApontamentoBladderAdmin(admin.ModelAdmin):
     list_display = ('apontamento', 'quantidade_anterior', 'quantidade_nova', 'usuario', 'created_at')
-    readonly_fields = ('apontamento', 'quantidade_anterior', 'quantidade_nova', 'situacao_anterior', 'situacao_nova', 'motivo_correcao', 'usuario', 'created_at')
+    readonly_fields = tuple(f.name for f in HistoricoApontamentoBladder._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(HistoricoProgramacaoBladder)
@@ -233,6 +310,13 @@ class ItemFechamentoTurnoInline(admin.TabularInline):
     model = ItemFechamentoTurnoBladder
     extra = 0
     readonly_fields = ('ordem', 'quantidade_programada', 'quantidade_realizada', 'saldo_gerado', 'situacao', 'motivo_completo', 'descricao_desvio', 'observacao')
+    can_delete = False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(FechamentoTurnoBladder)
@@ -242,6 +326,16 @@ class FechamentoTurnoBladderAdmin(admin.ModelAdmin):
     search_fields = ('operador__username', 'operador__first_name', 'observacoes')
     date_hierarchy = 'data_turno'
     inlines = [ItemFechamentoTurnoInline]
+    readonly_fields = tuple(f.name for f in FechamentoTurnoBladder._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 class HistoricoEdicaoMensagemTurnoInline(admin.TabularInline):

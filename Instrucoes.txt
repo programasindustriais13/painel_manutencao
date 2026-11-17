@@ -4683,3 +4683,200 @@ BLADDER SEM TETO DIÁRIO DE TESTES E REVISÃO DO DEPLOY (13/11/2026)
   sem pull e falha do mestre sem falso sucesso. Nenhum envio ou deploy real.
 - Validação sem novas migrações e manage.py check aprovado. Manual atualizado:
   DEPLOY_WINDOWS_SERVER.md. Ensaio: scripts/test_deploy_servidor.py.
+
+APONTAMENTOS DE PRODUÇÃO POR PROCESSO — BLADDER (16/11/2026)
+--------------------------------------------------------------------------------
+- SPEC: regras_programacao/SPEC_APONTAMENTOS_PRODUCAO_PROCESSOS_BLADDER.md.
+  Fluxo sequencial Arquiteto -> Backend -> QA, com revisão técnica antes do código.
+- Cards /bladder/operador/ preservam FICHA TÉCNICA e RECADO e recebem REGISTRAR
+  PRODUÇÃO, progresso real e histórico consultável dos registros do turno.
+- 01/02: uma unidade por apontamento, vinculada à OP/prensa/produto obtidos do
+  banco. Tempo (min), pressão, Bom/IA/Lixo, lote e volume obrigatórios. Tempo e
+  pressão SEMPRE vazios no novo formulário, sem copiar histórico ou ficha.
+- 03/04: quantidade efetiva inteira positiva, temperatura geral, velocidades
+  da esteira/fuso e TCU1..4, independentes por execução parcial. Meta preservada.
+  Pressão, velocidades e temperaturas não recebem unidades de engenharia
+  inventadas: utilizar a referência operacional até definição do cadastro.
+- 03 libera manuseio somente após execução positiva salva; nunca cria OP06.
+  04/Apex não libera manuseio. Cada parcial03 tem seu próprio filho06 único.
+- 06: produto/quantidade herdados da extrusão; lote do produto, matéria-prima e
+  lote do material distintos; amostras com diâmetro(mm), comprimento(cm), peso(kg)
+  e observações. N = teto(quantidade efetiva/10), mínimo1 para positivo. Regra de
+  arredondamento para cima provisória, ainda pendente de confirmação do cliente.
+  Amostras individuais e médias Decimal recalculadas no servidor são preservadas.
+  Pendências atravessam turnos, mantendo a extrusão original e autorização do
+  executor no turno atual. Liberar não significa executar. Sem produção adicional.
+- 05: tempo, temperatura, pressão, Bons/Parcialmente Bons/Ruins e observação,
+  com produto quando vinculado. Não se presume quantidade por inspeção; flag de
+  quantidade não apurada em OP/apontamento/item diferencia desconhecido de zero.
+  Fechamento não cria saldo fictício; indicadores quantitativos excluem essas OPs
+  e Excel inclui aba específica quando existirem casos sem quantidade apurada.
+- Modelos reaproveitados: ApontamentoTurnoBladder com origem/identidade/parâmetros,
+  HistoricoApontamentoBladder com snapshots anteriores/novos; OP/item com flag.
+  Única tabela nova: AmostraManuseioBladder (FK, sequência e três medições).
+  Migration0011_apontamentos_producao_processos aditiva; históricos permanecem
+  LEGADO e novos campos opcionais/defaults não fabricam parâmetros antigos.
+- Fechamento único recalcula os detalhes e rejeita total divergente do navegador;
+  vincula execuções e cria somente o item snapshot, sem segundo apontamento total.
+  Sem detalhes novos, preserva fechamento manual histórico; formulário inicia no
+  realizado/zero, nunca na meta. Excedente, déficit com categorias/descrição e
+  incorporação exclusiva da liderança permanecem. Manuseio fica fora da soma.
+- Novas rotas (namespace bladder):
+  operador/producao/<OP>/registrar/ (producao_registrar);
+  operador/extrusoes/<apontamento>/manuseio/ (manuseio_registrar);
+  operador/producao/<apontamento>/ (producao_detalhe);
+  operador/producao/<apontamento>/corrigir/ (producao_corrigir).
+  Rotas antigas encaminham detalhes à correção/formulário específicos.
+- Chave assinada vinculada à sessão/usuário/OP/processo/extrusão, UUID único no
+  banco, CSRF, validação servidor e PRG impedem reenvio duplicado. Escrita ORM
+  sem mudança de valor na escala ativa serializa criação/correção/fechamento
+  inclusive SQLite; locks/retentativas e unicidades também atendem MySQL.
+- Operador corrige somente próprio registro no turno aberto; líder pode corrigir
+  após fechamento, reconciliando OP/item/ledger. Quantidade de extrusão com
+  manuseio salvo ou pendência incorporada fica bloqueada contra inconsistência.
+  Admin mantém consulta e bloqueia edições/exclusões que burlem a auditoria.
+  OP com execução nova não aceita cancelamento, reprogramação nem encerramento
+  individual: produção real deve permanecer rastreável e seguir fechamento único.
+- Estoque físico e DR-201 não são alterados nem disparados pelos apontamentos.
+  Mantida regra 1 movimento = 1 lote + N volumes = 1 linha DR-201.
+- Backend: manage.py check aprovado; makemigrations --check --dry-run sem mudanças;
+  32 testes focados aprovados em1,625s, cobrindo A-K, históricos, permissões,
+  correção, concorrência e preservação de OP com execução contra cancelamento.
+  Evidência: logs/apontamentos_bladder/backend_entrega.log; git diff --check limpo.
+  Resultado final e validação de interface/regressões serão anexados pelo QA.
+  Baseline original bladder:237 testes/16 falhas preexistentes em369,233s.
+- Não aplicada migration no banco operacional; apenas banco temporário dos
+  testes. Nenhum envio externo, gravação SCADA/DR-201, commit, push ou deploy.
+
+QA FINAL — APONTAMENTOS POR PROCESSO (16/11/2026)
+--------------------------------------------------------------------------------
+- Corrigida preservação de vírgula decimal após POST inválido: HTML number
+  reapresenta1.250, mantendo lote/volume com zeros. Autocomplete numérico off;
+  nova vulcanização continua exigindo tempo/pressão vazios. Observações opcionais
+  ficam por último, depois das amostras no manuseio.
+- Turno posterior com somente manuseio efetivamente salvo pode ser fechado sem
+  OP atual. Cria cabeçalho sem itens quantitativos e vincula manuseios à extrusão
+  original; não cria OP, produção, estoque nem saldo adicional. Turno totalmente
+  vazio permanece bloqueado. Tela informa as etapas; permissão/escala, restrição
+  do líder puro e idempotência permanecem. Serviço valida também apoio escalado,
+  perfil ativo e FOLGA, preservando mensagem da turma divergente.
+- Fechamento usa retentativa limitada fora da transação para lock transitório.
+  Concorrência real testada: mesma chave, chaves diferentes, dois manuseios para
+  uma extrusão e registro simultâneo ao fechamento, sem duplicação/perda de total.
+-39 testes novos ao final; QA focado40/40 aprovado (inclui teste antigo adaptado).
+  Única expectativa antiga substituída: lançar50 un de prensa pelo POST genérico.
+  Agora comprova redirecionamento, ausência de produção em massa e registro1 un.
+  As16 falhas preexistentes do Bladder não foram ocultadas nem seus testes alterados.
+- Comando padrão test bladder --noinput:272 testes/16 falhas, mesmos nomes da
+  baseline237/16;381,221s. Quatro testes finais de fechamento foram acrescentados
+  depois de iniciar essa rodada e estão cobertos no QA focado/diagnóstico final.
+- Regressão padrão maintenance matrizaria production:488 testes,487 aprovados
+  e1 falha preexistente de login Produção (portal versus dashboard);290,182s.
+- Diagnóstico final dos quatro módulos:764 testes/18 falhas/nenhum erro,36,875s.
+  Override de hashMD5 somente nas fixtures desse processo, sem alterar settings.
+  Comparação HEAD em memória com Python/templates/grafo de migrações coerentes:
+  725 testes originais/mesmas18 falhas,38,593s; nenhuma falha nova na comparação.
+  Além16 do Bladder, login Produção e ocorrência intermitente PCP200vs302 também
+  reproduzida no HEAD. Nenhum fonte dos outros três módulos foi alterado.
+- Edge: scripts/validar_apontamentos_bladder.py aprovado em28,201s,375/768px,
+  14 capturas, sem overflow/errosJavaScript. Validou cinco formulários, Ficha/Recado,
+  erro decimal, duas prensas,30/31 ->3/4 amostras, médias, Apex/anéis, fechamento,
+  ausência de estoque e acesso admin de teste a /management/ e /dashboard/.
+- manage.py check, makemigrations --check --dry-run e git diff --check aprovados.
+- Evidências: logs/apontamentos_bladder/qa_focados_final.log,
+  qa_bladder_final.log, qa_regressoes.log, qa_suite_diagnostica_final.log,
+  qa_baseline_head_final.log, qa_browser_final.log e qa_comparacao_falhas.json.
+  A suíte global permanece com falhas; não é declarada integralmente verde.
+- Parecer: escopo novo aprovado em SQLite temporário; pendentes confirmação do
+  arredondamento, granularidade de anéis, unidades/faixas e ensaio MySQL real.
+  Migration0011 ainda não aplicada operacionalmente; necessária antes do uso
+  após publicação autorizada. Nenhum dado operacional/integração real modificado.
+
+COMPLEMENTO FINAL BLADDER — TRANSIÇÃO HISTÓRICA EXPLÍCITA (17/11/2026)
+--------------------------------------------------------------------------------
+- Revisão final reproduziu bypass06 por fechamento positivo sem extrusão e
+  correção de início legado0 para positivo. Dois testes falharam antes da guarda
+  e passaram depois; evidências qa_bypass06_antes.log/qa_bypass06_depois.log.
+- OP recebeu marcador exige_execucoes, defaultFalse na migration0011 regenerada
+  para preservar históricas. Novas OPs01–05 no serviço oficial e Admin sãoTrue;
+  primeira execução contextual promove OP legada paraTrue. Campo não é editável
+  pelo formulário/Admin nem rebaixável por POST. Nenhuma migration aplicada.
+- OP marcada fecha somente o total das execuções, inclusive zero sem registros.
+  Helpers legados não podem lançar positivo nem corrigir início0 para produção.
+  Vulcanização nova exige sempre unidade individual, tempo/pressão e qualidade.
+- Fallback manual positivo fica APENAS em OP legadaFalse sem detalhes, indicado
+  na tela como transição histórica. Preserva produção anterior sem parâmetros
+  retroativos inventados. Liderança deve revisar OPs antigas ainda abertas;
+  novas programações não usam esse fallback.
+- Nova OP06 foi excluída do formulário/Admin e rejeitada no serviço de criação:
+  manuseio é etapa da extrusão salva. OP06 histórica permanece consultável e seu
+  fechamento só consolida total já registrado, sem aumentá-lo. Correção redutora
+  de histórico segue auditável; aumento não gera nova etapa sem fonte03.
+- Admin protege realizado/apuração/status na nova OP/marcada antes da execução,
+  permitindo editar planejamento. Processo marcado não pode mudar para06.
+  Depois da execução, edição direta continua bloqueada. Criação força total0 e
+  statusPENDENTE; marcador e campos quantitativos ignoram adulteração no POST.
+- Regressões antigas de fechamento manual usam fixtures legadas explícitas:
+  criar_op_legada_para_regressao/marcar_fixture_como_op_legada em tests.py.
+  São69 chamadas de preparação identificadas por método de fluxo histórico,
+  sem monkeypatch do serviço nem enfraquecimento de asserções. Mapa auditável:
+  logs/apontamentos_bladder/qa_fixtures_legadas.json. Novos testes HTTP/serviço
+  continuam comprovando criação real marcadaTrue e registro unitário obrigatório.
+-48 testes novos aprovados em2,485s (qa_transicao_focados_17.log). Diagnóstico
+  final quatro módulos:773 testes/18 falhas conhecidas/nenhum erro,38,650s,
+  mesmos nomes da baseline HEAD725/18, sem falhas novas; hashMD5 somente nas
+  fixtures do processo diagnóstico, sem alterar configuração da aplicação.
+- Edge reexecutado com OPs oficiais marcadas:1 ensaio/29,460s aprovado em375 e
+  768px, fechamento inicial readonly0, cinco formulários, parâmetros vazios,
+  erro decimal,30/31 ->3/4 amostras, médias e fechamento sem duplicação.
+  Evidência qa_browser_transicao_17.log e14 capturas atualizadas.
+- Check, makemigrations --check --dry-run e diff --check aprovados.
+- Comando padrão final test bladder --noinput:285 testes em363,237s,
+  269 aprovados, mesmas16 falhas da baseline e nenhum erro. Comparação dos
+  nomes confirmou nenhuma falha nova. Evidência:
+  logs/apontamentos_bladder/entrega_bladder_padrao_17.log.
+- SPEC e qa_comparacao_falhas.json atualizados:48 novos testes,773 no diagnóstico,
+  novas_falhas=[]. Inventário final25 arquivos locais, branchmain, sem commit,
+  push, deploy, dados operacionais alterados ou integrações externas reais.
+
+ACOMPANHAMENTO DA PRODUÇÃO NA PÁGINA INICIAL DO LÍDER (17/11/2026)
+--------------------------------------------------------------------------------
+- A página /bladder/ agora prioriza registros salvos, OPs com registros e
+  manuseios pendentes. A programação, estoque e indicadores anteriores ficam
+  disponíveis na seção recolhida "Programação, estoque e outros indicadores".
+- Filtros principais por data do apontamento, OP e processo; opções adicionais
+  por turma, produto, operador, condição, fechamento, correções e legados.
+  Padrão: hoje, sem legado; atalhos hoje/7 dias/mês preservam outros filtros.
+  A ficha da OP abre todo seu histórico na mesma página.
+- Lista resumida tem20 registros por página, identificação completa da OP e
+  acesso ao detalhe. O status da OP não é tratado como telemetria de máquina.
+  Quantidades não são somadas entre processos; anéis seguem não apurados e
+  manuseio não acrescenta produção. Indicador antigo foi esclarecido como
+  "Realizado Hoje — OPs programadas".
+- Exportar Excel da tela usa exatamente a consulta filtrada inteira, inclusive
+  páginas não mostradas. Abas Consulta, Registros, Amostras e Correções, com
+  IDs relacionáveis e neutralização de textos que poderiam virar fórmulas.
+  Endpoint /bladder/acompanhar/exportar-excel/ restrito à liderança.
+- Código de consulta/Excel em bladder/acompanhamento.py, view no views.py,
+  interface em dashboard.html e includes/acompanhamento_producao.html.
+  Sem novos modelos, migrações ou alterações de dados operacionais.
+- SPEC: regras_programacao/SPEC_ACOMPANHAMENTO_PRODUCAO_LIDER_BLADDER.md.
+  Testes focados:54/54 aprovados (novos6 + anteriores48); teste do dashboard
+  legado:3/4 aprovados, única falha "Pendências (Ledger)" já preexistente.
+  Ensaio Edge375/768px e validações finais constam na SPEC. Consulta de
+  showmigrations:0011 aplicada no banco default deste workspace; produção
+  não verificada. Nenhuma migração executada nesta tarefa.
+
+AVISO DE META NOS CARDS DO OPERADOR (17/11/2026)
+--------------------------------------------------------------------------------
+- Em /bladder/operador/, OP quantitativa com meta positiva mostra unidades
+  faltantes; ao atingir a meta exata mostra META ATINGIDA; acima dela mostra
+  META SUPERADA e quantas unidades excederam o alvo.
+- A OP com registros permanece aberta até fechar o turno. A mensagem visual
+  não altera status, produção, fechamento, saldo nem botão de registro.
+- Anéis sem quantidade apurada, meta zero e OP histórica de manuseio06 não
+  exibem aviso de meta. Implementado somente no card de operador_turno.html.
+- Testes novos no test_apontamentos_producao.py e verificação Edge375/768px
+  no script validar_apontamentos_bladder.py. Resultado:56/56 testes focados
+  e1/1 ensaio Edge aprovados; cards375/768px inspecionados, sem overflow.
+  SPEC do processo atualizada.

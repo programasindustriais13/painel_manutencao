@@ -1,10 +1,11 @@
 import calendar
 import datetime
 from django.db import transaction
-from django.db.models import Sum, Count, Q, Case, When, Value, IntegerField
+from django.core.paginator import Paginator
+from django.db.models import Sum, Count, Q, Case, When, Value, IntegerField, Exists, OuterRef
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 
@@ -50,6 +51,7 @@ from .decorators import (
     user_is_lider_bladder,
     user_is_operador_bladder,
 )
+from .acompanhamento import preparar_consulta, exportar_excel
 from .services import (
     obter_configuracao_escala_ativa,
     calcular_turma_do_dia,
@@ -92,6 +94,18 @@ def dashboard(request):
     Exibe indicadores do dia, status das ordens, escala e saldos pendentes.
     """
     hoje = timezone.localdate()
+    filtro_producao, registros_producao = preparar_consulta(request.GET, hoje)
+    pagina_registros = Paginator(registros_producao, 20).get_page(request.GET.get('pagina'))
+    parametros_pagina = request.GET.copy()
+    parametros_pagina.pop('pagina', None)
+    def atalho_periodo(inicio):
+        parametros = parametros_pagina.copy()
+        parametros.pop('periodo', None)
+        parametros['data_inicial'] = inicio.isoformat()
+        parametros['data_final'] = hoje.isoformat()
+        return parametros.urlencode()
+    from .producao import manuseios_pendentes
+    pendencias_manuseio = manuseios_pendentes().count()
     turma_hoje, is_ajuste, motivo_ajuste = calcular_turma_do_dia(hoje)
     config_escala = obter_configuracao_escala_ativa()
 
@@ -101,8 +115,8 @@ def dashboard(request):
     ).select_related('processo', 'produto').prefetch_related('recursos_alocados')
 
     total_ops_dia = ordens_dia.count()
-    planejado_dia = ordens_dia.aggregate(s=Sum('quantidade_planejada'))['s'] or 0
-    realizado_dia = ordens_dia.aggregate(s=Sum('quantidade_realizada'))['s'] or 0
+    planejado_dia = ordens_dia.filter(quantidade_apurada=True).aggregate(s=Sum('quantidade_planejada'))['s'] or 0
+    realizado_dia = ordens_dia.filter(quantidade_apurada=True).aggregate(s=Sum('quantidade_realizada'))['s'] or 0
 
     pendentes_dia = ordens_dia.filter(status='PENDENTE').count()
     em_execucao_dia = ordens_dia.filter(status='EM_EXECUCAO').count()
@@ -148,7 +162,7 @@ def dashboard(request):
     ).count()
 
     excedente_dia = sum(op.excedente for op in ordens_dia)
-    pendencia_dia = sum(max(0, op.quantidade_planejada - op.quantidade_realizada) for op in ordens_dia if op.status in ['CONCLUIDA', 'PARCIAL'])
+    pendencia_dia = sum(max(0, op.quantidade_planejada - op.quantidade_realizada) for op in ordens_dia if op.quantidade_apurada and op.status in ['CONCLUIDA', 'PARCIAL'])
     diferenca_dia = realizado_dia - planejado_dia
 
     # Motivos das pendências (para todos os saldos PENDENTES no Ledger)
@@ -310,6 +324,16 @@ def dashboard(request):
     resumo_estoque = obter_resumo_estoque_bladders()
 
     context = {
+        'filtro_producao': filtro_producao,
+        'pagina_registros': pagina_registros,
+        'total_registros_producao': pagina_registros.paginator.count,
+        'total_ops_com_registros': registros_producao.order_by().values('ordem_id').distinct().count(),
+        'ultimo_registro_producao': registros_producao.first(),
+        'pendencias_manuseio': pendencias_manuseio,
+        'query_filtros': parametros_pagina.urlencode(),
+        'atalho_hoje': atalho_periodo(hoje),
+        'atalho_sete_dias': atalho_periodo(hoje - datetime.timedelta(days=6)),
+        'atalho_mes': atalho_periodo(hoje.replace(day=1)),
         'hoje': hoje,
         'turma_hoje': turma_hoje,
         'turma_hoje_display': "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje),
@@ -352,6 +376,16 @@ def dashboard(request):
 
 
 @login_required
+@lider_bladder_required
+def acompanhamento_exportar_excel(request):
+    """Excel dos mesmos registros filtrados na página inicial do líder."""
+    filtro, registros = preparar_consulta(request.GET)
+    if not filtro.is_valid():
+        return HttpResponseBadRequest('Filtros inválidos. Corrija as datas e os campos na tela inicial.')
+    return exportar_excel(registros, filtro.cleaned_data)
+
+
+@login_required
 @operador_ou_lider_bladder_required
 def operador_turno(request):
     """
@@ -385,6 +419,11 @@ def operador_turno(request):
     ).order_by(
         '-prioridade', 'numero_ordem'
     )
+
+    ordens = ordens.annotate(tem_execucoes=Exists(ApontamentoTurnoBladder.objects.filter(ordem_id=OuterRef('pk'), origem='PROCESSO')))
+    from .producao import manuseios_pendentes
+    etapas_pendentes = manuseios_pendentes()
+    registros_producao = ApontamentoTurnoBladder.objects.exclude(origem='LEGADO').filter(data_turno=hoje).select_related('ordem', 'operador').order_by('-created_at')[:50]
 
     perfil_operacional = getattr(request.user, 'perfil_operacional_bladder', None)
     if perfil_operacional is None and not request.user.is_anonymous:
@@ -451,6 +490,8 @@ def operador_turno(request):
         'form_recado': form_recado,
         'form_atividade': form_atividade,
         'form_mov_estoque': form_mov_estoque,
+        'manuseios_pendentes': etapas_pendentes,
+        'registros_producao': registros_producao,
         'theme_class': 'theme-light',
         'is_operador_view': True,
         'is_lider': user_is_lider_bladder(request.user),
@@ -488,6 +529,8 @@ def fechamento_turno(request):
     ).select_related(
         'processo', 'processo__maquina', 'produto'
     ).order_by('numero_ordem')
+
+    ordens = ordens.annotate(tem_execucoes=Exists(ApontamentoTurnoBladder.objects.filter(ordem_id=OuterRef('pk'), origem='PROCESSO')))
 
     if request.method == 'POST':
         if fechamento_existente:
@@ -580,6 +623,9 @@ def fechamento_turno(request):
         'categorias_desvio': categorias_desvio,
         'atividades_operacionais': atividades_operacionais,
         'movimentacoes_estoque': movimentacoes_estoque,
+        'manuseios_turno': ApontamentoTurnoBladder.objects.filter(
+            origem='MANUSEIO', data_turno=hoje
+        ).select_related('ordem', 'extrusao_origem', 'operador'),
         'total_entradas_estoque': total_entradas_estoque,
         'total_saidas_estoque': total_saidas_estoque,
         'recados_criados_turno': recados_criados_turno,
@@ -925,6 +971,9 @@ def operador_iniciar(request, pk):
 @operador_ou_lider_bladder_required
 def operador_apontar(request, pk):
     """Apontamento de quantidade produzida pelo operador."""
+    op_contextual = get_object_or_404(OrdemProducaoBladder, pk=pk)
+    if op_contextual.processo.codigo in ('01', '02', '03', '04', '05', '06'):
+        return redirect('bladder:producao_registrar', pk=pk)
     if request.method == 'POST':
         form = ApontamentoTurnoForm(request.POST)
         if form.is_valid():
@@ -961,6 +1010,8 @@ def operador_apontar(request, pk):
 def corrigir_apontamento(request, pk):
     """Correção auditável de apontamento pelo operador ou líder."""
     apontamento = get_object_or_404(ApontamentoTurnoBladder, pk=pk)
+    if apontamento.origem != 'LEGADO':
+        return redirect('bladder:producao_corrigir', pk=pk)
     hoje = timezone.localdate()
 
     # Validação de permissão: operador só corrige apontamento próprio no mesmo turno do dia
@@ -1111,6 +1162,8 @@ def relatorios(request):
         else:
             ordens = ordens.filter(produto__codigo=modelo_filtro)
 
+    ordens_nao_apuradas = ordens.filter(quantidade_apurada=False)
+    ordens = ordens.filter(quantidade_apurada=True)
     total_ops = ordens.count()
     total_demanda_nova = ordens.aggregate(s=Sum('quantidade_nova'))['s'] or 0
     total_saldo_incorporado = ordens.aggregate(s=Sum('saldo_anterior_incorporado'))['s'] or 0
@@ -1125,7 +1178,7 @@ def relatorios(request):
         fechamentos_mes = fechamentos_mes.filter(turma=turno_filtro)
 
     itens_fech_mes = ItemFechamentoTurnoBladder.objects.filter(
-        fechamento__in=fechamentos_mes
+        fechamento__in=fechamentos_mes, quantidade_apurada=True
     ).select_related('fechamento', 'ordem', 'ordem__produto', 'fechamento__operador')
 
     if modelo_filtro and modelo_filtro != 'TODOS':
@@ -1339,6 +1392,7 @@ def relatorios(request):
             })
 
     context = {
+        'ordens_nao_apuradas': ordens_nao_apuradas,
         'mes': mes,
         'ano': ano,
         'mes_nome': calendar.month_name[mes],
@@ -1439,7 +1493,7 @@ def relatorios_exportar_excel(request):
         fechamentos_mes = fechamentos_mes.filter(turma=turno_filtro)
 
     itens_fech_mes = ItemFechamentoTurnoBladder.objects.filter(
-        fechamento__in=fechamentos_mes
+        fechamento__in=fechamentos_mes, quantidade_apurada=True
     ).select_related('fechamento', 'ordem', 'ordem__produto', 'fechamento__operador')
 
     if modelo_filtro and modelo_filtro != 'TODOS':
@@ -1448,6 +1502,8 @@ def relatorios_exportar_excel(request):
         else:
             itens_fech_mes = itens_fech_mes.filter(ordem__produto__codigo=modelo_filtro)
 
+    ordens_nao_apuradas = list(ordens.filter(quantidade_apurada=False))
+    ordens = ordens.filter(quantidade_apurada=True)
     wb = openpyxl.Workbook()
 
     # Sanitização contra formula injection
@@ -1455,6 +1511,12 @@ def relatorios_exportar_excel(request):
         if isinstance(v, str) and v.startswith(('=', '+', '-', '@')):
             return "'" + v
         return v
+
+    if ordens_nao_apuradas:
+        ws_nao = wb.create_sheet('Quantidade não apurada')
+        ws_nao.append(['OP', 'Processo', 'Produto', 'Meta (referência)', 'Apuração'])
+        for op_nao in ordens_nao_apuradas:
+            ws_nao.append([sanitize(op_nao.numero_ordem), sanitize(op_nao.processo.nome), sanitize(op_nao.produto.codigo if op_nao.produto else ''), op_nao.quantidade_planejada, 'Quantidade não apurada; parâmetros e qualidade registrados'])
 
     header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")

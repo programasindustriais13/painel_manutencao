@@ -352,9 +352,9 @@
             <!-- Nav Links (Organização Simplificada per Seção 7) -->
             <div class="d-flex flex-wrap align-items-center gap-2">
                 {% if is_lider_bladder %}
-                    <!-- 1. Visão Geral -->
-                    <a href="{% url 'bladder:dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" title="Visão Geral & Indicadores">
-                        <i class="bi bi-speedometer2"></i> Visão Geral
+                    <!-- 1. Acompanhamento -->
+                    <a href="{% url 'bladder:dashboard' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" title="Acompanhamento da produção">
+                        <i class="bi bi-speedometer2"></i> Acompanhamento
                     </a>
                     <!-- 2. Turno -->
                     <a href="{% url 'bladder:operador' %}" class="nav-link-custom {% if request.resolver_match.url_name == 'operador' %}active{% endif %}" title="Ambiente de Turno Operacional">

@@ -1,0 +1,16 @@
+{% extends 'bladder/base_bladder.html' %}
+{% block title %}Registro de produção • Bladder{% endblock %}
+{% block content %}
+<div class="glass-card" style="max-width:900px;margin:auto;overflow-wrap:anywhere">
+<a class="btn btn-outline-secondary mb-3" href="{% url 'bladder:operador' %}">← Voltar às OPs</a>
+<h1 class="h3">Registro #{{ registro.pk }} — {{ registro.ordem.numero_ordem_curto }}</h1>
+<p>{{ registro.identificacao_registrada.produto }} — {{ registro.identificacao_registrada.medida }}<br>{{ registro.identificacao_registrada.processo }}<br>Equipamento: {{ registro.identificacao_registrada.equipamento|default:'Sem vínculo cadastrado' }}</p>
+<p><strong>{{ registro.quantidade_display }}</strong><br>Autor: {{ registro.operador.get_full_name|default:registro.operador.username }}<br>{{ registro.data_hora_inicio|date:'d/m/Y H:i:s' }}</p>
+{% if registro.extrusao_origem %}<p>Extrusão de origem: <a href="{% url 'bladder:producao_detalhe' registro.extrusao_origem_id %}">#{{ registro.extrusao_origem_id }}</a> — {{ registro.extrusao_origem.quantidade_realizada }} tarugos.</p>{% endif %}
+<dl class="row">{% for label, valor in valores %}<dt class="col-12 col-md-6">{{ label }}</dt><dd class="col-12 col-md-6">{{ valor|default_if_none:'—' }}</dd>{% endfor %}</dl>
+{% if registro.amostras.exists %}<h2 class="h4">Amostras preservadas</h2>{% for amostra in registro.amostras.all %}<p>Amostra {{ amostra.sequencia }}: diâmetro {{ amostra.diametro }} mm / comprimento {{ amostra.comprimento }} cm / peso {{ amostra.peso }} kg.</p>{% endfor %}<p>Médias: {{ registro.media_diametro }} mm / {{ registro.media_comprimento }} cm / {{ registro.media_peso }} kg.</p>{% endif %}
+{% if pode_corrigir and registro.origem != 'LEGADO' %}<a class="btn btn-warning btn-lg mb-3" href="{% url 'bladder:producao_corrigir' registro.pk %}">Corrigir com justificativa</a>{% endif %}
+<h2 class="h4">Histórico de correções</h2>
+{% for historico in registro.historico_correcoes.all %}<article class="border rounded p-3 mb-2"><strong>{{ historico.usuario }} — {{ historico.created_at|date:'d/m/Y H:i:s' }}</strong><p>{{ historico.motivo_correcao }}</p><details><summary>Valores anteriores e novos</summary><dl>{% for campo, valor in historico.valores_anteriores.items %}<dt>{{ campo }}</dt><dd>Antes: {{ valor }}</dd>{% endfor %}{% for campo, valor in historico.valores_novos.items %}<dt>{{ campo }}</dt><dd>Depois: {{ valor }}</dd>{% endfor %}</dl></details></article>{% empty %}<p>Nenhuma correção.</p>{% endfor %}
+</div>
+{% endblock %}

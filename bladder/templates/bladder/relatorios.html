@@ -3,6 +3,7 @@
 {% block title %}Relatórios de Fechamento &bull; Setor de Bladder{% endblock %}
 
 {% block content %}
+{% if ordens_nao_apuradas %}<div class="alert alert-info">{{ ordens_nao_apuradas|length }} OP(s) com parâmetros e qualidade registrados, sem quantidade apurada. Excluídas dos indicadores em unidades; consulte os registros de produção da OP. A meta permanece como referência.</div>{% endif %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
         <h1 class="h3 fw-bold mb-1 text-light">Fechamento Mensal e Relatórios Operacionais</h1>

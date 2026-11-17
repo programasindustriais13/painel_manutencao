@@ -148,7 +148,7 @@
                                 {% else %}<span class="text-muted">-</span>{% endif %}
                             </td>
                             <td class="text-center font-monospace fw-bold text-light">{{ op.quantidade_planejada }}</td>
-                            <td class="text-center font-monospace fw-bold text-success">{{ op.quantidade_realizada }}</td>
+                            <td class="text-center font-monospace fw-bold text-success">{% if op.quantidade_apurada %}{{ op.quantidade_realizada }}{% else %}Não apurada{% endif %}</td>
                             <td class="text-center font-monospace">
                                 {% if op.saldo_gerado > 0 %}
                                     <span class="badge bg-warning text-dark font-monospace fw-bold">{{ op.saldo_gerado }} un</span>

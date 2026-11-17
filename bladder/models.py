@@ -490,6 +490,8 @@ class OrdemProducaoBladder(models.Model):
         ('TURMA_B', 'Turma B'),
     ]
 
+    quantidade_apurada = models.BooleanField(default=True, verbose_name="Quantidade apurada")
+    exige_execucoes = models.BooleanField(default=False, verbose_name="Exige apontamentos por processo")
     numero_ordem = models.CharField(max_length=40, unique=True, verbose_name="Número da OP")
     processo = models.ForeignKey(ProcessoBladder, on_delete=models.PROTECT, related_name='ordens', verbose_name="Processo")
     produto = models.ForeignKey(
@@ -581,22 +583,22 @@ class OrdemProducaoBladder(models.Model):
         ordering = ['data_programada', '-prioridade', 'numero_ordem']
 
     def __str__(self):
-        return f"{self.numero_ordem} - {self.produto.codigo} ({self.get_status_display()})"
+        return f"{self.numero_ordem} - {self.produto.codigo if self.produto_id else 'Sem produto'} ({self.get_status_display()})"
 
     @property
     def saldo_remanescente(self):
         """Diferença entre o total programado e o que foi realizado (pendência): max(0, planejada - realizada)."""
-        return max(0, self.quantidade_planejada - self.quantidade_realizada)
+        return max(0, self.quantidade_planejada - self.quantidade_realizada) if self.quantidade_apurada else 0
 
     @property
     def excedente(self):
         """Produção excedente acima da meta programada: max(0, realizada - planejada)."""
-        return max(0, self.quantidade_realizada - self.quantidade_planejada)
+        return max(0, self.quantidade_realizada - self.quantidade_planejada) if self.quantidade_apurada else 0
 
     @property
     def diferenca(self):
         """Diferença entre a quantidade realizada e a planejada (realizada - planejada)."""
-        return self.quantidade_realizada - self.quantidade_planejada
+        return self.quantidade_realizada - self.quantidade_planejada if self.quantidade_apurada else 0
 
     @property
     def consumo_teorico_planejado_kg(self):
@@ -615,6 +617,8 @@ class OrdemProducaoBladder(models.Model):
     @property
     def percentual_conclusao(self):
         """Percentual atingido da programação (realizado / programado * 100), sem corte silencioso em 100%."""
+        if not self.quantidade_apurada:
+            return None
         if self.quantidade_planejada == 0:
             return 100.0
         return round((self.quantidade_realizada / self.quantidade_planejada) * 100, 1)
@@ -828,6 +832,7 @@ class ItemFechamentoTurnoBladder(models.Model):
         related_name='itens_fechamento',
         verbose_name="Ordem de Produção"
     )
+    quantidade_apurada = models.BooleanField(default=True, verbose_name="Quantidade apurada")
     quantidade_programada = models.PositiveIntegerField(verbose_name="Meta Programada")
     quantidade_realizada = models.PositiveIntegerField(verbose_name="Quantidade Realizada")
     saldo_gerado = models.PositiveIntegerField(default=0, verbose_name="Saldo Gerado")
@@ -871,12 +876,12 @@ class ItemFechamentoTurnoBladder(models.Model):
     @property
     def excedente(self):
         """Produção excedente acima da meta programada: max(0, realizada - programada)."""
-        return max(0, self.quantidade_realizada - self.quantidade_programada)
+        return max(0, self.quantidade_realizada - self.quantidade_programada) if self.quantidade_apurada else 0
 
     @property
     def diferenca(self):
         """Diferença entre a quantidade realizada e a programada (realizada - programada)."""
-        return self.quantidade_realizada - self.quantidade_programada
+        return self.quantidade_realizada - self.quantidade_programada if self.quantidade_apurada else 0
 
     @property
     def categorias_display(self):
@@ -1216,6 +1221,33 @@ class ApontamentoTurnoBladder(models.Model):
     Registro operacional de chão de fábrica realizado pelos operadores.
     Grava início, término, quantidade realizada, ocorrências e operador responsável.
     """
+    origem = models.CharField(max_length=12, default='LEGADO', choices=[('LEGADO', 'Histórico / consolidado'), ('PROCESSO', 'Execução por processo'), ('MANUSEIO', 'Manuseio de tarugo')])
+    chave_idempotencia = models.UUIDField(null=True, blank=True, unique=True, editable=False)
+    quantidade_apurada = models.BooleanField(default=True)
+    processo_registrado = models.ForeignKey(ProcessoBladder, null=True, blank=True, on_delete=models.PROTECT, related_name='execucoes')
+    codigo_processo = models.CharField(max_length=10, blank=True, default='')
+    produto_registrado = models.ForeignKey(ProdutoBladder, null=True, blank=True, on_delete=models.PROTECT, related_name='execucoes')
+    equipamento = models.ForeignKey('maintenance.Machine', null=True, blank=True, on_delete=models.PROTECT, related_name='execucoes_bladder')
+    identificacao_registrada = models.JSONField(default=dict, blank=True)
+    extrusao_origem = models.OneToOneField('self', null=True, blank=True, on_delete=models.PROTECT, related_name='manuseio')
+    tempo_vulcanizacao = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    pressao = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    temperatura = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    velocidade_esteira = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    velocidade_fuso = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    temperatura_tcu_1 = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    temperatura_tcu_2 = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    temperatura_tcu_3 = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    temperatura_tcu_4 = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    condicao = models.CharField(max_length=25, blank=True, default='')
+    lote_produto = models.CharField(max_length=60, blank=True, default='')
+    volume = models.CharField(max_length=60, blank=True, default='')
+    materia_prima = models.CharField(max_length=150, blank=True, default='')
+    lote_material = models.CharField(max_length=60, blank=True, default='')
+    media_diametro = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    media_comprimento = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    media_peso = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+
     TURMA_CHOICES = [
         ('TURMA_A', 'Turma A'),
         ('TURMA_B', 'Turma B'),
@@ -1272,7 +1304,26 @@ class ApontamentoTurnoBladder(models.Model):
 
     def __str__(self):
         nome = self.operador.get_full_name() or self.operador.username
-        return f"{self.ordem.numero_ordem} - {nome} ({self.quantidade_realizada} un) [{self.get_situacao_display()}]"
+        return f"{self.ordem.numero_ordem} - {nome} ({self.quantidade_display}) [{self.get_situacao_display()}]"
+
+    @property
+    def quantidade_display(self):
+        if self.origem == 'MANUSEIO':
+            return 'Etapa de manuseio (sem produção adicional)'
+        return f'{self.quantidade_realizada} un' if self.quantidade_apurada else 'Quantidade não apurada'
+
+
+class AmostraManuseioBladder(models.Model):
+    """Medições independentes de uma amostra; quantidade variável por execução."""
+    apontamento = models.ForeignKey(ApontamentoTurnoBladder, on_delete=models.PROTECT, related_name='amostras')
+    sequencia = models.PositiveIntegerField()
+    diametro = models.DecimalField(max_digits=12, decimal_places=3)
+    comprimento = models.DecimalField(max_digits=12, decimal_places=3)
+    peso = models.DecimalField(max_digits=12, decimal_places=3)
+
+    class Meta:
+        ordering = ['sequencia']
+        constraints = [models.UniqueConstraint(fields=['apontamento', 'sequencia'], name='bladder_amostra_sequencia_unica')]
 
 
 class HistoricoApontamentoBladder(models.Model):
@@ -1280,6 +1331,8 @@ class HistoricoApontamentoBladder(models.Model):
     Trilha de auditoria para correções de apontamentos no chão de fábrica.
     Preserva valor anterior, novo valor, usuário, data/hora e justificativa.
     """
+    valores_anteriores = models.JSONField(default=dict, blank=True)
+    valores_novos = models.JSONField(default=dict, blank=True)
     apontamento = models.ForeignKey(
         ApontamentoTurnoBladder,
         on_delete=models.CASCADE,

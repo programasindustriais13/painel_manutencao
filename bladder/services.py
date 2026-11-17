@@ -31,6 +31,8 @@ from .models import (
 
 logger = logging.getLogger("bladder.services")
 
+from .producao import repetir_concorrencia
+
 
 def obter_configuracao_escala_ativa():
     """
@@ -164,6 +166,8 @@ def criar_ordem_producao_com_saldos(
     Caso contrário, os saldos anteriores permanecem PENDENTES no Ledger.
     Previne concorrência e consumo duplo via select_for_update().
     """
+    if processo.codigo == '06':
+        raise ValueError("O manuseio é uma etapa da extrusão salva; não crie uma nova OP para registrá-lo.")
     if data_programada is None:
         data_programada = timezone.localdate()
     turma_prevista, _, _ = calcular_turma_do_dia(data_programada)
@@ -186,6 +190,7 @@ def criar_ordem_producao_com_saldos(
     op = OrdemProducaoBladder.objects.create(
         numero_ordem=numero_ordem,
         processo=processo,
+        exige_execucoes=processo.codigo in ('01', '02', '03', '04', '05'),
         produto=produto,
         data_programada=data_programada,
         turma_prevista=turma_prevista,
@@ -240,6 +245,8 @@ def encerrar_op_parcial_ou_total(op_id, usuario, motivo_encerramento=""):
       - Status da OP torna-se 'CONCLUIDA'.
     """
     op = OrdemProducaoBladder.objects.select_for_update().get(pk=op_id)
+    if op.exige_execucoes or op.apontamentos.exclude(origem='LEGADO').exists():
+        raise ValueError("Esta OP possui registros por processo. Utilize o fechamento único do turno.")
 
     saldo = op.quantidade_planejada - op.quantidade_realizada
 
@@ -290,6 +297,8 @@ def reprogramar_ordem_producao(op_id, nova_data, motivo, usuario):
         raise ValueError("O motivo da reprogramação é obrigatório.")
 
     op = OrdemProducaoBladder.objects.select_for_update().get(pk=op_id)
+    if op.apontamentos.exclude(origem='LEGADO').exists():
+        raise ValueError("Esta OP já possui execução registrada; sua data de origem deve ser preservada.")
     data_anterior = op.data_programada
 
     turma_prevista, _, _ = calcular_turma_do_dia(nova_data)
@@ -322,6 +331,8 @@ def cancelar_ordem_producao(op_id, motivo, usuario):
         raise ValueError("O motivo do cancelamento é obrigatório.")
 
     op = OrdemProducaoBladder.objects.select_for_update().get(pk=op_id)
+    if op.apontamentos.exclude(origem='LEGADO').exists():
+        raise ValueError("Esta OP já possui execução registrada e não pode ser cancelada; use a correção auditada dos registros.")
 
     # Reabrir saldos incorporados que estavam vinculados a esta OP
     saldos_incorporados = SaldoPendenteBladder.objects.filter(op_destino=op, status='INCORPORADO')
@@ -363,6 +374,12 @@ def registrar_ou_atualizar_apontamento(
     Atualiza atomicamente a quantidade_realizada na Ordem de Produção.
     """
     op = OrdemProducaoBladder.objects.select_for_update().get(pk=ordem_id)
+    if op.processo.codigo == '06':
+        raise ValueError("Novos manuseios exigem uma execução salva de extrusão; utilize o formulário da etapa correspondente.")
+    if op.exige_execucoes and int(quantidade) > 0:
+        raise ValueError("Esta OP exige apontamentos individuais pelo formulário do processo.")
+    if op.apontamentos.exclude(origem='LEGADO').exists():
+        raise ValueError("Use o formulário específico do processo para registrar ou corrigir esta OP.")
     turma_dia, _, _ = calcular_turma_do_dia(timezone.localdate())
 
     is_apoio, _ = verificar_usuario_apoio_no_dia(operador)
@@ -425,7 +442,14 @@ def corrigir_apontamento_operador_ou_lider(
         raise ValueError("O motivo da correção é obrigatório.")
 
     apontamento = ApontamentoTurnoBladder.objects.select_for_update().get(pk=apontamento_id)
+    if apontamento.origem != 'LEGADO':
+        raise ValueError("Use a correção de produção por processo para preservar parâmetros e auditoria.")
     op = OrdemProducaoBladder.objects.select_for_update().get(pk=apontamento.ordem_id)
+
+    if op.processo.codigo == '06' and int(nova_quantidade) > apontamento.quantidade_realizada:
+        raise ValueError("O histórico de manuseio não pode gerar execução adicional sem extrusão de origem.")
+    if op.exige_execucoes and int(nova_quantidade) > 0:
+        raise ValueError("Esta OP exige apontamentos pelo formulário do processo; o início legado não pode gerar produção.")
 
     qtd_anterior = apontamento.quantidade_realizada
     diff = int(nova_quantidade) - qtd_anterior
@@ -452,6 +476,7 @@ def corrigir_apontamento_operador_ou_lider(
     return apontamento
 
 
+@repetir_concorrencia
 @transaction.atomic(using='default')
 def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes=""):
     """
@@ -460,17 +485,20 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
     Valida:
     - Autorização do operador e correspondência com a escala daquele dia.
     - Idempotência (não permite duplo fechamento para o mesmo turno/data).
-    - Presença de OPs programadas.
-    - Quantidade realizada >= 0 e <= meta planejada (rejeita sobreprodução silenciosa).
-    - Obrigatoriedade de motivo para OPs parciais ou não realizadas (e descrição se motivo='OUTRO').
+    - Presença de OPs programadas ou manuseios efetivamente executados no turno.
+    - Quantidade realizada >= 0, admitindo sobreprodução.
+    - Categorias e descrição obrigatórias para déficit quantitativo.
     Efetua:
     - Gravação atômica do FechamentoTurnoBladder.
     - Atualização do status de cada OP (CONCLUIDA ou PARCIAL).
     - Criação de ItemFechamentoTurnoBladder com snapshot auditável.
-    - Criação de ApontamentoTurnoBladder consolidado.
+    - Vínculo dos detalhes existentes, sem novo consolidado; fallback legado sem detalhes.
+    - Vínculo dos manuseios, inclusive de extrusão anterior, sem produção adicional.
     - Geração de SaldoPendenteBladder para cada saldo > 0 vinculado ao fechamento.
     - Registro no HistoricoProgramacaoBladder.
     """
+    from .producao import serializar_turno, execucoes_op, total_executado, autorizar_turno
+    serializar_turno()
     if not operador or not operador.is_authenticated:
         raise PermissionError("Usuário não autenticado.")
 
@@ -490,6 +518,9 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
             turma_nome = "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje)
             raise PermissionError(f"Operador {operador.get_full_name() or operador.username} pertence à {perfil.get_turma_display()}, mas a escala de hoje é {turma_nome}.")
 
+    # Complementa as guardas históricas sem perder sua mensagem da turma divergente.
+    autorizar_turno(operador, data_turno, permitir_fechado=True)
+
     # 2. Idempotência / Trava de concorrência
     fechamento_existente = FechamentoTurnoBladder.objects.select_for_update().filter(
         data_turno=data_turno,
@@ -504,7 +535,10 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
         data_programada=data_turno
     ).exclude(status='CANCELADA').order_by('numero_ordem'))
 
-    if not ordens:
+    manuseios_executados = ApontamentoTurnoBladder.objects.filter(
+        origem='MANUSEIO', data_turno=data_turno, fechamento__isnull=True
+    )
+    if not ordens and not manuseios_executados.exists():
         raise ValueError("Não existem ordens de produção programadas para fechamento neste turno.")
 
     # 4. Mapeia dados enviados e valida todas as OPs
@@ -529,8 +563,20 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
         if realizada < 0:
             raise ValueError(f"A quantidade realizada na OP {op.numero_ordem} não pode ser negativa.")
 
+        detalhes = execucoes_op(op)
+        tem_detalhes = detalhes.exists()
+        if op.processo.codigo == '06':
+            # Consolida somente o que já existe no histórico; não comprova nova etapa.
+            tem_historico = op.apontamentos.filter(origem='LEGADO', quantidade_realizada__gt=0).exists()
+            quantidade_historica = op.quantidade_realizada if tem_historico else 0
+            if realizada != quantidade_historica:
+                raise ValueError(f"A OP {op.numero_ordem} de manuseio exige extrusão de origem; o fechamento não pode registrar nova execução. Use a etapa vinculada à extrusão.")
+        if (op.exige_execucoes or tem_detalhes) and realizada != total_executado(op):
+            raise ValueError(f"A OP {op.numero_ordem} deve usar a quantidade apurada nos registros de produção. Atualize a tela de fechamento.")
+        quantidade_apurada = op.quantidade_apurada if tem_detalhes else True
+
         # Saldo e Excedente
-        saldo = max(0, op.quantidade_planejada - realizada)
+        saldo = max(0, op.quantidade_planejada - realizada) if quantidade_apurada else 0
         excedente = max(0, realizada - op.quantidade_planejada)
 
         cat_objs = []
@@ -593,6 +639,8 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
 
         itens_validados.append({
             'op': op,
+            'tem_detalhes': tem_detalhes,
+            'quantidade_apurada': quantidade_apurada,
             'realizada': realizada,
             'saldo': saldo,
             'excedente': excedente,
@@ -636,6 +684,7 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
         item_fech = ItemFechamentoTurnoBladder.objects.create(
             fechamento=fechamento,
             ordem=op,
+            quantidade_apurada=item['quantidade_apurada'],
             quantidade_programada=op.quantidade_planejada,
             quantidade_realizada=realizada,
             saldo_gerado=saldo,
@@ -657,20 +706,23 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
         else:
             motivo_final = item_fech.motivo_completo
 
-        # Cria ApontamentoTurnoBladder
-        ApontamentoTurnoBladder.objects.create(
-            fechamento=fechamento,
-            ordem=op,
-            operador=operador,
-            turma=turma_hoje,
-            data_turno=data_turno,
-            data_hora_inicio=fechamento.data_hora_fechamento,
-            data_hora_fim=fechamento.data_hora_fechamento,
-            quantidade_realizada=realizada,
-            situacao=situacao,
-            motivo_desvio=motivo_final if saldo > 0 else "",
-            observacoes=obs
-        )
+        # Vincula os detalhes; o snapshot do fechamento não é uma segunda produção.
+        if item['tem_detalhes']:
+            execucoes_op(op).update(fechamento=fechamento)
+        else:
+            ApontamentoTurnoBladder.objects.create(
+                fechamento=fechamento,
+                ordem=op,
+                operador=operador,
+                turma=turma_hoje,
+                data_turno=data_turno,
+                data_hora_inicio=fechamento.data_hora_fechamento,
+                data_hora_fim=fechamento.data_hora_fechamento,
+                quantidade_realizada=realizada,
+                situacao=situacao,
+                motivo_desvio=motivo_final if saldo > 0 else "",
+                observacoes=obs
+            )
 
         # Se houver saldo > 0, cria registro no Ledger SaldoPendenteBladder
         if saldo > 0:
@@ -693,6 +745,10 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
             tipo_ev = 'ENCERRAMENTO_PARCIAL'
             motivo_hist = f"Fechamento do Turno ({turma_hoje}). Produzido: {realizada}/{op.quantidade_planejada} un. Saldo pendente: {saldo} un. Situação: {situacao}. {motivo_final}"
 
+        if not item['quantidade_apurada']:
+            motivo_hist = f"Fechamento do Turno ({turma_hoje}). Parâmetros e qualidade registrados; quantidade não apurada para Anéis de Vedação."
+            item_fech.observacao = (item_fech.observacao or '') + ' Quantidade não apurada; granularidade dos anéis pendente de definição.'
+            item_fech.save(update_fields=['observacao'])
         HistoricoProgramacaoBladder.objects.create(
             ordem=op,
             tipo_evento=tipo_ev,
@@ -702,6 +758,8 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
             usuario=operador
         )
 
+    # Etapas de manuseio realizadas neste turno podem ter extrusão de outro dia.
+    ApontamentoTurnoBladder.objects.filter(origem='MANUSEIO', data_turno=data_turno, fechamento__isnull=True).update(fechamento=fechamento)
     return fechamento
 
 

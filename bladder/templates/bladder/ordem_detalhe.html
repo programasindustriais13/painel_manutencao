@@ -70,9 +70,9 @@
         <div class="glass-card text-center p-3">
             <span class="text-muted small d-block mb-1">Realizado / Saldo Gerado</span>
             <div class="fs-3 fw-bold text-success font-monospace">
-                {{ op.quantidade_realizada }} <span class="fs-6 text-muted">/ {% if op.saldo_gerado > 0 %}{{ op.saldo_gerado }} un{% else %}-{% endif %}</span>
+                {% if op.quantidade_apurada %}{{ op.quantidade_realizada }}{% else %}Não apurada{% endif %} <span class="fs-6 text-muted">/ {% if op.saldo_gerado > 0 %}{{ op.saldo_gerado }} un{% else %}-{% endif %}</span>
             </div>
-            <span class="small text-secondary">{{ op.percentual_conclusao }}% cumprido</span>
+            <span class="small text-secondary">{% if op.quantidade_apurada %}{{ op.percentual_conclusao }}% cumprido{% else %}Parâmetros e qualidade registrados{% endif %}</span>
         </div>
     </div>
 </div>
@@ -260,10 +260,9 @@
         <h5 class="fw-bold mb-0 text-light d-flex align-items-center gap-2">
             <i class="bi bi-person-workspace text-success"></i> Apontamentos Operacionais de Chão de Fábrica
         </h5>
+        <a class="btn btn-sm btn-outline-light ms-auto" href="{% url 'bladder:dashboard' %}?op={{ op.numero_ordem|urlencode }}&amp;periodo=op">Ver registros desta OP</a>
         {% if op.status != 'CANCELADA' and op.status != 'CONCLUIDA' %}
-            <button type="button" class="btn btn-sm btn-success" data-bs-toggle="modal" data-bs-target="#modalApontar">
-                <i class="bi bi-plus-lg"></i> Registrar Apontamento
-            </button>
+            <a class="btn btn-sm btn-success" href="{% url 'bladder:producao_registrar' op.pk %}"><i class="bi bi-plus-lg"></i> Registrar Produção</a>
         {% endif %}
     </div>
 
@@ -289,7 +288,7 @@
                             <td class="font-monospace text-muted">{{ ap.data_hora_fim|date:"d/m H:i"|default:"Em Andamento" }}</td>
                             <td class="fw-semibold text-light">{{ ap.operador.get_full_name|default:ap.operador.username }}</td>
                             <td><span class="badge bg-dark">{{ ap.get_turma_display }}</span></td>
-                            <td class="text-center font-monospace fw-bold text-success fs-6">{{ ap.quantidade_realizada }} un</td>
+                            <td class="text-center font-monospace fw-bold text-success fs-6">{{ ap.quantidade_display }}</td>
                             <td class="text-center">
                                 <span class="badge {% if ap.situacao == 'CONCLUIDA' %}bg-success{% elif ap.situacao == 'PARCIAL' %}bg-warning text-dark{% elif ap.situacao == 'INTERROMPIDA' %}bg-danger{% else %}bg-info text-dark{% endif %}">
                                     {{ ap.get_situacao_display }}
@@ -297,6 +296,7 @@
                             </td>
                             <td class="text-secondary small">{{ ap.motivo_desvio|default:ap.observacoes|default:"-" }}</td>
                             <td class="text-end">
+                                {% if ap.origem != 'LEGADO' %}<a class="btn btn-sm btn-outline-info" href="{% url 'bladder:producao_detalhe' ap.pk %}">Ver parâmetros</a>{% endif %}
                                 <a href="{% url 'bladder:corrigir_apontamento' ap.pk %}" class="btn btn-sm btn-outline-warning" title="Corrigir este lançamento">
                                     <i class="bi bi-pencil"></i> Corrigir
                                 </a>

@@ -335,6 +335,19 @@
     <!-- ================================================================= -->
     <div class="tab-pane fade {% if recados_urgentes == 0 and ordens or recados_urgentes == 0 and not ordens and total_recados == 0 %}show active{% endif %}" id="tab-atividades" role="tabpanel" aria-labelledby="tab-atividades-btn">
 
+        {% if manuseios_pendentes %}
+        <section class="glass-card mb-4">
+            <h2 class="h5">Manuseios de Tarugo pendentes</h2>
+            <p class="small text-secondary">Etapas liberadas por extrusões efetivamente registradas. A execução permanece pendente até salvar o manuseio.</p>
+            {% for fonte in manuseios_pendentes %}
+            <div class="border rounded p-3 mb-2 d-flex flex-wrap gap-3 align-items-center justify-content-between">
+                <div><strong>{{ fonte.ordem.numero_ordem_curto }} — {{ fonte.produto_registrado.codigo_com_medida }}</strong><br>Extrusão #{{ fonte.pk }}: {{ fonte.quantidade_realizada }} tarugos · {{ fonte.data_turno|date:'d/m/Y' }} · {{ fonte.operador }}</div>
+                {% if not fechamento_hoje %}<a class="btn btn-success touch-btn fw-bold" href="{% url 'bladder:manuseio_registrar' fonte.pk %}">REGISTRAR MANUSEIO</a>{% else %}<span>Disponível no próximo turno autorizado.</span>{% endif %}
+            </div>
+            {% endfor %}
+        </section>
+        {% endif %}
+
         <!-- SEÇÃO A: ORDENS DE PRODUÇÃO PROGRAMADAS -->
         <div class="mb-4">
             <div class="d-flex justify-content-between align-items-center mb-3">
@@ -355,7 +368,7 @@
                 <div class="row g-3">
                     {% for op in ordens %}
                         <div class="col-12 col-md-6 col-xxl-4">
-                            <div class="op-card-board p-3 d-flex flex-column justify-content-between h-100">
+                            <div id="op-{{ op.pk }}" class="op-card-board p-3 d-flex flex-column justify-content-between h-100">
                                 <div>
                                     <div class="d-flex justify-content-between align-items-start mb-2">
                                         <div>
@@ -401,6 +414,34 @@
                                     </div>
                                 </div>
 
+                                <div class="mt-2 mb-2">
+                                    {% if op.quantidade_apurada %}<strong>Registrado: {{ op.quantidade_realizada }} unidades</strong>{% else %}<strong>Quantidade não apurada</strong>{% endif %}
+                                </div>
+                                {% if op.quantidade_apurada and op.quantidade_planejada > 0 and op.processo.codigo != '06' %}
+                                    {% if op.quantidade_realizada >= op.quantidade_planejada %}
+                                        <div class="alert alert-success d-flex align-items-start gap-2 py-2 px-3 mb-2" role="status">
+                                            <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
+                                            <div>
+                                                {% if op.excedente > 0 %}
+                                                    <strong class="d-block">META SUPERADA</strong>
+                                                    <span class="small">+{{ op.excedente }} un acima da meta.</span>
+                                                {% else %}
+                                                    <strong class="d-block">META ATINGIDA</strong>
+                                                    <span class="small">{{ op.quantidade_realizada }} de {{ op.quantidade_planejada }} un registradas.</span>
+                                                {% endif %}
+                                                {% if not fechamento_hoje and op.status == 'EM_EXECUCAO' %}
+                                                    <span class="small d-block">A OP permanece aberta até o fechamento do turno.</span>
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                    {% else %}
+                                        <div class="small text-secondary mb-2">Faltam <strong>{{ op.saldo_remanescente }} un</strong> para a meta.</div>
+                                    {% endif %}
+                                {% endif %}
+                                {% if not fechamento_hoje and op.processo.codigo != '06' %}
+                                <a href="{% url 'bladder:producao_registrar' op.pk %}" class="btn btn-success fw-bold touch-btn mb-2 w-100">REGISTRAR PRODUÇÃO</a>
+                                {% endif %}
+                                {% if op.processo.codigo == '06' %}<p class="small text-secondary">Novos manuseios são registrados a partir da execução de extrusão, na lista de etapas pendentes.</p>{% endif %}
                                 <!-- Botões FICHA TÉCNICA e DEIXAR RECADO -->
                                 <div class="mt-2 pt-2 border-top border-secondary border-opacity-25 d-flex gap-2">
                                     <button type="button" class="btn btn-outline-warning flex-grow-1 fw-bold touch-btn" data-bs-toggle="modal" data-bs-target="#modalDetalhes{{ op.pk }}" title="Ficha Técnica &bull; Ver Especificações">
@@ -722,6 +763,10 @@
     <!-- ABA 3: HISTÓRICO                                                 -->
     <!-- ================================================================= -->
     <div class="tab-pane fade" id="tab-historico" role="tabpanel" aria-labelledby="tab-historico-btn">
+        <section class="glass-card mb-4">
+            <h2 class="h5">Registros de produção e qualidade do turno</h2>
+            {% for registro in registros_producao %}<p><a href="{% url 'bladder:producao_detalhe' registro.pk %}">#{{ registro.pk }} — {{ registro.ordem.numero_ordem_curto }}</a> · {{ registro.quantidade_display }} · {{ registro.condicao }} · {{ registro.operador }} · {{ registro.data_hora_inicio|date:'H:i' }}</p>{% empty %}<p>Nenhum registro neste turno.</p>{% endfor %}
+        </section>
         <div class="row g-4">
             <!-- Movimentações de Estoque do Turno -->
             <div class="col-12 col-lg-6">
@@ -870,3 +915,5 @@
 <!-- Inclusão dos Modais de Passagem de Turno (Criar, Resolver, Repassar, Editar) -->
 {% include "bladder/includes/modal_mensagem_turno.html" %}
 {% endblock %}
+
+{% block extra_js %}<script>if(new URLSearchParams(location.search).has("producao") && window.bootstrap){bootstrap.Tab.getOrCreateInstance(document.getElementById("tab-atividades-btn")).show();const card=document.getElementById(location.hash.slice(1));if(card) card.scrollIntoView({block:"center"});}</script>{% endblock %}
