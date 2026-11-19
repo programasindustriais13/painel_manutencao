@@ -336,9 +336,10 @@
     </style>
     {% block extra_css %}{% endblock %}
 </head>
-<body class="theme-light" id="bladderBody">
-    <!-- Top Navbar (Ocultado no Modo Noturno conforme Seção 12 da SPEC) -->
-    {% if not is_noturno and request.user.username != 'noturno_bladder' and not request.session.is_night_shift_session and not is_night_shift_session %}
+<body class="{{ theme_class|default:'theme-light' }}" id="bladderBody">
+    <!-- Top Navbar (Ocultado no Modo Noturno conforme Seção 12 da SPEC e configurável via hide_navbar) -->
+    {% block navbar %}
+    {% if not hide_navbar and not is_noturno and request.user.username != 'noturno_bladder' and not request.session.is_night_shift_session and not is_night_shift_session %}
     <nav class="bladder-navbar">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 container-fluid">
             <!-- Brand -->
@@ -398,8 +399,10 @@
         </div>
     </nav>
     {% endif %}
+    {% endblock navbar %}
 
     <!-- Main Container -->
+    {% block main_wrapper %}
     <main class="container-fluid px-4 py-4 flex-grow-1">
         <!-- Messages -->
         {% if messages %}
@@ -416,9 +419,11 @@
 
         {% block content %}{% endblock %}
     </main>
+    {% endblock main_wrapper %}
 
     <!-- Footer -->
-    {% if not is_noturno and request.user.username != 'noturno_bladder' and not request.session.is_night_shift_session and not is_night_shift_session %}
+    {% block footer %}
+    {% if not hide_footer and not is_noturno and request.user.username != 'noturno_bladder' and not request.session.is_night_shift_session and not is_night_shift_session %}
     <footer class="footer">
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 container-fluid">
             <div>Pneus Freedom &bull; Setor de Fabricação de Bladders &bull; PCP &amp; Controle Operacional</div>
@@ -426,6 +431,7 @@
         </div>
     </footer>
     {% endif %}
+    {% endblock footer %}
 
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>

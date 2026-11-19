@@ -83,7 +83,7 @@
                         {% with controle=registro.controle_dr %}{% if controle %}<span class="badge {% if controle.status == 'SINCRONIZADO' %}bg-success{% elif controle.status == 'ERRO' or controle.status == 'CONFERIR' %}bg-danger{% else %}bg-secondary{% endif %}">{{ controle.get_destino_display }} · {{ controle.get_status_display }}</span>{% endif %}{% endwith %}
                     </div>
                     <div class="small text-secondary">{{ registro.data_hora_inicio|date:'d/m/Y H:i' }} · {{ registro.get_turma_display }} · {{ registro.operador.get_full_name|default:registro.operador.username }}</div>
-                    <div class="small">{% if registro.origem == 'LEGADO' %}Produto histórico: {{ registro.ordem.produto.codigo|default:'Não informado' }}{% else %}{{ registro.identificacao_registrada.produto|default:registro.produto_registrado.codigo|default:'Produto não informado' }}{% endif %}{% if registro.condicao %} · Condição: {{ registro.condicao }}{% endif %}</div>
+                    <div class="small">{% if registro.origem == 'LEGADO' %}Produto histórico: {{ registro.ordem.produto.codigo|default:'Não informado' }}{% else %}{% if registro.identificacao_registrada.produto %}{{ registro.identificacao_registrada.produto }}{% elif registro.produto_registrado %}{{ registro.produto_registrado.codigo }}{% else %}Produto não informado{% endif %}{% endif %}{% if registro.condicao %} · Condição: {{ registro.condicao }}{% endif %}</div>
                 </div>
                 <div class="d-flex align-items-center gap-3">
                     <strong>{% if registro.origem == 'LEGADO' %}{{ registro.quantidade_display }} · histórico{% else %}{{ registro.quantidade_display }}{% endif %}</strong>

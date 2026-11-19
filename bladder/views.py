@@ -2604,8 +2604,9 @@ def boas_vindas_view(request):
     Exibe dados reais do turno, OPs do dia, manuseios transferidos, recados e situação de estoque.
     Marca 'bladder_welcome_seen' = True para evitar loops.
     """
-    # Marca visualização na sessão
+    # Marca visualização na sessão para garantir exibição única pós-login
     request.session['bladder_welcome_seen'] = True
+    request.session.modified = True
 
     agora = timezone.localtime(timezone.now())
     hora = agora.hour
@@ -2616,7 +2617,7 @@ def boas_vindas_view(request):
     else:
         saudacao = "BOA NOITE"
 
-    nome_operador = (request.user.first_name or request.user.username).upper()
+    nome_operador = (request.user.first_name or request.user.username)
     hoje = agora.date()
     turma_hoje, is_ajuste, motivo_ajuste = calcular_turma_do_dia(hoje)
     turma_display = "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje)
@@ -2663,6 +2664,152 @@ def boas_vindas_view(request):
     produtos_criticos = [p for p in itens_estoque if p.get('situacao') == 'CRITICO']
     produtos_atencao = [p for p in itens_estoque if p.get('situacao') == 'ATENCAO']
 
+    # Montagem da lista estruturada de atividades do dia
+    atividades_resumo = []
+
+    # 1. Produção / OPs
+    if total_ops > 0:
+        ops_detalhes = [f"{op.numero_ordem_curto}: {op.produto.codigo if op.produto else 'Bladder'} ({op.quantidade_planejada} un)" for op in ordens[:3]]
+        detalhe_str = " | ".join(ops_detalhes)
+        atividades_resumo.append({
+            'numero': 1,
+            'titulo': 'Ordens de Produção do Turno',
+            'descricao': f'{total_ops} OP(s) programada(s) hoje &bull; Meta: {total_planejado} un',
+            'detalhes': detalhe_str,
+            'status': 'progresso',
+            'badge': f'{progresso_pct}% concluído' if progresso_pct > 0 else f'{total_planejado} un',
+            'badge_class': 'bg-success text-white' if progresso_pct >= 100 else 'bg-warning text-dark',
+            'icone': 'bi-gear-wide-connected'
+        })
+    else:
+        atividades_resumo.append({
+            'numero': 1,
+            'titulo': 'Ordens de Produção do Turno',
+            'descricao': 'Nenhuma OP programada no momento.',
+            'detalhes': 'Aguardando liberação de novos lotes pelo PCP.',
+            'status': 'vazio',
+            'badge': '0 OPs',
+            'badge_class': 'bg-secondary text-white',
+            'icone': 'bi-calendar-check'
+        })
+
+    # 2. Manuseios Recebidos
+    total_manuseios = manuseios_recebidos.count()
+    if total_manuseios > 0:
+        atividades_resumo.append({
+            'numero': 2,
+            'titulo': 'Continuidade de Manuseios',
+            'descricao': f'{total_manuseios} lote(s) de tarugo(s) recebidos da equipe anterior.',
+            'detalhes': 'Aguardando pesagem, resfriamento, corte ou inspeção dimensional.',
+            'status': 'alerta',
+            'badge': f'{total_manuseios} pendente(s)',
+            'badge_class': 'bg-warning text-dark',
+            'icone': 'bi-box-arrow-in-down'
+        })
+    else:
+        atividades_resumo.append({
+            'numero': 2,
+            'titulo': 'Continuidade de Manuseios',
+            'descricao': 'Nenhum manuseio pendente transferido pelo turno anterior.',
+            'detalhes': 'Posto de trabalho limpo e sem fila acumulada.',
+            'status': 'ok',
+            'badge': 'Liberado',
+            'badge_class': 'bg-success text-white',
+            'icone': 'bi-check2-circle'
+        })
+
+    # 3. Recados da Passagem
+    if recados_urgentes > 0:
+        atividades_resumo.append({
+            'numero': 3,
+            'titulo': 'Passagem de Turno & Avisos',
+            'descricao': f'{recados_urgentes} recado(s) urgente(s) registrado(s) para o seu turno!',
+            'detalhes': 'Atenção às orientações deixadas pela equipe anterior.',
+            'status': 'urgente',
+            'badge': f'{recados_urgentes} urgente(s)',
+            'badge_class': 'bg-danger text-white',
+            'icone': 'bi-exclamation-octagon-fill'
+        })
+    elif len(recados) > 0:
+        atividades_resumo.append({
+            'numero': 3,
+            'titulo': 'Passagem de Turno & Avisos',
+            'descricao': f'{len(recados)} recado(s) ativo(s) na passagem de turno.',
+            'detalhes': 'Orientações operacionais registradas para acompanhamento.',
+            'status': 'info',
+            'badge': f'{len(recados)} ativo(s)',
+            'badge_class': 'bg-info text-dark',
+            'icone': 'bi-chat-left-text'
+        })
+    else:
+        atividades_resumo.append({
+            'numero': 3,
+            'titulo': 'Passagem de Turno & Avisos',
+            'descricao': 'Sem recados pendentes ou ocorrências críticas registradas.',
+            'detalhes': 'Troca de turno realizada sem pendências.',
+            'status': 'ok',
+            'badge': 'Tudo em ordem',
+            'badge_class': 'bg-success text-white',
+            'icone': 'bi-chat-check'
+        })
+
+    # 4. Alerta Semafórico de Estoque
+    if produtos_criticos:
+        crit_list = []
+        for p in produtos_criticos[:3]:
+            prod_obj = p.get('produto')
+            if prod_obj and hasattr(prod_obj, 'codigo_com_medida'):
+                crit_list.append(prod_obj.codigo_com_medida)
+            else:
+                cod = p.get('codigo', '')
+                med = p.get('medida', '')
+                crit_list.append(f"{cod} - {med}" if med else cod)
+        crit_nomes = ", ".join(filter(None, crit_list))
+        detalhe_msg = f'Priorizar reposição imediata: {crit_nomes}' if crit_nomes else 'Modelos com saldo físico abaixo da margem de segurança.'
+        atividades_resumo.append({
+            'numero': 4,
+            'titulo': 'Alerta de Estoque &bull; Bladders Acabados',
+            'descricao': f'{len(produtos_criticos)} modelo(s) em estoque CRÍTICO!',
+            'detalhes': detalhe_msg,
+            'status': 'urgente',
+            'badge': f'{len(produtos_criticos)} crítico(s)',
+            'badge_class': 'bg-danger text-white',
+            'icone': 'bi-boxes'
+        })
+    elif produtos_atencao:
+        atencao_list = []
+        for p in produtos_atencao[:3]:
+            prod_obj = p.get('produto')
+            if prod_obj and hasattr(prod_obj, 'codigo_com_medida'):
+                atencao_list.append(prod_obj.codigo_com_medida)
+            else:
+                cod = p.get('codigo', '')
+                med = p.get('medida', '')
+                atencao_list.append(f"{cod} - {med}" if med else cod)
+        atencao_nomes = ", ".join(filter(None, atencao_list))
+        detalhe_msg = f'Modelos em alerta: {atencao_nomes}' if atencao_nomes else 'Acompanhe a curva de consumo durante o turno.'
+        atividades_resumo.append({
+            'numero': 4,
+            'titulo': 'Alerta de Estoque &bull; Bladders Acabados',
+            'descricao': f'{len(produtos_atencao)} modelo(s) em nível de ATENÇÃO preventiva.',
+            'detalhes': detalhe_msg,
+            'status': 'alerta',
+            'badge': f'{len(produtos_atencao)} atenção',
+            'badge_class': 'bg-warning text-dark',
+            'icone': 'bi-boxes'
+        })
+    else:
+        atividades_resumo.append({
+            'numero': 4,
+            'titulo': 'Alerta de Estoque &bull; Bladders Acabados',
+            'descricao': 'Saldo físico de bladders balanceado e acima do limite de segurança.',
+            'detalhes': 'Todos os modelos ativos com cobertura adequada de estoque.',
+            'status': 'ok',
+            'badge': 'Estoque Normal',
+            'badge_class': 'bg-success text-white',
+            'icone': 'bi-shield-check'
+        })
+
     context = {
         'saudacao': saudacao,
         'nome_operador': nome_operador,
@@ -2679,14 +2826,17 @@ def boas_vindas_view(request):
         'total_realizado': total_realizado,
         'progresso_pct': progresso_pct,
         'manuseios_recebidos': manuseios_recebidos,
-        'total_manuseios_recebidos': manuseios_recebidos.count(),
+        'total_manuseios_recebidos': total_manuseios,
         'recados': recados[:5],
         'total_recados': len(recados),
         'recados_urgentes': recados_urgentes,
         'produtos_criticos': produtos_criticos,
         'produtos_atencao': produtos_atencao,
-        'theme_class': 'theme-light',
+        'atividades_resumo': atividades_resumo,
+        'theme_class': 'theme-dark',
         'is_operador_view': True,
+        'hide_navbar': True,
+        'hide_footer': True,
     }
     return render(request, 'bladder/bem_vindo.html', context)
 

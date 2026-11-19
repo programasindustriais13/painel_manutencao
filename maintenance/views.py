@@ -266,6 +266,12 @@ class CustomLoginView(auth_views.LoginView):
 
         return super().dispatch(request, *args, **kwargs)
 
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        # Garante que a tela de boas-vindas do Bladder seja exibida uma única vez após este login
+        self.request.session.pop('bladder_welcome_seen', None)
+        return response
+
 
 @login_required
 def home_redirect(request):

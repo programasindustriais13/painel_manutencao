@@ -243,7 +243,7 @@
                                 </div>
                                 <div>
                                     <label class="form-check-label fw-bold text-dark fs-6 d-block" for="chk-manuseio-{{ ext.id }}">
-                                        Encaminhar: {{ ext.ordem.numero_ordem_curto }} &bull; {{ ext.ordem.produto.codigo_com_medida|default:ext.ordem.produto.codigo }}
+                                        Encaminhar: {{ ext.ordem.numero_ordem_curto }} &bull; {{ ext.ordem.produto.codigo_com_medida|default:ext.ordem.produto|default:'Sem produto' }}
                                     </label>
                                     <div class="small text-secondary">
                                         Extrusão #{{ ext.pk }} &bull; Extrusado: <strong>{{ ext.quantidade_realizada }} un</strong> &bull;
@@ -287,7 +287,7 @@
                                     <span class="fs-5 fw-bold font-monospace text-slate-900">{{ op.numero_ordem }}</span>
                                     <span class="badge bg-secondary ms-2">{{ op.processo.nome }}</span>
                                     <div class="fw-bold text-slate-800 mt-1">
-                                        {{ op.produto.codigo_com_medida|default:op.produto.codigo }}
+                                        {{ op.produto.codigo_com_medida|default:op.produto|default:'Sem produto vinculado' }}
                                         {% if op.produto.descricao %}
                                             <span class="text-slate-600 fw-normal small">&mdash; {{ op.produto.descricao }}</span>
                                         {% endif %}
