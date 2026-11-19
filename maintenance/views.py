@@ -293,6 +293,8 @@ def home_redirect(request):
             from matrizaria.decorators import matrizaria_landing_name
             return redirect(matrizaria_landing_name(user))
         elif mod == 'bladder':
+            if not request.session.get('bladder_welcome_seen') and user.username != 'noturno_bladder':
+                return redirect('bladder:boas_vindas')
             if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
                 return redirect('bladder:dashboard')
             return redirect('bladder:operador')
@@ -325,6 +327,8 @@ def portal_select(request):
             from matrizaria.decorators import matrizaria_landing_name
             return redirect(matrizaria_landing_name(user))
         if 'bladder' in accessible:
+            if not request.session.get('bladder_welcome_seen') and user.username != 'noturno_bladder':
+                return redirect('bladder:boas_vindas')
             if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
                 return redirect('bladder:dashboard')
             return redirect('bladder:operador')
@@ -348,7 +352,9 @@ def portal_select(request):
     else:
         maintenance_url = 'technician_management'
 
-    if user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
+    if not request.session.get('bladder_welcome_seen') and user.username != 'noturno_bladder':
+        bladder_url = 'bladder:boas_vindas'
+    elif user.is_superuser or user.groups.filter(name='Liderança Bladder').exists():
         bladder_url = 'bladder:dashboard'
     else:
         bladder_url = 'bladder:operador'
@@ -2276,6 +2282,7 @@ def api_session_keep_alive(request):
     e renova a inatividade humana apenas para sessões válidas.
     """
     import time
+    from .middleware import is_dedicated_tv_account, is_night_shift_account
     login_url = resolve_url(settings.LOGIN_URL)
     user = getattr(request, "user", None)
     if not user or not user.is_authenticated or request.session.get("_session_expired"):
@@ -2289,6 +2296,16 @@ def api_session_keep_alive(request):
         )
 
     now_ts = time.time()
+    if is_night_shift_account(user, request):
+        request.session.pop("_session_expired", None)
+        request.session["_last_human_activity"] = now_ts
+        return JsonResponse({
+            "status": "ok",
+            "timestamp": now_ts,
+            "timeout_seconds": 57600,
+            "warning_seconds": 30,
+        })
+
     timeout = getattr(settings, "INACTIVITY_TIMEOUT_SECONDS", 300)
     last_act = request.session.get("_last_human_activity")
     if last_act is not None and (now_ts - float(last_act)) > timeout:
@@ -2320,7 +2337,7 @@ def api_session_status(request):
     Retorna 401 JSON previsível caso a sessão esteja expirada ou não autenticada.
     """
     import time
-    from .middleware import is_dedicated_tv_account
+    from .middleware import is_dedicated_tv_account, is_night_shift_account
 
     login_url = resolve_url(settings.LOGIN_URL)
     user = getattr(request, "user", None)
@@ -2335,10 +2352,11 @@ def api_session_status(request):
             status=401,
         )
 
-    if is_dedicated_tv_account(user):
+    if is_dedicated_tv_account(user) or is_night_shift_account(user, request):
         return JsonResponse({
             "is_authenticated": True,
-            "is_tv": True,
+            "is_tv": bool(is_dedicated_tv_account(user)),
+            "is_night_shift": bool(is_night_shift_account(user, request)),
             "remaining_seconds": 99999999,
         })
 

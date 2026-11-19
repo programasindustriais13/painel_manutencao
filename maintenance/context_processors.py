@@ -30,6 +30,7 @@ def module_access_context(request):
             'is_operador_vulcanizacao': False,
             'can_access_matrizaria_kanban': False,
             'can_dashboard_matrizaria': False,
+            'is_night_shift_session': False,
         }
 
     from bladder.decorators import user_is_lider_bladder
@@ -57,6 +58,7 @@ def module_access_context(request):
         'can_solicitar': _user_can_solicitar(user),
         'can_relatorios': _user_can_relatorios(user),
         'can_tv': _user_can_tv(user),
+        'is_night_shift_session': getattr(user, 'username', '') == 'noturno_bladder' or bool(request.session.get('is_night_shift_session')),
     }
 
 

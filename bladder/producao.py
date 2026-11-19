@@ -4,12 +4,13 @@ import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 from django.db import OperationalError, transaction
-from django.db.models import F, Sum
+from django.db.models import F, Sum, Q
 from django.utils import timezone
 from .models import (ApontamentoTurnoBladder, AmostraManuseioBladder,
                      ConfiguracaoEscalaBladder, FechamentoTurnoBladder,
                      OrdemProducaoBladder, ProcessoBladder, HistoricoApontamentoBladder,
-                     SaldoPendenteBladder, CategoriaDesvioBladder)
+                     SaldoPendenteBladder, CategoriaDesvioBladder,
+                     TransferenciaManuseioBladder)
 from .forms_producao import formulario_processo, formulario_amostras, numero_amostras
 from .decorators import user_is_operador_bladder, user_is_lider_bladder
 
@@ -18,7 +19,7 @@ PARAMETROS = ('tempo_vulcanizacao', 'pressao', 'temperatura', 'velocidade_esteir
               'velocidade_fuso', 'temperatura_tcu_1', 'temperatura_tcu_2',
               'temperatura_tcu_3', 'temperatura_tcu_4', 'condicao', 'lote_produto',
               'volume', 'materia_prima', 'lote_material', 'tipo_processamento',
-              'resfriamento', 'observacoes')
+              'resfriamento', 'observacoes', 'quantidade_manuseada')
 
 
 def repetir_concorrencia(func):
@@ -98,8 +99,10 @@ def validar_extrusao(extrusao):
 def manuseios_pendentes():
     return ApontamentoTurnoBladder.objects.using('default').filter(
         origem='PROCESSO', codigo_processo='03', quantidade_apurada=True,
-        quantidade_realizada__gt=0, manuseio__isnull=True,
-    ).exclude(ordem__status='CANCELADA').select_related('ordem', 'produto_registrado', 'operador').order_by('created_at')
+        quantidade_realizada__gt=0,
+    ).filter(
+        Q(manuseio__isnull=True) | Q(manuseio__status_manuseio='PARCIAL')
+    ).exclude(ordem__status='CANCELADA').select_related('ordem', 'produto_registrado', 'operador', 'manuseio').order_by('created_at')
 
 
 def _dados_validados(codigo, dados):
@@ -109,14 +112,26 @@ def _dados_validados(codigo, dados):
     return formulario.cleaned_data
 
 
-def _amostras_validadas(quantidade, dados):
+def _amostras_validadas(quantidade, dados, parciais_permitidas=False, qtd_manuseada=None):
     # Dados recebidos pelo serviço são revalidados, independentemente da view/JS.
-    n = numero_amostras(quantidade)
-    if not isinstance(dados, list) or len(dados) != n:
-        raise ValueError(f'Informe exatamente {n} amostras completas da execução de extrusão.')
+    n_total = numero_amostras(quantidade)
+    if parciais_permitidas and qtd_manuseada is not None:
+        min_amostras = numero_amostras(qtd_manuseada)
+    else:
+        min_amostras = n_total
+
+    amostras_preenchidas = [
+        v for v in dados if isinstance(v, dict) and any(v.get(c) for c in ('diametro', 'comprimento', 'peso'))
+    ] if isinstance(dados, list) else []
+
+    if len(amostras_preenchidas) < min_amostras:
+        raise ValueError(f'Informe pelo menos {min_amostras} amostra(s) para os {qtd_manuseada or quantidade} tarugos manuseados.')
+    if not parciais_permitidas and len(amostras_preenchidas) < n_total:
+        raise ValueError(f'Informe exatamente {n_total} amostras completas da execução de extrusão.')
+
     from .forms_producao import AmostraForm
     amostras = []
-    for valores in dados:
+    for valores in amostras_preenchidas:
         form = AmostraForm(valores)
         if not form.is_valid():
             raise ValueError('Todas as amostras devem conter diâmetro, comprimento e peso positivos válidos.')
@@ -125,13 +140,17 @@ def _amostras_validadas(quantidade, dados):
 
 
 def _salvar_amostras(apontamento, dados):
-    for campo, precisao in [('diametro', '0.01'), ('comprimento', '0.01'), ('peso', '0.001')]:
-        media = sum(a[campo] for a in dados) / Decimal(len(dados))
-        setattr(apontamento, 'media_' + campo, media.quantize(Decimal(precisao), rounding=ROUND_HALF_UP))
-    apontamento.save(using='default')
+    if not dados:
+        return
     for numero, valores in enumerate(dados, 1):
         # Correções preservam o ID da medição; snapshot integral fica na auditoria.
         AmostraManuseioBladder.objects.using('default').update_or_create(apontamento=apontamento, sequencia=numero, defaults=valores)
+    todas = list(apontamento.amostras.values('diametro', 'comprimento', 'peso'))
+    if todas:
+        for campo, precisao in [('diametro', '0.01'), ('comprimento', '0.01'), ('peso', '0.001')]:
+            media = sum(a[campo] for a in todas) / Decimal(len(todas))
+            setattr(apontamento, 'media_' + campo, media.quantize(Decimal(precisao), rounding=ROUND_HALF_UP))
+        apontamento.save(using='default', update_fields=['media_diametro', 'media_comprimento', 'media_peso'])
 
 
 def snapshot(apontamento):
@@ -141,7 +160,7 @@ def snapshot(apontamento):
 
 
 @repetir_concorrencia
-def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostras=None):
+def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostras=None, acao='concluir'):
     with transaction.atomic(using='default'):
         serializar_turno()
         op = OrdemProducaoBladder.objects.using('default').select_for_update().select_related('processo__maquina', 'produto').get(pk=ordem_id)
@@ -160,6 +179,7 @@ def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostr
             return anterior, False
         turma = validar_op(op, usuario, manuseio=extrusao_id is not None)
         extrusao = None
+        manuseio_existente = None
         if codigo == '06':
             if extrusao_id is None:
                 raise ValueError('Manuseio deve ser aberto a partir da execução de Extrusão de Bladder, sem criar outra OP.')
@@ -167,8 +187,9 @@ def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostr
             validar_extrusao(extrusao)
             if extrusao.ordem_id != op.pk:
                 raise ValueError('A extrusão informada não pertence à OP.')
-            if ApontamentoTurnoBladder.objects.using('default').filter(extrusao_origem=extrusao).exists():
-                raise ValueError('O manuseio desta execução já foi registrado.')
+            manuseio_existente = ApontamentoTurnoBladder.objects.using('default').select_for_update().filter(extrusao_origem=extrusao).first()
+            if manuseio_existente and manuseio_existente.status_manuseio == 'CONCLUIDO':
+                raise ValueError('O manuseio desta execução já foi concluído.')
             processo = ProcessoBladder.objects.using('default').get(codigo='06', ativo=True)
         else:
             processo = op.processo
@@ -178,30 +199,104 @@ def registrar_producao(ordem_id, usuario, dados, chave, extrusao_id=None, amostr
         quantidade = 1 if codigo in ('01', '02') else valores.get('quantidade_realizada', 0)
         quantidade_apurada = codigo not in ('05', '06')
         produto = extrusao.produto_registrado if extrusao else op.produto
-        apontamento = ApontamentoTurnoBladder(
-            origem='MANUSEIO' if extrusao else 'PROCESSO', chave_idempotencia=chave,
-            ordem=op, operador=usuario, turma=turma, data_turno=timezone.localdate(),
-            data_hora_inicio=timezone.now(), data_hora_fim=timezone.now(), situacao='CONCLUIDA',
-            quantidade_realizada=quantidade, quantidade_apurada=quantidade_apurada,
-            processo_registrado=processo, codigo_processo=codigo, equipamento=processo.maquina,
-            produto_registrado=produto, extrusao_origem=extrusao,
-            identificacao_registrada={'op': op.numero_ordem, 'produto': produto.codigo if produto else '',
-                                     'medida': produto.medida if produto else '', 'processo': processo.nome,
-                                     'equipamento': str(processo.maquina) if processo.maquina_id else '',
-                                     'operador': usuario.get_full_name() or usuario.username})
-        for campo in PARAMETROS:
-            if campo in valores:
-                setattr(apontamento, campo, valores[campo])
-        medições = _amostras_validadas(extrusao.quantidade_realizada, amostras) if extrusao else None
-        apontamento.save(using='default')
-        if medições:
-            _salvar_amostras(apontamento, medições)
-        if not extrusao:
+
+        if codigo == '06':
+            qtd_extrusada = extrusao.quantidade_realizada
+            qtd_manuseada = valores.get('quantidade_manuseada')
+            if not qtd_manuseada:
+                if acao == 'salvar_parcial':
+                    raise ValueError('Informe a quantidade de tarugos manuseados (maior que zero).')
+                else:
+                    qtd_manuseada = qtd_extrusada
+            if qtd_manuseada <= 0:
+                raise ValueError('Informe a quantidade de tarugos manuseados (maior que zero).')
+            if qtd_manuseada > qtd_extrusada:
+                raise ValueError(f'A quantidade manuseada ({qtd_manuseada} un) não pode ser superior à quantidade extrusada ({qtd_extrusada} un).')
+
+            if acao == 'salvar_parcial':
+                status_manuseio = 'PARCIAL'
+                situacao = 'PARCIAL'
+                parciais_permitidas = True
+            else:
+                if qtd_manuseada < qtd_extrusada:
+                    raise ValueError(f'Para concluir o manuseio, a quantidade manuseada deve ser igual à extrusada ({qtd_extrusada} un). Caso o lote esteja incompleto, clique em "SALVAR PARCIAL".')
+                status_manuseio = 'CONCLUIDO'
+                situacao = 'CONCLUIDA'
+                parciais_permitidas = False
+
+            if manuseio_existente:
+                apontamento = manuseio_existente
+                apontamento.operador = usuario
+                apontamento.turma = turma
+                apontamento.data_turno = timezone.localdate()
+                apontamento.data_hora_fim = timezone.now()
+                apontamento.situacao = situacao
+                apontamento.status_manuseio = status_manuseio
+                apontamento.quantidade_manuseada = qtd_manuseada
+            else:
+                apontamento = ApontamentoTurnoBladder(
+                    origem='MANUSEIO', chave_idempotencia=chave,
+                    ordem=op, operador=usuario, turma=turma, data_turno=timezone.localdate(),
+                    data_hora_inicio=timezone.now(), data_hora_fim=timezone.now(), situacao=situacao,
+                    status_manuseio=status_manuseio, quantidade_manuseada=qtd_manuseada,
+                    quantidade_realizada=0, quantidade_apurada=False,
+                    processo_registrado=processo, codigo_processo=codigo, equipamento=processo.maquina,
+                    produto_registrado=produto, extrusao_origem=extrusao,
+                    identificacao_registrada={'op': op.numero_ordem, 'produto': produto.codigo if produto else '',
+                                             'medida': produto.medida if produto else '', 'processo': processo.nome,
+                                             'equipamento': str(processo.maquina) if processo.maquina_id else '',
+                                             'operador': usuario.get_full_name() or usuario.username}
+                )
+            for campo in PARAMETROS:
+                if campo in valores and valores[campo] is not None:
+                    setattr(apontamento, campo, valores[campo])
+            apontamento.quantidade_manuseada = qtd_manuseada
+            medições = _amostras_validadas(qtd_extrusada, amostras, parciais_permitidas=parciais_permitidas, qtd_manuseada=qtd_manuseada)
+            apontamento.save(using='default')
+            if medições:
+                _salvar_amostras(apontamento, medições)
+            extrusao.quantidade_manuseada = qtd_manuseada
+            extrusao.status_manuseio = status_manuseio
+            extrusao.save(using='default', update_fields=['quantidade_manuseada', 'status_manuseio', 'updated_at'])
+
+            transfs = TransferenciaManuseioBladder.objects.using('default').filter(
+                extrusao=extrusao, status__in=['ENCAMINHADO', 'RETOMADO']
+            )
+            for t in transfs:
+                t.apontamento_manuseio = apontamento
+                t.quantidade_acumulada_manuseada = qtd_manuseada
+                t.quantidade_restante = max(0, qtd_extrusada - qtd_manuseada)
+                t.operador_retomou = usuario
+                if not t.data_retomada:
+                    t.data_retomada = timezone.now()
+                if status_manuseio == 'CONCLUIDO':
+                    t.status = 'CONCLUIDO'
+                else:
+                    t.status = 'RETOMADO'
+                t.save(using='default')
+        else:
+            apontamento = ApontamentoTurnoBladder(
+                origem='PROCESSO', chave_idempotencia=chave,
+                ordem=op, operador=usuario, turma=turma, data_turno=timezone.localdate(),
+                data_hora_inicio=timezone.now(), data_hora_fim=timezone.now(), situacao='CONCLUIDA',
+                quantidade_realizada=quantidade, quantidade_apurada=quantidade_apurada,
+                processo_registrado=processo, codigo_processo=codigo, equipamento=processo.maquina,
+                produto_registrado=produto, extrusao_origem=None,
+                identificacao_registrada={'op': op.numero_ordem, 'produto': produto.codigo if produto else '',
+                                         'medida': produto.medida if produto else '', 'processo': processo.nome,
+                                         'equipamento': str(processo.maquina) if processo.maquina_id else '',
+                                         'operador': usuario.get_full_name() or usuario.username})
+            for campo in PARAMETROS:
+                if campo in valores:
+                    setattr(apontamento, campo, valores[campo])
+            medições = None
+            apontamento.save(using='default')
             op.exige_execucoes = True
             op.quantidade_apurada = quantidade_apurada
             op.quantidade_realizada = total_executado(op)
             op.status = 'EM_EXECUCAO'
             op.save(using='default', update_fields=['exige_execucoes', 'quantidade_apurada', 'quantidade_realizada', 'status', 'updated_at'])
+
         from .sincronizacao_drs import enfileirar
         enfileirar(apontamento)
         return apontamento, True
@@ -244,11 +339,18 @@ def corrigir_producao(apontamento_id, usuario, dados, motivo, amostras=None, cat
         qtd_anterior = registro.quantidade_realizada
         for campo in PARAMETROS:
             if campo in valores:
+                if campo == 'quantidade_manuseada':
+                    if valores[campo] is not None:
+                        setattr(registro, campo, valores[campo])
+                    elif not registro.quantidade_manuseada and registro.extrusao_origem:
+                        setattr(registro, campo, registro.extrusao_origem.quantidade_realizada)
+                    continue
                 setattr(registro, campo, valores[campo])
         registro.quantidade_realizada = nova_qtd
         if registro.origem == 'MANUSEIO':
             validar_extrusao(registro.extrusao_origem)
             medidas = _amostras_validadas(registro.extrusao_origem.quantidade_realizada, amostras)
+            registro.save(using='default')
             _salvar_amostras(registro, medidas)
         else:
             registro.save(using='default')

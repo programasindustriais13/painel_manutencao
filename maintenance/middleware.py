@@ -7,6 +7,7 @@ from django.contrib.auth.signals import user_logged_in
 from django.dispatch import receiver
 from django.http import JsonResponse
 from django.shortcuts import redirect, resolve_url
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,22 @@ def is_dedicated_tv_account(user) -> bool:
     is_tv_name = user.username in ["tv", "tv_matrizaria"]
     is_tv_group = user.groups.filter(name__in=["Visualizador", "Visualizador Matrizaria"]).exists()
     return is_tv_name or is_tv_group
+
+
+def is_night_shift_account(user, request=None) -> bool:
+    """
+    Identifica a conta restrita de retiradas noturnas do Setor de Bladder.
+    Regra estrita:
+    - Usuário autenticado;
+    - Username 'noturno_bladder' ou flag de sessão 'is_night_shift_session'.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'username', '') == 'noturno_bladder':
+        return True
+    if request and hasattr(request, 'session') and request.session.get('is_night_shift_session'):
+        return True
+    return False
 
 
 def is_background_request(request) -> bool:
@@ -107,6 +124,50 @@ class SessionExpiryByProfileMiddleware:
                     request.session.set_expiry(315360000)  # ~10 anos
                     request.session["_session_expiry_checked"] = True
                     request.session["_is_tv_session"] = True
+            elif is_night_shift_account(user, request):
+                # Conta da Estação Noturna Bladder:
+                if request.path.startswith("/logout/"):
+                    return self.get_response(request)
+
+                request.session.pop("_session_expired", None)
+                if not request.session.get("_night_expiry_set"):
+                    request.session.set_expiry(getattr(settings, "NIGHT_SHIFT_MAX_SECONDS", 16 * 3600))
+                    request.session["_night_expiry_set"] = True
+                    request.session["is_night_shift_session"] = True
+
+                # Confinamento estrito de rotas
+                if not (request.path.startswith("/bladder/noturno/") or request.path.startswith("/static/") or request.path.startswith("/api/session/")):
+                    return redirect("/bladder/noturno/")
+
+                # Teto absoluto de segurança de 16 horas
+                now_ts = time.time()
+                night_start = request.session.get("night_shift_start_ts")
+                max_seconds = getattr(settings, "NIGHT_SHIFT_MAX_SECONDS", 16 * 3600)
+                if night_start is not None and (now_ts - float(night_start)) > max_seconds:
+                    logger.warning("Sessão noturna bladder expirada por teto máximo de 16h (user=%s)", user.username)
+                    try:
+                        from bladder.models import SessaoNoturnaBladder
+                        sessao_id = request.session.get("sessao_noturna_id")
+                        if sessao_id:
+                            SessaoNoturnaBladder.objects.filter(id=sessao_id, status='ATIVA').update(
+                                status='EXPIRADA',
+                                data_hora_fim=timezone.now(),
+                                observacoes='Sessão expirada pelo teto absoluto de 16 horas.'
+                            )
+                    except Exception as err:
+                        logger.error("Erro ao marcar sessão noturna expirada: %s", err)
+                    from django.contrib.auth import logout as auth_logout
+                    auth_logout(request)
+                    request.user = AnonymousUser()
+                    login_url = resolve_url(settings.LOGIN_URL)
+                    try:
+                        messages.info(request, "A sessão da Estação Noturna atingiu o teto máximo de 16 horas e foi encerrada.")
+                    except Exception:
+                        pass
+                    return redirect(f"{login_url}?next=/bladder/noturno/")
+
+                request.session["_last_human_activity"] = now_ts
+                return self.get_response(request)
             else:
                 # Não interceptar requisições para logout
                 if request.path.startswith("/logout/"):

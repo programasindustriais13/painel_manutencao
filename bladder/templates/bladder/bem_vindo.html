@@ -1,0 +1,250 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Bem-vindo &bull; Setor de Bladder{% endblock %}
+
+{% block extra_css %}
+<style>
+    .welcome-container {
+        max-width: 1040px;
+        margin: 0 auto;
+    }
+    .welcome-hero {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        border-radius: 16px;
+        color: #F8FAFC;
+        padding: 2.2rem;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15);
+    }
+    .welcome-card {
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-radius: 14px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .welcome-card:hover {
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.07);
+    }
+    .btn-action-primary {
+        min-height: 56px;
+        font-size: 1.15rem;
+        font-weight: 700;
+        border-radius: 12px;
+        letter-spacing: 0.5px;
+    }
+    .metric-value-huge {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 2.2rem;
+        font-weight: 800;
+        line-height: 1;
+        color: #0F172A;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<main class="welcome-container py-3">
+    <!-- Hero Banner de Boas-Vindas Contextual -->
+    <div class="welcome-hero mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-2">
+                    <span class="badge bg-warning text-dark fw-bold px-3 py-1.5 fs-6">
+                        <i class="bi bi-clock-history me-1"></i> {{ hoje|date:"l, d/m/Y"|capfirst }}
+                    </span>
+                    <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-3 py-1.5 fw-bold">
+                        {{ turma_display }}
+                    </span>
+                    {% if is_ajuste %}
+                        <span class="badge bg-danger fs-6 px-3 py-1.5">
+                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Troca Excepcional
+                        </span>
+                    {% endif %}
+                </div>
+                <h1 class="display-6 fw-bold mb-1 text-white">
+                    {{ saudacao }}, {{ nome_operador }}!
+                </h1>
+                <p class="text-slate-300 fs-6 mb-0">
+                    Seu papel hoje: <strong class="text-warning">{{ papel_usuario }}</strong>
+                    {% if motivo_ajuste %}&bull; <span class="text-warning-emphasis"><em>{{ motivo_ajuste }}</em></span>{% endif %}
+                </p>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <a href="{% url 'bladder:operador' %}" class="btn btn-warning btn-action-primary px-4 text-dark shadow-sm d-flex align-items-center gap-2">
+                    <i class="bi bi-arrow-right-circle-fill fs-5"></i> IR PARA O TURNO
+                </a>
+                {% if is_lider %}
+                    <a href="{% url 'bladder:dashboard' %}" class="btn btn-outline-light btn-action-primary px-4 d-flex align-items-center gap-2">
+                        <i class="bi bi-speedometer2"></i> GESTÃO / DASHBOARD
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Linha 1: Métricas Principais do Turno -->
+    <div class="row g-3 mb-4">
+        <!-- Card 1: Ordens de Produção -->
+        <div class="col-12 col-md-4">
+            <div class="welcome-card p-3 p-md-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-secondary fw-bold small text-uppercase">Ordens de Produção</span>
+                    <span class="badge bg-primary-subtle text-primary border border-primary px-2.5 py-1">Hoje</span>
+                </div>
+                <div class="metric-value-huge mb-1">{{ total_ops }}</div>
+                <div class="small text-secondary mb-3">
+                    Meta programada: <strong>{{ total_planejado }} unidades</strong>
+                </div>
+                <div class="progress" style="height: 10px;" role="progressbar" aria-valuenow="{{ progresso_pct }}" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar bg-success progress-bar-striped" style="width: {{ progresso_pct }}%;"></div>
+                </div>
+                <div class="d-flex justify-content-between text-muted small mt-1">
+                    <span>Realizado: {{ total_realizado }} un</span>
+                    <span>{{ progresso_pct }}%</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 2: Manuseios Recebidos do Turno Anterior -->
+        <div class="col-12 col-md-4">
+            <div class="welcome-card p-3 p-md-4 h-100 {% if total_manuseios_recebidos > 0 %}border-warning bg-warning bg-opacity-10{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-secondary fw-bold small text-uppercase">Manuseios Recebidos</span>
+                    <span class="badge {% if total_manuseios_recebidos > 0 %}bg-warning text-dark{% else %}bg-secondary{% endif %} px-2.5 py-1">
+                        Turno Anterior
+                    </span>
+                </div>
+                <div class="metric-value-huge mb-1 {% if total_manuseios_recebidos > 0 %}text-warning-emphasis{% endif %}">
+                    {{ total_manuseios_recebidos }}
+                </div>
+                {% if total_manuseios_recebidos > 0 %}
+                    <p class="small text-dark mb-0 fw-semibold">
+                        <i class="bi bi-exclamation-circle-fill text-warning me-1"></i>
+                        Existem tarugos aguardando continuidade e conclusão neste turno!
+                    </p>
+                {% else %}
+                    <p class="small text-muted mb-0">
+                        <i class="bi bi-check-circle-fill text-success me-1"></i>
+                        Nenhum manuseio pendente transferido pela equipe anterior.
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Card 3: Recados e Passagem de Turno -->
+        <div class="col-12 col-md-4">
+            <div class="welcome-card p-3 p-md-4 h-100 {% if recados_urgentes > 0 %}border-danger bg-danger bg-opacity-10{% endif %}">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="text-secondary fw-bold small text-uppercase">Recados da Passagem</span>
+                    <span class="badge {% if recados_urgentes > 0 %}bg-danger{% else %}bg-info text-dark{% endif %} px-2.5 py-1">
+                        {{ total_recados }} ativo(s)
+                    </span>
+                </div>
+                <div class="metric-value-huge mb-1 {% if recados_urgentes > 0 %}text-danger{% endif %}">
+                    {{ recados_urgentes }}
+                </div>
+                <p class="small {% if recados_urgentes > 0 %}text-danger fw-bold{% else %}text-muted{% endif %} mb-0">
+                    {% if recados_urgentes > 0 %}
+                        <i class="bi bi-exclamation-octagon-fill me-1"></i>
+                        Atenção: {{ recados_urgentes }} recado(s) urgente(s) deixado(s) para este turno!
+                    {% else %}
+                        <i class="bi bi-chat-text me-1"></i>
+                        Nenhum recado urgente registrado para hoje.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Linha 2: Detalhes das OPs e Alertas de Estoque -->
+    <div class="row g-3 mb-4">
+        <!-- OPs Programadas do Dia -->
+        <div class="col-12 col-lg-7">
+            <div class="welcome-card p-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2 class="h5 fw-bold mb-0 text-slate-900 d-flex align-items-center gap-2">
+                        <i class="bi bi-list-check text-primary"></i> Programação de OPs para Hoje
+                    </h2>
+                    <a href="{% url 'bladder:operador' %}" class="small text-decoration-none fw-bold">Ver Todas &rarr;</a>
+                </div>
+
+                {% if ordens %}
+                    <div class="list-group list-group-flush">
+                        {% for op in ordens %}
+                            <div class="list-group-item px-0 py-2.5 d-flex justify-content-between align-items-center border-bottom">
+                                <div>
+                                    <strong class="text-dark">{{ op.numero_ordem_curto }}</strong>
+                                    <span class="badge bg-light text-dark border ms-1">{{ op.processo.nome }}</span>
+                                    <div class="small text-secondary">
+                                        {{ op.produto.codigo_com_medida|default:"Sem produto vinculado" }}
+                                    </div>
+                                </div>
+                                <div class="text-end">
+                                    <div class="fw-bold fs-6 text-dark font-monospace">{{ op.quantidade_realizada }}/{{ op.quantidade_planejada }} un</div>
+                                    <span class="badge {% if op.status == 'CONCLUIDA' %}bg-success{% elif op.status == 'EM_EXECUCAO' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                                        {{ op.get_status_display }}
+                                    </span>
+                                </div>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-calendar-x fs-2 d-block mb-2"></i>
+                        Nenhuma Ordem de Produção programada para hoje até o momento.
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Situação Semafórica do Estoque Acabado -->
+        <div class="col-12 col-lg-5">
+            <div class="welcome-card p-4 h-100">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h2 class="h5 fw-bold mb-0 text-slate-900 d-flex align-items-center gap-2">
+                        <i class="bi bi-boxes text-warning"></i> Alerta de Estoque
+                    </h2>
+                    <span class="badge bg-light text-dark border">Bladders Acabados</span>
+                </div>
+
+                {% if produtos_criticos or produtos_atencao %}
+                    <p class="small text-secondary mb-3">Modelos com saldo físico próximo ou abaixo do estoque mínimo:</p>
+                    <div class="list-group list-group-flush">
+                        {% for p in produtos_criticos %}
+                            <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center border-bottom">
+                                <div>
+                                    <strong class="text-danger">{{ p.codigo_com_medida }}</strong>
+                                    <div class="small text-muted">Mínimo: {{ p.estoque_minimo }} un</div>
+                                </div>
+                                <span class="badge bg-danger fs-6 font-monospace">{{ p.estoque_atual }} un</span>
+                            </div>
+                        {% endfor %}
+                        {% for p in produtos_atencao %}
+                            <div class="list-group-item px-0 py-2 d-flex justify-content-between align-items-center border-bottom">
+                                <div>
+                                    <strong class="text-dark">{{ p.codigo_com_medida }}</strong>
+                                    <div class="small text-muted">Mínimo: {{ p.estoque_minimo }} un</div>
+                                </div>
+                                <span class="badge bg-warning text-dark fs-6 font-monospace">{{ p.estoque_atual }} un</span>
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="text-center py-4 text-muted">
+                        <i class="bi bi-shield-check text-success fs-2 d-block mb-2"></i>
+                        <p class="mb-0 fw-semibold text-success">Estoque Normal</p>
+                        <small>Todos os modelos cadastrados estão com saldo superior ao limite de atenção.</small>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Botão de Ação Inferior Amplo -->
+    <div class="text-center mt-4">
+        <a href="{% url 'bladder:operador' %}" class="btn btn-warning btn-action-primary text-dark fw-bold px-5 py-3 shadow">
+            <i class="bi bi-play-circle-fill me-2 fs-5"></i> COMEÇAR O TURNO OPERACIONAL
+        </a>
+    </div>
+</main>
+{% endblock %}

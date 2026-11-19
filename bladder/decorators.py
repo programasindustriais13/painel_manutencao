@@ -55,17 +55,29 @@ def user_is_operador_regular_bladder(user):
     return False
 
 
+def user_is_noturno_bladder(user):
+    """
+    Retorna True estritamente para o usuário dedicado do Turno Noturno Bladder.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    return user.username == 'noturno_bladder' or user.groups.filter(name='Turno Noturno Bladder').exists()
+
+
 def user_is_operador_bladder(user):
     """
     Retorna True se o usuário possuir qualquer permissão de operação no Setor de Bladder:
     - Superusuário (exceção administrativa);
     - Líder Bladder;
     - Operador Regular ativo (com turma A ou B);
-    - Funcionário de Apoio operacional ativo.
+    - Funcionário de Apoio operacional ativo;
+    - Usuário dedicado da Estação Noturna (noturno_bladder).
     """
     if not user or not user.is_authenticated:
         return False
     if user.is_superuser:
+        return True
+    if user_is_noturno_bladder(user):
         return True
     if user_is_lider_bladder(user):
         return True

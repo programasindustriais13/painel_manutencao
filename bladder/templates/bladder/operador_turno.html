@@ -103,7 +103,7 @@
         <div>
             <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
                 <span class="badge bg-warning text-dark fw-bold fs-6 px-3 py-1.5">
-                    <i class="bi bi-person-workspace me-1"></i> AMBIENTE TURNO
+                    <i class="bi bi-person-workspace me-1"></i> CHÃO DE FÁBRICA &bull; AMBIENTE TURNO
                 </span>
                 <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-3 py-1.5">
                     {{ turma_hoje_display }}
@@ -146,13 +146,16 @@
             <button type="button" class="btn btn-warning fw-bold d-flex align-items-center gap-2 touch-header-btn" onclick="abrirModalRecadoGeral()" title="Deixar recado para a próxima equipe">
                 <i class="bi bi-chat-square-text-fill"></i> + Deixar Recado
             </button>
+            <button type="button" class="btn btn-outline-dark fw-bold d-flex align-items-center gap-2 touch-header-btn" data-bs-toggle="modal" data-bs-target="#modalIniciarNoturno" title="Ativar Estação Noturna de Retiradas para Vulcanização">
+                <i class="bi bi-moon-stars-fill text-warning"></i> Período Noturno
+            </button>
             {% if fechamento_hoje %}
                 <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-success fw-bold d-flex align-items-center gap-2 touch-header-btn" title="Turno já encerrado. Clique para revisar">
                     <i class="bi bi-check2-all"></i> Turno Fechado
                 </a>
             {% else %}
                 <a href="{% url 'bladder:fechamento_turno' %}" class="btn btn-danger fw-bold d-flex align-items-center gap-2 touch-header-btn" title="Encerrar o turno e apontar produção">
-                    <i class="bi bi-door-closed-fill"></i> Fechar Turno
+                    <i class="bi bi-door-closed-fill"></i> FECHAR TURNO
                 </a>
             {% endif %}
         </div>
@@ -198,10 +201,13 @@
     <!-- ABA 1: RECADOS RECEBIDOS                                         -->
     <!-- ================================================================= -->
     <div class="tab-pane fade {% if recados_urgentes > 0 %}show active{% elif not ordens and total_recados > 0 %}show active{% endif %}" id="tab-recados" role="tabpanel" aria-labelledby="tab-recados-btn">
-        <div class="glass-card mb-4 p-3 p-md-4">
+        <div class="glass-card mb-4 p-3 p-md-4" id="collapseRecadosTurno">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-20">
                 <div class="d-flex flex-wrap align-items-center gap-2">
-                    <h2 class="h5 fw-bold mb-0">Comunicações e Passagem da Equipe Anterior</h2>
+                    <span class="badge bg-warning text-dark fs-6 px-3 py-1.5 fw-bold">
+                        <i class="bi bi-arrow-left-right me-1"></i> PASSAGEM DO TURNO ANTERIOR
+                    </span>
+                    <h2 class="h5 fw-bold mb-0">Comunicações da Equipe Anterior</h2>
                     {% if recados_pendentes_ciencia > 0 %}
                         <span class="badge bg-warning text-dark">
                             {{ recados_pendentes_ciencia }} aguardando confirmação de ciência
@@ -335,14 +341,72 @@
     <!-- ================================================================= -->
     <div class="tab-pane fade {% if recados_urgentes == 0 and ordens or recados_urgentes == 0 and not ordens and total_recados == 0 %}show active{% endif %}" id="tab-atividades" role="tabpanel" aria-labelledby="tab-atividades-btn">
 
+        {% if manuseios_recebidos %}
+        <!-- SEÇÃO: MANUSEIOS RECEBIDOS DO TURNO ANTERIOR (ENTREGA A) -->
+        <section class="glass-card mb-4 border border-warning shadow-sm" style="background: #FFFBEB;">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <h2 class="h5 text-warning-emphasis fw-bold mb-0 d-flex align-items-center gap-2">
+                    <i class="bi bi-arrow-down-left-square-fill text-warning"></i> MANUSEIOS RECEBIDOS DO TURNO ANTERIOR
+                </h2>
+                <span class="badge bg-warning text-dark fw-bold px-3 py-1.5 fs-6">{{ manuseios_recebidos|length }} lote(s) transferido(s)</span>
+            </div>
+            <p class="small text-secondary mb-3">Tarugos transferidos pela equipe anterior para conferência e conclusão neste turno operacional.</p>
+            {% for trans in manuseios_recebidos %}
+            <div class="border rounded-3 p-3 mb-2 bg-white d-flex flex-wrap gap-3 align-items-center justify-content-between shadow-sm">
+                <div>
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <strong class="fs-6 text-dark">{{ trans.extrusao.ordem.numero_ordem_curto }} &bull; {{ trans.extrusao.ordem.produto.codigo_com_medida|default:trans.extrusao.ordem.produto.codigo }}</strong>
+                        <span class="badge bg-primary-subtle text-primary border border-primary px-2 py-0.5">Extrusão #{{ trans.extrusao.pk }}</span>
+                        {% if trans.status == 'RETOMADO' %}
+                            <span class="badge bg-info text-dark">Em Retomada</span>
+                        {% else %}
+                            <span class="badge bg-warning text-dark">Encaminhado</span>
+                        {% endif %}
+                    </div>
+                    <div class="small text-secondary">
+                        Origem: <strong>{{ trans.get_turma_origem_display }}</strong> ({{ trans.operador_transferiu.get_full_name|default:trans.operador_transferiu.username }}) em {{ trans.data_turno_origem|date:'d/m/Y' }} &bull;
+                        Total extrusado: <strong>{{ trans.quantidade_extrusada }} un</strong> &bull;
+                        Já manuseado: <strong>{{ trans.quantidade_acumulada_manuseada }} un</strong> &bull;
+                        Restante a manusear: <strong class="text-danger fw-bold fs-6">{{ trans.quantidade_restante }} un</strong>
+                    </div>
+                    {% if trans.observacoes %}<div class="small text-muted mt-1 fst-italic"><i class="bi bi-info-circle me-1"></i>{{ trans.observacoes }}</div>{% endif %}
+                </div>
+                <div>
+                    {% if not fechamento_hoje %}
+                        <a class="btn btn-warning touch-btn fw-bold d-flex align-items-center gap-2 px-3 shadow-sm" href="{% url 'bladder:manuseio_registrar' trans.extrusao.pk %}">
+                            <i class="bi bi-play-circle-fill"></i> RETOMAR MANUSEIO
+                        </a>
+                    {% else %}
+                        <span class="text-muted small">Turno já encerrado</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </section>
+        {% endif %}
+
         {% if manuseios_pendentes %}
         <section class="glass-card mb-4">
-            <h2 class="h5">Manuseios de Tarugo pendentes</h2>
-            <p class="small text-secondary">Etapas liberadas por extrusões efetivamente registradas. A execução permanece pendente até salvar o manuseio.</p>
+            <h2 class="h5 fw-bold mb-1">Manuseios de Tarugo do Turno Atual</h2>
+            <p class="small text-secondary mb-3">Etapas liberadas por extrusões efetivamente registradas. A execução permanece pendente até o manuseio ser concluído.</p>
             {% for fonte in manuseios_pendentes %}
-            <div class="border rounded p-3 mb-2 d-flex flex-wrap gap-3 align-items-center justify-content-between">
-                <div><strong>{{ fonte.ordem.numero_ordem_curto }} — {{ fonte.produto_registrado.codigo_com_medida }}</strong><br>Extrusão #{{ fonte.pk }}: {{ fonte.quantidade_realizada }} tarugos · {{ fonte.data_turno|date:'d/m/Y' }} · {{ fonte.operador }}</div>
-                {% if not fechamento_hoje %}<a class="btn btn-success touch-btn fw-bold" href="{% url 'bladder:manuseio_registrar' fonte.pk %}">REGISTRAR MANUSEIO</a>{% else %}<span>Disponível no próximo turno autorizado.</span>{% endif %}
+            <div class="border rounded p-3 mb-2 d-flex flex-wrap gap-3 align-items-center justify-content-between bg-white shadow-sm">
+                <div>
+                    <strong>{{ fonte.ordem.numero_ordem_curto }} — {{ fonte.produto_registrado.codigo_com_medida }}</strong>
+                    {% if fonte.manuseio and fonte.manuseio.status_manuseio == 'PARCIAL' %}
+                        <span class="badge bg-warning text-dark ms-2">PARCIAL ({{ fonte.manuseio.quantidade_manuseada }}/{{ fonte.quantidade_realizada }} un)</span>
+                    {% else %}
+                        <span class="badge bg-secondary ms-2">PENDENTE</span>
+                    {% endif %}
+                    <br><small class="text-secondary">Extrusão #{{ fonte.pk }}: {{ fonte.quantidade_realizada }} tarugos · {{ fonte.data_turno|date:'d/m/Y' }} · {{ fonte.operador.get_full_name|default:fonte.operador.username }}</small>
+                </div>
+                {% if not fechamento_hoje %}
+                    <a class="btn {% if fonte.manuseio and fonte.manuseio.status_manuseio == 'PARCIAL' %}btn-warning{% else %}btn-success{% endif %} touch-btn fw-bold" href="{% url 'bladder:manuseio_registrar' fonte.pk %}">
+                        {% if fonte.manuseio and fonte.manuseio.status_manuseio == 'PARCIAL' %}CONTINUAR MANUSEIO{% else %}REGISTRAR MANUSEIO{% endif %}
+                    </a>
+                {% else %}
+                    <span class="text-muted small">Disponível no próximo turno autorizado.</span>
+                {% endif %}
             </div>
             {% endfor %}
         </section>
@@ -603,7 +667,7 @@
                                         <!-- 5. FERRAMENTAL E OBSERVAÇÕES -->
                                         <div class="mb-2">
                                             <h6 class="fw-bold text-warning border-bottom pb-2 mb-3 d-flex align-items-center gap-2">
-                                                <i class="bi bi-tools"></i> 5. Ferramental e Instruções
+                                                <i class="bi bi-tools"></i> 5. Instruções Especiais e Ferramental
                                             </h6>
                                             {% if op.recursos_observacoes %}
                                                 <div class="p-2.5 rounded bg-light border mb-2 small">
@@ -914,6 +978,39 @@
 
 <!-- Inclusão dos Modais de Passagem de Turno (Criar, Resolver, Repassar, Editar) -->
 {% include "bladder/includes/modal_mensagem_turno.html" %}
+
+<!-- Modal Iniciar Período Noturno -->
+<div class="modal fade" id="modalIniciarNoturno" tabindex="-1" aria-labelledby="modalIniciarNoturnoLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content shadow">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title d-flex align-items-center gap-2" id="modalIniciarNoturnoLabel">
+                    <i class="bi bi-moon-stars-fill text-warning"></i> Iniciar Período Noturno
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <div class="modal-body p-4">
+                <p class="fs-6 mb-3">Ao confirmar, o tablet entrará na <strong>Estação Noturna de Retiradas</strong> para uso exclusivo da equipe de Vulcanização.</p>
+                <div class="alert alert-warning small d-flex gap-2 mb-3">
+                    <i class="bi bi-shield-lock-fill fs-5 flex-shrink-0 text-warning"></i>
+                    <div>
+                        <strong>Sessão Protegida:</strong> A sessão atual será encerrada com segurança e o terminal ficará restrito à interface de retiradas de bladders com leitor USB (sem timeout de 5 minutos).
+                    </div>
+                </div>
+                <p class="text-secondary small mb-0">Para retomar no dia seguinte, o operador diurno deverá realizar login com suas credenciais.</p>
+            </div>
+            <div class="modal-footer bg-light border-top">
+                <button type="button" class="btn btn-outline-secondary touch-btn px-3" data-bs-dismiss="modal">Cancelar</button>
+                <form method="POST" action="{% url 'bladder:estacao_noturna_ativar' %}" class="d-inline m-0">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-warning fw-bold touch-btn px-4 shadow-sm">
+                        <i class="bi bi-check-circle-fill me-1"></i> SIM, ATIVAR ESTAÇÃO NOTURNA
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block extra_js %}<script>if(new URLSearchParams(location.search).has("producao") && window.bootstrap){bootstrap.Tab.getOrCreateInstance(document.getElementById("tab-atividades-btn")).show();const card=document.getElementById(location.hash.slice(1));if(card) card.scrollIntoView({block:"center"});}</script>{% endblock %}

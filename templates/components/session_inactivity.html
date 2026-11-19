@@ -1,4 +1,4 @@
-{% if user.is_authenticated and not is_tv_session and user.username != 'tv' and user.username != 'tv_matrizaria' %}
+{% if user.is_authenticated and not is_tv_session and user.username != 'tv' and user.username != 'tv_matrizaria' and user.username != 'noturno_bladder' and not is_night_shift_session and not request.session.is_night_shift_session and not is_noturno %}
 <!-- Componente Compartilhado de Inatividade de Sessão Humana -->
 <div class="modal fade" id="inactivityWarningModal" tabindex="-1" aria-labelledby="inactivityModalLabel" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false" style="z-index: 9999;">
     <div class="modal-dialog modal-dialog-centered">

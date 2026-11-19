@@ -19,6 +19,14 @@
 {% if codigo == '01' or codigo == '02' %}<p class="alert alert-info mt-3 mb-0">Uma unidade por registro. Digite o tempo, a pressão e a temperatura medidos para este Bladder.</p>{% endif %}
 {% if codigo == '05' %}<p class="alert alert-info mt-3 mb-0">Registro de parâmetros e qualidade. Quantidade não apurada: a quantidade por apontamento de anéis ainda depende de definição.</p>{% endif %}
 {% if extrusao %}<p class="alert alert-info mt-3 mb-0">Execução de extrusão #{{ extrusao.pk }} — {{ extrusao.quantidade_realizada }} tarugos, {{ extrusao.data_hora_fim|date:'d/m/Y H:i' }}. Amostragem: {{ numero_amostras }} (10%, arredondado para cima). O manuseio não acrescenta produção à OP.</p>{% endif %}
+{% if manuseio_existente %}
+<div class="alert alert-warning d-flex align-items-center gap-2 mt-3 mb-0">
+    <i class="bi bi-arrow-repeat fs-4 flex-shrink-0 text-warning"></i>
+    <div>
+        <strong>Retomada de Manuseio Parcial:</strong> Já foram manuseados <strong>{{ manuseio_existente.quantidade_manuseada }}</strong> de <strong>{{ extrusao.quantidade_realizada }}</strong> tarugos. Insira as amostras complementares e o volume restante até a conclusão.
+    </div>
+</div>
+{% endif %}
 </div>
 <form method="post" id="form-producao" class="glass-card">
 {% csrf_token %}{{ form.non_field_errors }}
@@ -38,7 +46,22 @@
 {% endif %}
 <div class="mt-3"><label for="{{ form.observacoes.id_for_label }}" class="form-label">{{ form.observacoes.label }}</label>{{ form.observacoes }}{{ form.observacoes.errors }}</div>
 <p class="small text-secondary mt-3">Valores efetivamente medidos. Para pressão, velocidades e temperaturas, utilize a unidade operacional habitual; não há unidade definida no cadastro. Parâmetros da Ficha Técnica são apenas referência.</p>
+{% if codigo == '06' and not is_correcao %}
+<div class="row g-3 mt-2">
+    <div class="col-12 col-md-6">
+        <button class="btn btn-warning btn-lg w-100 fw-bold d-flex align-items-center justify-content-center gap-2" type="submit" name="acao" value="salvar_parcial" id="btn-salvar-parcial">
+            <i class="bi bi-save2"></i> SALVAR PARCIAL
+        </button>
+    </div>
+    <div class="col-12 col-md-6">
+        <button class="btn btn-success btn-lg w-100 fw-bold d-flex align-items-center justify-content-center gap-2" type="submit" name="acao" value="concluir" id="btn-concluir-manuseio">
+            <i class="bi bi-check-circle-fill"></i> CONCLUIR MANUSEIO
+        </button>
+    </div>
+</div>
+{% else %}
 <button class="btn btn-success btn-lg w-100 mt-3 fw-bold" type="submit" id="salvar-producao">{% if is_correcao %}SALVAR CORREÇÃO{% else %}SALVAR REGISTRO{% endif %}</button>
+{% endif %}
 </form>
 </main>
 {% endblock %}
@@ -46,9 +69,26 @@
 <script>
 (() => {
  const form = document.getElementById('form-producao');
- form.addEventListener('submit', () => {const btn=document.getElementById('salvar-producao');btn.disabled=true;btn.textContent='Salvando…';});
- window.addEventListener('pageshow',()=>{document.getElementById('salvar-producao').disabled=false;});
- function atualizar(){for(const campo of ['diametro','comprimento','peso']){const inputs=[...form.querySelectorAll(`input[name^="amostras-"][name$="-${campo}"]`)];const valores=inputs.map(i=>Number(i.value.replace(',','.')));const completa=inputs.length && inputs.every((i,j)=>i.value.trim() && Number.isFinite(valores[j]) && valores[j]>0);const target=document.getElementById('media-'+campo);if(target) target.textContent=completa?(valores.reduce((a,b)=>a+b,0)/valores.length).toLocaleString('pt-BR',{minimumFractionDigits:campo==='peso'?3:2,maximumFractionDigits:campo==='peso'?3:2}):'—';}}
+ form.addEventListener('submit', (e) => {
+   const botoes = form.querySelectorAll('button[type="submit"]');
+   botoes.forEach(b => { b.disabled = true; });
+   const clickedBtn = e.submitter;
+   if(clickedBtn) { clickedBtn.textContent = 'Salvando…'; }
+ });
+ window.addEventListener('pageshow',()=>{
+   const botoes = form.querySelectorAll('button[type="submit"]');
+   botoes.forEach(b => { b.disabled = false; });
+ });
+ function atualizar(){
+   for(const campo of ['diametro','comprimento','peso']){
+     const inputs=[...form.querySelectorAll(`input[name^="amostras-"][name$="-${campo}"]`)];
+     const valores=inputs.map(i=>Number(i.value.replace(',','.'))).filter(v => Number.isFinite(v) && v > 0);
+     const target=document.getElementById('media-'+campo);
+     if(target) {
+       target.textContent=valores.length > 0 ? (valores.reduce((a,b)=>a+b,0)/valores.length).toLocaleString('pt-BR',{minimumFractionDigits:campo==='peso'?3:2,maximumFractionDigits:campo==='peso'?3:2}):'—';
+     }
+   }
+ }
  form.addEventListener('input',atualizar);atualizar();
 })();
 </script>

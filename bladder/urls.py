@@ -5,6 +5,11 @@ app_name = "bladder"
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
+    path("bem-vindo/", views.boas_vindas_view, name="boas_vindas"),
+    path("noturno/", views.estacao_noturna_view, name="estacao_noturna"),
+    path("noturno/ativar/", views.estacao_noturna_ativar, name="estacao_noturna_ativar"),
+    path("noturno/retirar/", views.estacao_noturna_retirar, name="estacao_noturna_retirar"),
+    path("noturno/encerrar/", views.estacao_noturna_encerrar, name="estacao_noturna_encerrar"),
     path("acompanhar/exportar-excel/", views.acompanhamento_exportar_excel, name="acompanhamento_exportar_excel"),
     path("operador/", views.operador_turno, name="operador"),
     path("operador/producao/<int:pk>/registrar/", views_producao.registrar, name="producao_registrar"),

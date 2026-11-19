@@ -1250,6 +1250,23 @@ class ApontamentoTurnoBladder(models.Model):
     media_comprimento = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     media_peso = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
 
+    quantidade_manuseada = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Quantidade Manuseada (un)",
+        help_text="Quantidade de tarugos efetivamente manuseados nesta etapa"
+    )
+    status_manuseio = models.CharField(
+        max_length=20,
+        choices=[
+            ('PENDENTE', 'Pendente'),
+            ('PARCIAL', 'Manuseio Parcial'),
+            ('CONCLUIDO', 'Manuseio Concluído'),
+        ],
+        default='PENDENTE',
+        db_index=True,
+        verbose_name="Status do Manuseio"
+    )
+
     TURMA_CHOICES = [
         ('TURMA_A', 'Turma A'),
         ('TURMA_B', 'Turma B'),
@@ -1902,4 +1919,127 @@ class EnvioWhatsAppBladder(models.Model):
 
     def __str__(self):
         return f'{self.get_tipo_display()} {self.data_referencia}: {self.get_status_display()}'
+
+
+class TransferenciaManuseioBladder(models.Model):
+    """
+    Rastreabilidade e auditoria da transferência de manuseios de tarugos
+    incompletos (parciais ou pendentes) entre turnos de produção.
+    """
+    TURMA_CHOICES = [
+        ('TURMA_A', 'Turma A'),
+        ('TURMA_B', 'Turma B'),
+    ]
+    STATUS_CHOICES = [
+        ('ENCAMINHADO', 'Encaminhado ao Próximo Turno'),
+        ('RETOMADO', 'Retomado pela Equipe de Destino'),
+        ('CONCLUIDO', 'Concluído no Destino'),
+        ('CANCELADO', 'Cancelado pela Liderança'),
+    ]
+
+    extrusao = models.ForeignKey(
+        'ApontamentoTurnoBladder',
+        on_delete=models.PROTECT,
+        related_name='transferencias_manuseio',
+        verbose_name="Execução de Extrusão de Origem"
+    )
+    apontamento_manuseio = models.ForeignKey(
+        'ApontamentoTurnoBladder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='transferencias_origem',
+        verbose_name="Apontamento de Manuseio Parcial Vinculado"
+    )
+    fechamento_origem = models.ForeignKey(
+        'FechamentoTurnoBladder',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='manuseios_transferidos',
+        verbose_name="Fechamento de Origem"
+    )
+    turma_origem = models.CharField(max_length=10, choices=TURMA_CHOICES, verbose_name="Turma de Origem")
+    turma_destino = models.CharField(max_length=10, choices=TURMA_CHOICES, verbose_name="Turma de Destino")
+    data_turno_origem = models.DateField(db_index=True, verbose_name="Data do Turno de Origem")
+    data_turno_destino = models.DateField(db_index=True, verbose_name="Data do Turno de Destino")
+
+    operador_transferiu = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='manuseios_transferidos_enviados',
+        verbose_name="Operador que Transferiu"
+    )
+    quantidade_extrusada = models.PositiveIntegerField(verbose_name="Quantidade Total Extrusada")
+    quantidade_acumulada_manuseada = models.PositiveIntegerField(default=0, verbose_name="Qtd Já Manuseada")
+    quantidade_restante = models.PositiveIntegerField(verbose_name="Qtd Restante a Manusear")
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='ENCAMINHADO',
+        db_index=True,
+        verbose_name="Status da Transferência"
+    )
+    operador_retomou = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='manuseios_transferidos_retomados',
+        verbose_name="Operador que Retomou"
+    )
+    data_retomada = models.DateTimeField(null=True, blank=True, verbose_name="Data/Hora da Retomada")
+    observacoes = models.TextField(blank=True, null=True, verbose_name="Observações do Encaminhamento")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Transferência de Manuseio entre Turnos"
+        verbose_name_plural = "Transferências de Manuseios entre Turnos"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Transferência Extrusão #{self.extrusao_id}: {self.turma_origem} -> {self.turma_destino} ({self.quantidade_restante} un restantes)"
+
+
+class SessaoNoturnaBladder(models.Model):
+    """
+    Auditoria e rastreamento de cada sessão de Estação Noturna de Retiradas.
+    Permite auditar quem ativou, o período de vigência e o operador diurno que assumiu o posto.
+    """
+    STATUS_CHOICES = [
+        ('ATIVA', 'Estação Noturna Ativa'),
+        ('ENCERRADA', 'Encerrada pelo Turno Diurno'),
+        ('EXPIRADA', 'Expirada Automaticamente por Teto'),
+    ]
+
+    operador_ativou = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name='sessoes_noturnas_ativadas',
+        verbose_name="Operador Diurno que Ativou"
+    )
+    data_hora_inicio = models.DateTimeField(default=timezone.now, verbose_name="Início da Sessão Noturna")
+    data_hora_fim = models.DateTimeField(null=True, blank=True, verbose_name="Término da Sessão Noturna")
+    operador_encerrou = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sessoes_noturnas_encerradas',
+        verbose_name="Operador Diurno que Encerrou"
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='ATIVA', db_index=True)
+    observacoes = models.TextField(blank=True, null=True, verbose_name="Observações")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Sessão Noturna de Retiradas"
+        verbose_name_plural = "Sessões Noturnas de Retiradas"
+        ordering = ['-data_hora_inicio']
+
+    def __str__(self):
+        return f"Sessão Noturna #{self.id} em {self.data_hora_inicio.strftime('%d/%m/%Y %H:%M')} [{self.get_status_display()}]"
+
 

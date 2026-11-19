@@ -4935,3 +4935,92 @@ AUTOMAÇÃO DAS DR.114 E DR.115 — PRODUÇÃO BLADDER (17/11/2026)
 - SPEC: regras_programacao/SPEC_AUTOMACAO_DR114_DR115_BLADDER.md. Testes com Google
   simulado e bancos temporários; nenhum envio real, instalação de tarefa ou migrate
   operacional é executado durante o desenvolvimento desta melhoria.
+
+
+EVOLUÇÃO OPERACIONAL DE TURNOS, MODO NOTURNO E MANUSEIO NO BLADDER (18/11/2026)
+--------------------------------------------------------------------------------
+- Entrega A (Manuseio Parcial e Transferência Seletiva entre Turnos):
+  * No processo 06 (Manuseio de Tarugos), operador pode salvar parcialmente a
+    quantidade manuseada ('SALVAR PARCIAL') com medições de amostras proporcionais
+    ao volume manuseado (mínimo ceil(qtd/10)).
+  * A extrusão de origem (código 03) reflete quantidade_manuseada acumulada e
+    status_manuseio='PARCIAL'. Não cria nova OP nem incrementa produção realizada.
+  * No fechamento de turno (/bladder/operador/fechar-turno/), seção dedicada lista
+    todos os manuseios incompletos do dia (pendentes ou parciais).
+  * Checkbox/switch de encaminhamento obrigatório: fechamento é bloqueado caso haja
+    manuseios incompletos sem encaminhamento selecionado.
+  * Fechamento cria registro auditável em TransferenciaManuseioBladder (status
+    ENCAMINHADO, turma origem/destino, quantidades acumulada e restante).
+  * No quadro do próximo turno (/bladder/operador/), seção destacada "MANUSEIOS
+    RECEBIDOS DO TURNO ANTERIOR" permite "RETOMAR MANUSEIO", pré-carregando amostras
+    e dados anteriores até a conclusão formal (status CONCLUIDO).
+- Entrega B (Modo Noturno com Estação de Retirada USB):
+  * Conta de serviço dedicada 'noturno_bladder' ('Turno Noturno Bladder'), sem
+    privilégios de is_staff ou is_superuser, restrita estritamente a /bladder/noturno/.
+  * Ativação por operador diurno ou líder via modal no quadro operacional encerra a
+    sessão humana diurna com auditoria em SessaoNoturnaBladder (status ATIVA, timestamp).
+  * Middleware SessionExpiryByProfileMiddleware isenta a conta noturna do timeout
+    humano de 5 minutos, mas aplica teto máximo absoluto de segurança de 16 horas
+    (NIGHT_SHIFT_MAX_SECONDS), marcando auditoria como EXPIRADA e deslogando.
+  * Confinamento estrito de rotas: qualquer tentativa do usuário noturno de navegar
+    fora de /bladder/noturno/ ou /static/ é interceptada e redirecionada para a tela noturna.
+  * Tela noturna simplificada com apenas 3 campos operacionais: Modelo, Lote e Volume.
+  * Tratamento do leitor USB (emulação de teclado com Enter ao final): tecla Enter no
+    campo Lote move foco para Volume sem submeter precocemente o formulário.
+  * Preservação integral de zeros à esquerda no Lote (string tratada sem conversão numérica).
+  * Baixa atômica de estoque (MovimentacaoEstoqueBladder SAIDA): trava de concorrência com
+    select_for_update, validação de saldo físico positivo (20 -> 5 -> 15), exatamente uma
+    movimentação no ledger e enfileiramento assíncrono para planilha DR-201 com chave
+    de idempotência (UUID). Bloqueio contra saldo insuficiente e produtos inativos.
+  * Histórico de saídas da sessão visível em tempo real na tela noturna.
+  * Transição diurna: botão "INICIAR TURNO DIURNO" abre modal para autenticação com
+    usuário e senha diurnos. Credenciais inválidas mantêm a tela noturna segura sem deslogar.
+    Credenciais válidas encerram SessaoNoturnaBladder (status ENCERRADA, operador_encerrou),
+    logam o operador diurno, reativam timeout humano de 5 minutos e redirecionam para
+    a tela de boas-vindas (/bladder/bem-vindo/).
+- Entrega C (Tela de Boas-Vindas Contextual pós-login):
+  * Rota /bladder/bem-vindo/ exibe saudação contextual dinâmica baseada no horário de Brasília:
+    BOM DIA (05:00-11:59), BOA TARDE (12:00-17:59) e BOA NOITE (18:00-04:59).
+  * Exibe resumo consolidado do dia: OPs programadas, metas, progresso percentual,
+    manuseios recebidos transferidos, recados urgentes da passagem de turno e alerta
+    semafórico de bladders acabados em estoque (críticos e em atenção).
+  * Ação "IR PARA O TURNO" direciona para /bladder/operador/. Líder possui botão adicional
+    para o painel geral (/bladder/).
+  * Roteamento inteligente pós-login em home_redirect e portal_select: primeiro acesso
+    sem 'bladder_welcome_seen' direciona para boas-vindas; a view marca flag na sessão,
+    garantindo que F5 e navegações subsequentes vão direto ao ambiente operacional sem loop.
+  * Usuário noturno confinado não acessa boas-vindas. Outros módulos não são afetados.
+- Entrega D (Contraste WCAG AA e Refatoração no Fechamento de Turno):
+  * Eliminação total de containers escuros ('bg-black bg-opacity-*', 'table-dark') e textos
+    apagados no tema claro (theme-light).
+  * Cards brancos (#FFFFFF) com borda #CBD5E1 e textos contrastados (#0F172A, #1E293B, #334155),
+    garantindo razão de contraste > 10:1 (muito superior ao mínimo WCAG AA de 4.5:1).
+  * Bloco de déficit com fundo suave #FEF2F2, borda #F87171 e títulos contrastados (> 7:1).
+  * Botões de seleção de categorias e botões de toque com padrão industrial (touch-btn, min-height 48px).
+  * Responsividade rigorosa validada para larguras de 375px (mobile), 768px (tablet) e 1366px (desktop).
+- Modelagem e Migrações:
+  * Migration 0013_evolucao_operacional_turnos_bladder: adiciona quantidade_manuseada e
+    status_manuseio em ApontamentoTurnoBladder; cria modelos TransferenciaManuseioBladder
+    e SessaoNoturnaBladder no banco default. Zero alterações destrutivas, compatível com MySQL.
+- Suíte de Testes e Homologação:
+  * Suíte de testes automatizados da evolução operacional: bladder/tests_evolucao_operacional.py
+    (44/44 testes aprovados, cobrindo todos os cenários das seções 27, 28, 29 e Entrega D).
+  * Suíte completa do app bladder: 368/368 testes aprovados sem falhas e sem regressões.
+  * Suíte de regressão do módulo maintenance: 74/74 testes aprovados.
+  * Django system check: 0 issues. Makemigrations: No changes detected.
+- SPEC: regras_programacao/SPEC_EVOLUCAO_OPERACIONAL_TURNOS_BLADDER.md homologada e atualizada.
+
+CORREÇÃO — ISENÇÃO TOTAL DE INATIVIDADE NO FRONTEND E OCULTAÇÃO DA NAVBAR NO TURNO NOTURNO (19/11/2026)
+--------------------------------------------------------------------------------
+- O componente compartilhado templates/components/session_inactivity.html agora
+  avalia também 'user.username != noturno_bladder' e 'not is_night_shift_session',
+  impedindo que o modal de inatividade ("Aviso de Inatividade") e o timer JavaScript
+  de 300 segundos sejam injetados no navegador durante a Estação Noturna.
+- Em bladder/templates/bladder/base_bladder.html, a navbar superior (<nav class="bladder-navbar">),
+  o footer e o include de session_inactivity.html são formalmente ocultados quando
+  is_noturno=True ou a sessão for noturna, deixando a interface limpa e em tela cheia
+  conforme as Seções 8 e 12 da SPEC.
+- Endpoints api_session_status e api_session_keep_alive em maintenance/views.py
+  tratam a conta noturna como isenta sem expirar a sessão após 300s de inatividade.
+- Teste cenario_08 e cenario_08b em tests_evolucao_operacional.py validam a ausência
+  do modal, da navbar e a isenção de inatividade nos endpoints de sessão (44/44 testes OK).

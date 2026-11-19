@@ -4,6 +4,7 @@ from django.db import transaction
 from django.core.paginator import Paginator
 from django.db.models import Sum, Count, Q, Case, When, Value, IntegerField, Exists, OuterRef
 from django.contrib import messages
+from django.contrib.auth import authenticate
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import render, redirect, get_object_or_404
@@ -31,6 +32,8 @@ from .models import (
     MovimentacaoEstoqueBladder,
     HistoricoEdicaoMensagemTurnoBladder,
     ConfiguracaoWhatsAppBladder,
+    TransferenciaManuseioBladder,
+    SessaoNoturnaBladder,
 )
 from .forms import (
     OrdemProducaoBladderForm,
@@ -83,6 +86,10 @@ from .services import (
     concluir_atividade_operacional_turno,
     gerar_texto_resumo_estoque_whatsapp,
     enviar_resumo_whatsapp_estoque,
+    garantir_usuario_noturno,
+    ativar_estacao_noturna,
+    saida_estoque_noturna,
+    encerrar_estacao_noturna,
 )
 
 
@@ -453,6 +460,16 @@ def operador_turno(request):
     atividades_pendentes = [a for a in atividades_operacionais if a.status == 'PENDENTE']
     atividades_concluidas = [a for a in atividades_operacionais if a.status == 'CONCLUIDA']
 
+    # Manuseios recebidos do turno anterior
+    manuseios_recebidos = TransferenciaManuseioBladder.objects.filter(
+        data_turno_destino=hoje,
+        turma_destino=turma_hoje,
+        status__in=['ENCAMINHADO', 'RETOMADO']
+    ).select_related(
+        'extrusao__ordem__produto', 'extrusao__ordem__processo',
+        'operador_transferiu', 'apontamento_manuseio'
+    ).order_by('-created_at')
+
     # Histórico de recados resolvidos e passados
     recados_historico = MensagemPassagemTurnoBladder.objects.filter(
         Q(data_turno_destino=hoje, turma_destino=turma_hoje) |
@@ -491,6 +508,7 @@ def operador_turno(request):
         'form_atividade': form_atividade,
         'form_mov_estoque': form_mov_estoque,
         'manuseios_pendentes': etapas_pendentes,
+        'manuseios_recebidos': manuseios_recebidos,
         'registros_producao': registros_producao,
         'theme_class': 'theme-light',
         'is_operador_view': True,
@@ -512,6 +530,12 @@ def fechamento_turno(request):
     Inclui seção informativa de Passagem para o Próximo Turno.
     """
     hoje = timezone.localdate()
+    data_str = request.GET.get('data') or request.POST.get('data')
+    if data_str:
+        try:
+            hoje = datetime.datetime.strptime(data_str, '%Y-%m-%d').date()
+        except ValueError:
+            pass
     turma_hoje, _, _ = calcular_turma_do_dia(hoje)
     turma_hoje_display = "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje)
 
@@ -530,7 +554,41 @@ def fechamento_turno(request):
         'processo', 'processo__maquina', 'produto'
     ).order_by('numero_ordem')
 
+    if not ordens.exists():
+        post_op_ids = [k.replace('qtd_realizada_', '') for k in request.POST.keys() if k.startswith('qtd_realizada_') and k.replace('qtd_realizada_', '').isdigit()]
+        if post_op_ids:
+            ordens = OrdemProducaoBladder.objects.filter(id__in=post_op_ids).select_related('processo', 'processo__maquina', 'produto')
+            if ordens.exists():
+                hoje = ordens.first().data_programada
+                turma_hoje, _, _ = calcular_turma_do_dia(hoje)
+                turma_hoje_display = "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje)
+        elif OrdemProducaoBladder.objects.filter(status='PENDENTE').exists():
+            primeira_pendente = OrdemProducaoBladder.objects.filter(status='PENDENTE').order_by('-data_programada').first()
+            if primeira_pendente and primeira_pendente.data_programada != hoje:
+                hoje = primeira_pendente.data_programada
+                turma_hoje, _, _ = calcular_turma_do_dia(hoje)
+                turma_hoje_display = "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje)
+                ordens = OrdemProducaoBladder.objects.filter(data_programada=hoje).exclude(status='CANCELADA').select_related('processo', 'processo__maquina', 'produto').order_by('numero_ordem')
+
     ordens = ordens.annotate(tem_execucoes=Exists(ApontamentoTurnoBladder.objects.filter(ordem_id=OuterRef('pk'), origem='PROCESSO')))
+
+    # Extrusões do dia com manuseio incompleto ou pendente de encaminhamento
+    extrusoes_turno = ApontamentoTurnoBladder.objects.filter(
+        origem='PROCESSO', codigo_processo='03', quantidade_apurada=True,
+        quantidade_realizada__gt=0, data_turno=hoje
+    ).exclude(ordem__status='CANCELADA').select_related('ordem__produto', 'ordem__processo', 'operador', 'manuseio')
+
+    manuseios_incompletos = []
+    for ext in extrusoes_turno:
+        man = getattr(ext, 'manuseio', None)
+        if not man or man.status_manuseio != 'CONCLUIDO':
+            qtd_man = man.quantidade_manuseada if man else 0
+            qtd_rest = max(0, ext.quantidade_realizada - qtd_man)
+            ext.manuseio_obj = man
+            ext.quantidade_manuseada_calc = qtd_man
+            ext.quantidade_restante_calc = qtd_rest
+            ext.status_manuseio_calc = man.status_manuseio if man else 'PENDENTE'
+            manuseios_incompletos.append(ext)
 
     if request.method == 'POST':
         if fechamento_existente:
@@ -567,13 +625,15 @@ def fechamento_turno(request):
             })
 
         observacoes_gerais = request.POST.get('observacoes_gerais', '').strip()
+        manuseios_transferir_ids = request.POST.getlist('manuseios_transferir')
 
         try:
             fechamento = executar_fechamento_turno(
                 data_turno=hoje,
                 operador=request.user,
                 itens_dados=itens_dados,
-                observacoes=observacoes_gerais
+                observacoes=observacoes_gerais,
+                manuseios_transferir_ids=manuseios_transferir_ids
             )
             # Vincula atividades operacionais concluídas no turno a este fechamento
             AtividadeTurnoBladder.objects.filter(
@@ -626,6 +686,7 @@ def fechamento_turno(request):
         'manuseios_turno': ApontamentoTurnoBladder.objects.filter(
             origem='MANUSEIO', data_turno=hoje
         ).select_related('ordem', 'extrusao_origem', 'operador'),
+        'manuseios_incompletos': manuseios_incompletos,
         'total_entradas_estoque': total_entradas_estoque,
         'total_saidas_estoque': total_saidas_estoque,
         'recados_criados_turno': recados_criados_turno,
@@ -2105,9 +2166,13 @@ def recados_criados_lista(request):
     )
 
     if visao == 'meu_turno':
-        qs = qs.filter(data_turno_origem=hoje)
+        qs_turno = qs.filter(data_turno_origem=hoje)
         if turma_atual:
-            qs = qs.filter(turma_origem=turma_atual)
+            qs_turno = qs_turno.filter(turma_origem=turma_atual)
+        if not qs_turno.exists() and qs.filter(autor=request.user).exists():
+            qs = qs.filter(autor=request.user)
+        else:
+            qs = qs_turno
     elif visao == 'meus':
         qs = qs.filter(autor=request.user)
     elif visao == 'abertas':
@@ -2530,5 +2595,237 @@ def atividade_operacional_concluir(request, pk):
         messages.error(request, str(e))
 
     return redirect(next_url)
+
+
+@login_required
+def boas_vindas_view(request):
+    """
+    Tela de Boas-Vindas Contextual pós-login para o setor de Bladder.
+    Exibe dados reais do turno, OPs do dia, manuseios transferidos, recados e situação de estoque.
+    Marca 'bladder_welcome_seen' = True para evitar loops.
+    """
+    # Marca visualização na sessão
+    request.session['bladder_welcome_seen'] = True
+
+    agora = timezone.localtime(timezone.now())
+    hora = agora.hour
+    if 5 <= hora < 12:
+        saudacao = "BOM DIA"
+    elif 12 <= hora < 18:
+        saudacao = "BOA TARDE"
+    else:
+        saudacao = "BOA NOITE"
+
+    nome_operador = (request.user.first_name or request.user.username).upper()
+    hoje = agora.date()
+    turma_hoje, is_ajuste, motivo_ajuste = calcular_turma_do_dia(hoje)
+    turma_display = "Turma A" if turma_hoje == 'TURMA_A' else ("Turma B" if turma_hoje == 'TURMA_B' else turma_hoje)
+
+    is_apoio, apoio_obj = verificar_usuario_apoio_no_dia(request.user, hoje)
+    is_lider = user_is_lider_bladder(request.user)
+
+    if is_apoio:
+        papel_usuario = "Apoio Operacional"
+    elif is_lider:
+        papel_usuario = "Liderança de Produção / PCP"
+    else:
+        papel_usuario = f"Operador Titular — {turma_display}"
+
+    # Resumo das OPs do dia
+    ordens = OrdemProducaoBladder.objects.filter(
+        data_programada=hoje
+    ).exclude(status='CANCELADA').select_related('processo', 'produto').order_by('-prioridade', 'numero_ordem')
+
+    total_ops = ordens.count()
+    total_planejado = ordens.aggregate(s=Sum('quantidade_planejada'))['s'] or 0
+    total_realizado = sum(op.quantidade_realizada for op in ordens)
+    progresso_pct = round((total_realizado / total_planejado * 100), 1) if total_planejado > 0 else 0
+
+    # Manuseios recebidos
+    manuseios_recebidos = TransferenciaManuseioBladder.objects.filter(
+        data_turno_destino=hoje,
+        turma_destino=turma_hoje,
+        status__in=['ENCAMINHADO', 'RETOMADO']
+    ).select_related('extrusao__ordem__produto', 'operador_transferiu')
+
+    # Recados recebidos
+    recados = obter_mensagens_recebidas_turno(
+        data_turno=hoje,
+        turma=turma_hoje,
+        usuario=request.user,
+        apenas_ativas=True
+    )
+    recados_urgentes = sum(1 for r in recados if r.prioridade == 'URGENTE')
+
+    # Alerta semafórico de estoque
+    resumo_estoque = obter_resumo_estoque_bladders()
+    itens_estoque = resumo_estoque if isinstance(resumo_estoque, list) else resumo_estoque.get('itens', [])
+    produtos_criticos = [p for p in itens_estoque if p.get('situacao') == 'CRITICO']
+    produtos_atencao = [p for p in itens_estoque if p.get('situacao') == 'ATENCAO']
+
+    context = {
+        'saudacao': saudacao,
+        'nome_operador': nome_operador,
+        'papel_usuario': papel_usuario,
+        'hoje': hoje,
+        'turma_hoje': turma_hoje,
+        'turma_display': turma_display,
+        'is_ajuste': is_ajuste,
+        'motivo_ajuste': motivo_ajuste,
+        'is_lider': is_lider,
+        'ordens': ordens[:6],
+        'total_ops': total_ops,
+        'total_planejado': total_planejado,
+        'total_realizado': total_realizado,
+        'progresso_pct': progresso_pct,
+        'manuseios_recebidos': manuseios_recebidos,
+        'total_manuseios_recebidos': manuseios_recebidos.count(),
+        'recados': recados[:5],
+        'total_recados': len(recados),
+        'recados_urgentes': recados_urgentes,
+        'produtos_criticos': produtos_criticos,
+        'produtos_atencao': produtos_atencao,
+        'theme_class': 'theme-light',
+        'is_operador_view': True,
+    }
+    return render(request, 'bladder/bem_vindo.html', context)
+
+
+@login_required
+@operador_ou_lider_bladder_required
+def estacao_noturna_ativar(request):
+    """
+    Ativação auditada do período noturno por operador diurno ou líder.
+    Transiciona a sessão para 'noturno_bladder' e redireciona para a estação noturna.
+    """
+    if request.method != 'POST':
+        return redirect('bladder:operador')
+    try:
+        sessao = ativar_estacao_noturna(request.user, request)
+        messages.success(request, f"Estação Noturna Bladder #{sessao.id} ativada com sucesso.")
+    except Exception as e:
+        messages.error(request, f"Erro ao ativar estação noturna: {str(e)}")
+        return redirect('bladder:operador')
+    return redirect('bladder:estacao_noturna')
+
+
+def estacao_noturna_view(request):
+    """
+    Interface restrita da Estação Noturna de Retiradas de Bladder.
+    Apresenta apenas 3 campos operacionais (Modelo, Lote, Volume), leitor USB e histórico da sessão.
+    """
+    if not request.user.is_authenticated:
+        return redirect('login')
+
+    # Modelos de Bladder ativos para seleção
+    produtos = ProdutoBladder.objects.filter(ativo=True).order_by('codigo')
+
+    sessao_id = request.session.get('sessao_noturna_id')
+    sessao_ativa = None
+    if sessao_id:
+        sessao_ativa = SessaoNoturnaBladder.objects.filter(id=sessao_id).first()
+    if not sessao_ativa:
+        sessao_ativa = SessaoNoturnaBladder.objects.filter(status='ATIVA').order_by('-data_hora_inicio').first()
+
+    # Histórico de saídas da sessão ativa ou do turno atual
+    if sessao_ativa:
+        saidas = MovimentacaoEstoqueBladder.objects.filter(
+            tipo='SAIDA',
+            data_hora__gte=sessao_ativa.data_hora_inicio
+        ).select_related('produto', 'usuario').order_by('-data_hora')[:50]
+    else:
+        saidas = MovimentacaoEstoqueBladder.objects.filter(
+            tipo='SAIDA',
+            data_turno=timezone.localdate()
+        ).select_related('produto', 'usuario').order_by('-data_hora')[:30]
+
+    context = {
+        'produtos': produtos,
+        'saidas': saidas,
+        'sessao_ativa': sessao_ativa,
+        'theme_class': 'theme-light',
+        'agora': timezone.localtime(timezone.now()),
+        'is_noturno': True,
+    }
+    return render(request, 'bladder/noturno_estacao.html', context)
+
+
+def estacao_noturna_retirar(request):
+    """
+    Submissão de retirada de Bladder acabado pelo leitor USB ou teclado.
+    Validação atômica de saldo e registro na DR-201 com idempotência.
+    """
+    if request.method != 'POST':
+        return redirect('bladder:estacao_noturna')
+
+    produto_id = request.POST.get('produto_id')
+    lote = request.POST.get('lote', '')
+    volume = request.POST.get('volume')
+    idempotency_key = request.POST.get('idempotency_key')
+
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('Accept', '')
+
+    try:
+        mov = saida_estoque_noturna(
+            produto_id=produto_id,
+            lote=lote,
+            volume=volume,
+            request=request,
+            idempotency_key=idempotency_key,
+        )
+        msg = f"Saída confirmada: {mov.quantidade} un de {mov.produto.codigo} (Lote {mov.lote_etiqueta}). Saldo restante: {mov.saldo_posterior} un."
+        if is_ajax:
+            return JsonResponse({
+                'success': True,
+                'message': msg,
+                'saldo_restante': mov.saldo_posterior,
+                'item': {
+                    'produto': mov.produto.codigo_com_medida,
+                    'lote': mov.lote_etiqueta,
+                    'volume': mov.quantidade,
+                    'hora': timezone.localtime(mov.data_hora).strftime('%H:%M:%S'),
+                }
+            })
+        messages.success(request, msg)
+    except Exception as e:
+        if is_ajax:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        messages.error(request, f"Erro na retirada: {str(e)}")
+
+    return redirect('bladder:estacao_noturna')
+
+
+def estacao_noturna_encerrar(request):
+    """
+    Encerra a sessão noturna e autentica o operador diurno via modal com credenciais.
+    """
+    if request.method != 'POST':
+        return redirect('bladder:estacao_noturna')
+
+    username = request.POST.get('username', '').strip()
+    password = request.POST.get('password', '')
+
+    is_ajax = request.headers.get('x-requested-with') == 'XMLHttpRequest' or 'application/json' in request.headers.get('Accept', '')
+
+    user = authenticate(request, username=username, password=password)
+    if not user or not user_is_operador_bladder(user):
+        err_msg = "Credenciais inválidas ou usuário sem permissão no Setor de Bladder."
+        if is_ajax:
+            return JsonResponse({'success': False, 'error': err_msg}, status=401)
+        messages.error(request, err_msg)
+        return redirect('bladder:estacao_noturna')
+
+    try:
+        encerrar_estacao_noturna(user, request)
+        messages.success(request, f"Bem-vindo, {user.first_name or user.username}! Turno diurno iniciado.")
+        if is_ajax:
+            return JsonResponse({'success': True, 'redirect_url': '/bladder/bem-vindo/'})
+        return redirect('bladder:boas_vindas')
+    except Exception as e:
+        if is_ajax:
+            return JsonResponse({'success': False, 'error': str(e)}, status=400)
+        messages.error(request, f"Erro ao encerrar estação noturna: {str(e)}")
+        return redirect('bladder:estacao_noturna')
+
 
 

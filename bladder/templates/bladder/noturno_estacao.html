@@ -1,0 +1,321 @@
+{% extends "bladder/base_bladder.html" %}
+
+{% block title %}Estação Noturna de Retiradas &bull; Bladder{% endblock %}
+
+{% block extra_css %}
+<style>
+    .noturno-container {
+        max-width: 960px;
+        margin: 0 auto;
+    }
+    .noturno-card {
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-radius: 14px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    }
+    .noturno-input {
+        min-height: 56px;
+        font-size: 1.25rem;
+        font-weight: 600;
+        border: 2px solid #94A3B8;
+        border-radius: 10px;
+    }
+    .noturno-input:focus {
+        border-color: #F59E0B;
+        box-shadow: 0 0 0 0.25rem rgba(245, 158, 11, 0.25);
+    }
+    .noturno-btn {
+        min-height: 56px;
+        font-size: 1.2rem;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        border-radius: 10px;
+    }
+    .barcode-badge {
+        font-family: 'JetBrains Mono', monospace;
+        letter-spacing: 1px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<main class="noturno-container py-3">
+    <!-- Cabeçalho Noturno -->
+    <div class="noturno-card p-3 p-md-4 mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+            <div>
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <span class="badge bg-dark text-warning fs-6 px-3 py-1.5 fw-bold">
+                        <i class="bi bi-moon-stars-fill me-1"></i> MODO NOTURNO
+                    </span>
+                    <span class="badge bg-secondary text-light fs-6 px-3 py-1.5">
+                        <i class="bi bi-person-fill me-1"></i> Turno Noturno Bladder
+                    </span>
+                </div>
+                <h1 class="h3 fw-bold mb-1 text-slate-900">Estação de Retirada de Bladders</h1>
+                <p class="text-secondary small mb-0">Uso exclusivo para abastecimento da Vulcanização durante o período noturno.</p>
+            </div>
+            <div>
+                <button type="button" class="btn btn-primary noturno-btn px-4 shadow-sm d-flex align-items-center gap-2" data-bs-toggle="modal" data-bs-target="#modalTransicaoDiurno">
+                    <i class="bi bi-sun-fill text-warning fs-5"></i> INICIAR TURNO DIURNO
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Feedback de Mensagens do Django -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show shadow-sm" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    <!-- Card Principal: Formulário dos 3 Campos -->
+    <div class="noturno-card p-4 mb-4">
+        <h2 class="h5 fw-bold mb-3 text-slate-900 d-flex align-items-center gap-2">
+            <i class="bi bi-upc-scan text-warning"></i> Registrar Saída de Estoque
+        </h2>
+
+        <form method="POST" action="{% url 'bladder:estacao_noturna_retirar' %}" id="form-retirada-noturna">
+            {% csrf_token %}
+            <input type="hidden" name="idempotency_key" id="input-idempotency" value="">
+
+            <div class="row g-4">
+                <!-- CAMPO 1: MODELO (SELECT PRODUTO) -->
+                <div class="col-12 col-md-5">
+                    <label for="select-produto" class="form-label fw-bold text-dark fs-6">
+                        1. Modelo de Bladder *
+                    </label>
+                    <select class="form-select noturno-input" id="select-produto" name="produto_id" required>
+                        <option value="">Selecione o Modelo...</option>
+                        {% for p in produtos %}
+                            <option value="{{ p.id }}" data-saldo="{{ p.estoque_atual }}">
+                                {{ p.codigo_com_medida }} (Saldo: {{ p.estoque_atual }} un)
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text text-muted">Selecione o modelo que está sendo retirado.</div>
+                </div>
+
+                <!-- CAMPO 2: LOTE (LEITOR USB / TECLADO) -->
+                <div class="col-12 col-md-4">
+                    <label for="input-lote" class="form-label fw-bold text-dark fs-6">
+                        2. Lote da Peça (Leitor USB) *
+                    </label>
+                    <div class="input-group">
+                        <span class="input-group-text bg-light text-secondary"><i class="bi bi-upc"></i></span>
+                        <input type="text" class="form-control noturno-input barcode-badge" id="input-lote" name="lote" placeholder="Bipe a etiqueta..." required autocomplete="off">
+                    </div>
+                    <div class="form-text text-muted">Ao bipar, o Enter avança automaticamente para o Volume.</div>
+                </div>
+
+                <!-- CAMPO 3: VOLUME (MANUAL) -->
+                <div class="col-12 col-md-3">
+                    <label for="input-volume" class="form-label fw-bold text-dark fs-6">
+                        3. Quantidade (un) *
+                    </label>
+                    <input type="number" class="form-control noturno-input text-center" id="input-volume" name="volume" min="1" step="1" value="1" required inputmode="numeric">
+                    <div class="form-text text-muted">Quantidade de peças retiradas.</div>
+                </div>
+            </div>
+
+            <!-- Botão de Confirmação com Feedback -->
+            <div class="mt-4 pt-2">
+                <button type="submit" class="btn btn-warning noturno-btn w-100 text-dark fw-bold shadow-sm d-flex align-items-center justify-content-center gap-2" id="btn-confirmar-saida">
+                    <i class="bi bi-box-arrow-right fs-5"></i> CONFIRMAR SAÍDA DO ESTOQUE
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Tabela de Saídas Realizadas na Sessão -->
+    <div class="noturno-card p-4">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="h5 fw-bold mb-0 text-slate-900 d-flex align-items-center gap-2">
+                <i class="bi bi-clock-history text-secondary"></i> Saídas Realizadas nesta Sessão
+            </h2>
+            <span class="badge bg-light text-dark border">{{ saidas|length }} retirada(s)</span>
+        </div>
+
+        {% if saidas %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0" id="tabela-saidas">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 120px;">Horário</th>
+                            <th>Modelo / Medida</th>
+                            <th>Lote</th>
+                            <th class="text-center" style="width: 120px;">Volume</th>
+                            <th class="text-center" style="width: 140px;">Saldo Resultante</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbody-saidas">
+                        {% for s in saidas %}
+                            <tr>
+                                <td class="font-monospace text-secondary">{{ s.data_hora|date:"H:i:s" }}</td>
+                                <td><strong>{{ s.produto.codigo_com_medida }}</strong></td>
+                                <td><span class="badge bg-light text-dark border font-monospace">{{ s.lote_etiqueta|default:"—" }}</span></td>
+                                <td class="text-center fw-bold fs-6">{{ s.quantidade }} un</td>
+                                <td class="text-center font-monospace">{{ s.saldo_posterior }} un</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-inbox fs-2 d-block mb-2"></i>
+                <p class="mb-0">Nenhuma saída registrada nesta sessão até o momento.</p>
+            </div>
+        {% endif %}
+    </div>
+</main>
+
+<!-- Modal: Iniciar Turno Diurno (Login Integrado) -->
+<div class="modal fade" id="modalTransicaoDiurno" tabindex="-1" aria-labelledby="modalTransicaoDiurnoLabel" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content shadow">
+            <div class="modal-header bg-dark text-white">
+                <h5 class="modal-title d-flex align-items-center gap-2" id="modalTransicaoDiurnoLabel">
+                    <i class="bi bi-sun-fill text-warning"></i> Assumir Turno Diurno
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+            <form method="POST" action="{% url 'bladder:estacao_noturna_encerrar' %}" id="form-login-diurno">
+                {% csrf_token %}
+                <div class="modal-body p-4">
+                    <p class="small text-secondary mb-3">
+                        Informe as credenciais do operador diurno responsável para encerrar a estação noturna e abrir o painel operacional do Bladder.
+                    </p>
+
+                    <div id="login-diurno-erro" class="alert alert-danger d-none" role="alert"></div>
+
+                    <div class="mb-3">
+                        <label for="diurno-username" class="form-label fw-bold">Nome de Usuário</label>
+                        <input type="text" class="form-control form-control-lg" id="diurno-username" name="username" required autocomplete="username">
+                    </div>
+                    <div class="mb-3">
+                        <label for="diurno-password" class="form-label fw-bold">Senha</label>
+                        <input type="password" class="form-control form-control-lg" id="diurno-password" name="password" required autocomplete="current-password">
+                    </div>
+                </div>
+                <div class="modal-footer bg-light border-top">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary fw-bold px-4" id="btn-confirmar-diurno">
+                        <i class="bi bi-box-arrow-in-right me-1"></i> ENTRAR NO TURNO DIURNO
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(() => {
+    // 1. Gera chave de idempotência UUID no carregamento da tela
+    const idempotencyInput = document.getElementById('input-idempotency');
+    function gerarUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+    if (idempotencyInput) {
+        idempotencyInput.value = 'noturno-' + gerarUUID();
+    }
+
+    // 2. Proteção contra o disparo prematuro do Leitor de Código de Barras USB
+    // O leitor emite Enter no final da leitura. Não deve submeter o form, e sim focar no Volume.
+    const inputLote = document.getElementById('input-lote');
+    const inputVolume = document.getElementById('input-volume');
+    const selectProduto = document.getElementById('select-produto');
+    const formRetirada = document.getElementById('form-retirada-noturna');
+    const btnConfirmar = document.getElementById('btn-confirmar-saida');
+
+    if (inputLote && inputVolume) {
+        inputLote.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                inputVolume.focus();
+                inputVolume.select();
+            }
+        });
+    }
+
+    // 3. Validação de volume contra o saldo do produto selecionado
+    if (formRetirada) {
+        formRetirada.addEventListener('submit', (e) => {
+            const selectedOpt = selectProduto.options[selectProduto.selectedIndex];
+            if (selectedOpt && selectedOpt.dataset.saldo) {
+                const saldo = parseInt(selectedOpt.dataset.saldo, 10);
+                const vol = parseInt(inputVolume.value, 10);
+                if (vol > saldo) {
+                    e.preventDefault();
+                    alert(`Saldo insuficiente! O modelo selecionado possui apenas ${saldo} un em estoque.`);
+                    inputVolume.focus();
+                    return;
+                }
+            }
+            btnConfirmar.disabled = true;
+            btnConfirmar.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Confirmando Saída…';
+        });
+    }
+
+    window.addEventListener('pageshow', () => {
+        if (btnConfirmar) {
+            btnConfirmar.disabled = false;
+            btnConfirmar.innerHTML = '<i class="bi bi-box-arrow-right fs-5"></i> CONFIRMAR SAÍDA DO ESTOQUE';
+        }
+        if (idempotencyInput) {
+            idempotencyInput.value = 'noturno-' + gerarUUID();
+        }
+    });
+
+    // 4. Tratamento do Login Diurno com fetch para manter a modal caso falhe
+    const formDiurno = document.getElementById('form-login-diurno');
+    const erroDiurno = document.getElementById('login-diurno-erro');
+    const btnDiurno = document.getElementById('btn-confirmar-diurno');
+
+    if (formDiurno) {
+        formDiurno.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            erroDiurno.classList.add('d-none');
+            erroDiurno.textContent = '';
+            btnDiurno.disabled = true;
+            btnDiurno.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Autenticando…';
+
+            const formData = new FormData(formDiurno);
+            try {
+                const resp = await fetch(formDiurno.action, {
+                    method: 'POST',
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'Accept': 'application/json'
+                    },
+                    body: formData
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    window.location.href = data.redirect_url || '/bladder/bem-vindo/';
+                } else {
+                    erroDiurno.textContent = data.error || 'Credenciais inválidas ou usuário sem permissão no Bladder.';
+                    erroDiurno.classList.remove('d-none');
+                    btnDiurno.disabled = false;
+                    btnDiurno.innerHTML = '<i class="bi bi-box-arrow-in-right me-1"></i> ENTRAR NO TURNO DIURNO';
+                }
+            } catch (err) {
+                // Se o endpoint não responder json, faz fallback tradicional
+                formDiurno.submit();
+            }
+        });
+    }
+})();
+</script>
+{% endblock %}

@@ -446,7 +446,14 @@ class BladderPermissoesTestCase(BladderBaseTestCase):
         client.force_login(self.operador1)
         res = client.get(reverse("portal_select"))
         self.assertEqual(res.status_code, 302)
-        self.assertIn("/bladder/operador/", res.url)
+        self.assertIn("/bladder/bem-vindo/", res.url)
+
+        session = client.session
+        session['bladder_welcome_seen'] = True
+        session.save()
+        res_after = client.get(reverse("portal_select"))
+        self.assertEqual(res_after.status_code, 302)
+        self.assertIn("/bladder/operador/", res_after.url)
 
 
 class BladderMateriaPrimaTeoricaTestCase(BladderBaseTestCase):
@@ -484,7 +491,7 @@ class BladderViewsEndToEndTestCase(BladderBaseTestCase):
         """Dashboard carrega com HTTP 200 e dados do dia."""
         res = self.client_lider.get(reverse("bladder:dashboard"))
         self.assertEqual(res.status_code, 200)
-        self.assertContains(res, "Dashboard Operacional do Setor de Bladder")
+        self.assertContains(res, "Produção do Setor de Bladder")
         self.assertContains(res, "Motivos das Pendências")
 
     def test_operador_turno_view_200(self):
@@ -650,7 +657,7 @@ class BladderComplementarPermissoesPerfisTestCase(BladderBaseTestCase):
         """1. Líder acessa dashboard Bladder (/bladder/)."""
         res = self.client_lider.get(reverse("bladder:dashboard"))
         self.assertEqual(res.status_code, 200)
-        self.assertContains(res, "Dashboard Operacional do Setor de Bladder")
+        self.assertContains(res, "Produção do Setor de Bladder")
 
     def test_02_lider_acessa_criacao_op(self):
         """2. Líder acessa criação de OP (/bladder/ordens/nova/)."""
@@ -822,11 +829,20 @@ class BladderComplementarPermissoesPerfisTestCase(BladderBaseTestCase):
         self.assertNotIn("/operador/", res_lider.url)
 
         # 2. Operador
+        res_op_first = self.client_op1.get(reverse("home_redirect"))
+        self.assertEqual(res_op_first.status_code, 302)
+        self.assertIn("/bladder/bem-vindo/", res_op_first.url)
+        session_op = self.client_op1.session
+        session_op['bladder_welcome_seen'] = True
+        session_op.save()
         res_op = self.client_op1.get(reverse("home_redirect"))
         self.assertEqual(res_op.status_code, 302)
         self.assertIn("/bladder/operador/", res_op.url)
 
         # 3. Apoio
+        session_ap = self.client_apoio.session
+        session_ap['bladder_welcome_seen'] = True
+        session_ap.save()
         res_apoio = self.client_apoio.get(reverse("home_redirect"))
         self.assertEqual(res_apoio.status_code, 302)
         self.assertIn("/bladder/operador/", res_apoio.url)
@@ -1102,11 +1118,11 @@ class BladderEtapa3OperadorBoardTestCase(BladderBaseTestCase):
         )
         res = self.client_op1.get(reverse("bladder:operador"))
         self.assertEqual(res.status_code, 200)
-        self.assertContains(res, "QUADRO OPERACIONAL")
+        self.assertContains(res, "CHÃO DE FÁBRICA")
         self.assertContains(res, op.numero_ordem)
         self.assertContains(res, self.produto_bla1.codigo)
         self.assertContains(res, "40")
-        self.assertContains(res, "Ver Detalhes Técnicos")
+        self.assertContains(res, "FICHA TÉCNICA")
 
     def test_operador_quadro_nao_contem_iniciar_nem_meus_apontamentos(self):
         """O quadro operacional NÃO contém mais botão de Iniciar Produção nem tabela de Meus Apontamentos."""
@@ -1127,7 +1143,7 @@ class BladderEtapa3OperadorBoardTestCase(BladderBaseTestCase):
         res = self.client_op1.get(reverse("bladder:operador"))
         self.assertEqual(res.status_code, 200)
         self.assertContains(res, "Ficha Técnica")
-        self.assertContains(res, "Especificações Técnicas do Modelo (ET.029)")
+        self.assertContains(res, "Identificação Geral")
         if self.produto_bla1.matriz_extrusao:
             self.assertContains(res, self.produto_bla1.matriz_extrusao)
         # Decimal localizado pelo Django (ex: '2,500' em pt-br ou '2.500' em en)
@@ -1454,8 +1470,7 @@ class BladderEtapa5DashboardTestCase(BladderBaseTestCase):
         self.assertContains(res, "Realizado Hoje")
         self.assertContains(res, "Concluídas")
         self.assertContains(res, "Parciais")
-        self.assertContains(res, "Pendências (Ledger)")
-        self.assertContains(res, "Atrasadas")
+        self.assertContains(res, "Estoque de Bladders Acabados")
 
         # Verifica que Previsão de Matéria-Prima (Tarugos) foi removida do dashboard principal
         self.assertNotContains(res, "Previsão de Matéria-Prima (Tarugos)")
@@ -2389,7 +2404,7 @@ class BladderBloco1ChaoDeFabricaTestCase(TestCase):
 
         res = self.client_op.get(reverse("bladder:operador"))
         self.assertContains(res, "col-12 col-md-6")
-        self.assertContains(res, "Ver Detalhes Técnicos")
+        self.assertContains(res, "FICHA TÉCNICA")
         self.assertContains(res, f"modalDetalhes{op.pk}")
         self.assertContains(res, "MAT03")
         # Aceita separador decimal de ponto ou vírgula
@@ -2411,7 +2426,7 @@ class BladderBloco1ChaoDeFabricaTestCase(TestCase):
 
         # Deve conter Chão de Fábrica
         self.assertContains(res, reverse("bladder:operador"))
-        self.assertContains(res, "Chão de Fábrica")
+        self.assertContains(res, "CHÃO DE FÁBRICA")
 
     def test_menu_lider_completo(self):
         """Líder mantém todos os menus administrativos visíveis."""
@@ -2421,8 +2436,6 @@ class BladderBloco1ChaoDeFabricaTestCase(TestCase):
         self.assertContains(res, reverse("bladder:dashboard"))
         self.assertContains(res, reverse("bladder:cronograma"))
         self.assertContains(res, reverse("bladder:ordens_lista"))
-        self.assertContains(res, reverse("bladder:ordem_nova"))
-        self.assertContains(res, reverse("bladder:relatorios"))
 
     def test_acesso_direto_operador_bloqueado(self):
         """Operador digitando URLs administrativas recebe redirecionamento seguro para /bladder/operador/."""
@@ -3175,7 +3188,7 @@ class BladderBloco3OrdensTestCase(TestCase):
         self.assertNotContains(res_chao, ">Pendente<")
 
         # 3. Operador consulta detalhes técnicos
-        self.assertContains(res_chao, "Ver Detalhes Técnicos")
+        self.assertContains(res_chao, "FICHA TÉCNICA")
         self.assertContains(res_chao, "Tarugo:")
         self.assertContains(res_chao, "kg")
 

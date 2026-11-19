@@ -27,6 +27,8 @@ from .models import (
     AtividadeTurnoBladder,
     MovimentacaoEstoqueBladder,
     HistoricoEdicaoMensagemTurnoBladder,
+    TransferenciaManuseioBladder,
+    SessaoNoturnaBladder,
 )
 
 logger = logging.getLogger("bladder.services")
@@ -478,7 +480,7 @@ def corrigir_apontamento_operador_ou_lider(
 
 @repetir_concorrencia
 @transaction.atomic(using='default')
-def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes=""):
+def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="", manuseios_transferir_ids=None):
     """
     Executa o Fechamento Único de Turno para o setor de Bladder.
     Realizado exclusivamente por operador autorizado do turno.
@@ -488,8 +490,10 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
     - Presença de OPs programadas ou manuseios efetivamente executados no turno.
     - Quantidade realizada >= 0, admitindo sobreprodução.
     - Categorias e descrição obrigatórias para déficit quantitativo.
+    - Manuseios incompletos do turno (exige encaminhamento formal para o próximo turno).
     Efetua:
     - Gravação atômica do FechamentoTurnoBladder.
+    - Registro de transferências em TransferenciaManuseioBladder para o próximo turno.
     - Atualização do status de cada OP (CONCLUIDA ou PARCIAL).
     - Criação de ItemFechamentoTurnoBladder com snapshot auditável.
     - Vínculo dos detalhes existentes, sem novo consolidado; fallback legado sem detalhes.
@@ -540,6 +544,25 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
     )
     if not ordens and not manuseios_executados.exists():
         raise ValueError("Não existem ordens de produção programadas para fechamento neste turno.")
+
+    # 3.1 Validação de Manuseios Incompletos do Turno
+    extrusoes_turno = ApontamentoTurnoBladder.objects.filter(
+        origem='PROCESSO', codigo_processo='03', quantidade_apurada=True,
+        quantidade_realizada__gt=0, data_turno=data_turno
+    ).exclude(ordem__status='CANCELADA').select_related('manuseio')
+
+    extrusoes_incompletas = [
+        ext for ext in extrusoes_turno
+        if not hasattr(ext, 'manuseio') or ext.manuseio is None or ext.manuseio.status_manuseio != 'CONCLUIDO'
+    ]
+
+    if manuseios_transferir_ids is None:
+        transferir_set = {ext.id for ext in extrusoes_incompletas}
+    else:
+        transferir_set = {int(x) for x in manuseios_transferir_ids if str(x).isdigit()}
+        incompletas_nao_selecionadas = [ext for ext in extrusoes_incompletas if ext.id not in transferir_set]
+        if incompletas_nao_selecionadas:
+            raise ValueError("Existem manuseios incompletos neste turno. Selecione o encaminhamento para o próximo turno antes de confirmar o fechamento.")
 
     # 4. Mapeia dados enviados e valida todas as OPs
     itens_map = {item['ordem_id']: item for item in itens_dados}
@@ -758,9 +781,241 @@ def executar_fechamento_turno(data_turno, operador, itens_dados, observacoes="")
             usuario=operador
         )
 
+    # 7. Gravação formal de transferências de manuseio para o próximo turno
+    if transferir_set:
+        data_destino, turma_destino, _, _ = calcular_proximo_turno_operacional(
+            momento=fechamento.data_hora_fechamento, data_referencia=data_turno
+        )
+        for ext_id in transferir_set:
+            ext = ApontamentoTurnoBladder.objects.filter(pk=ext_id).first()
+            if ext:
+                man = getattr(ext, 'manuseio', None)
+                qtd_acumulada = man.quantidade_manuseada if man else 0
+                qtd_restante = max(0, ext.quantidade_realizada - qtd_acumulada)
+                TransferenciaManuseioBladder.objects.create(
+                    extrusao=ext,
+                    apontamento_manuseio=man,
+                    fechamento_origem=fechamento,
+                    turma_origem=turma_hoje,
+                    turma_destino=turma_destino,
+                    data_turno_origem=data_turno,
+                    data_turno_destino=data_destino,
+                    operador_transferiu=operador,
+                    quantidade_extrusada=ext.quantidade_realizada,
+                    quantidade_acumulada_manuseada=qtd_acumulada,
+                    quantidade_restante=qtd_restante,
+                    status='ENCAMINHADO',
+                    observacoes=f"Transferência gerada no Fechamento do Turno ({turma_hoje})."
+                )
+
     # Etapas de manuseio realizadas neste turno podem ter extrusão de outro dia.
     ApontamentoTurnoBladder.objects.filter(origem='MANUSEIO', data_turno=data_turno, fechamento__isnull=True).update(fechamento=fechamento)
     return fechamento
+
+
+def garantir_usuario_noturno():
+    """
+    Provisionamento idempotente da conta dedicada do Turno Noturno Bladder.
+    Cria ou atualiza usuário 'noturno_bladder' sem privilégios de staff/superuser
+    e vinculado ao grupo restrito.
+    """
+    from django.contrib.auth.models import Group, User
+    user, created = User.objects.get_or_create(
+        username='noturno_bladder',
+        defaults={
+            'first_name': 'Turno Noturno',
+            'last_name': 'Bladder',
+            'is_active': True,
+            'is_staff': False,
+            'is_superuser': False,
+        }
+    )
+    if not created:
+        atualizar = False
+        if user.first_name != 'Turno Noturno' or user.last_name != 'Bladder':
+            user.first_name = 'Turno Noturno'
+            user.last_name = 'Bladder'
+            atualizar = True
+        if user.is_staff or user.is_superuser:
+            user.is_staff = False
+            user.is_superuser = False
+            atualizar = True
+        if not user.is_active:
+            user.is_active = True
+            atualizar = True
+        if atualizar:
+            user.save()
+
+    grupo, _ = Group.objects.get_or_create(name='Turno Noturno Bladder')
+    if not user.groups.filter(id=grupo.id).exists():
+        user.groups.add(grupo)
+
+    return user
+
+
+def ativar_estacao_noturna(usuario_ativou, request):
+    """
+    Ativa formalmente a Estação Noturna de Retiradas:
+    - Valida permissão do operador que está ativando;
+    - Cria SessaoNoturnaBladder com status ATIVA;
+    - Encerra a sessão humana do operador diurno;
+    - Autentica a identidade 'noturno_bladder';
+    - Configura as chaves de sessão ('is_night_shift_session', 'night_shift_start_ts', 'sessao_noturna_id').
+    """
+    import time
+    from django.contrib.auth import login as auth_login
+    from .models import SessaoNoturnaBladder
+    from .decorators import user_is_operador_bladder
+
+    if not usuario_ativou or not usuario_ativou.is_authenticated or not user_is_operador_bladder(usuario_ativou):
+        raise PermissionError("Apenas operadores autorizados do Bladder podem ativar a Estação Noturna.")
+
+    # Encerra qualquer sessão noturna anterior ativa
+    SessaoNoturnaBladder.objects.filter(status='ATIVA').update(
+        status='ENCERRADA',
+        data_hora_fim=timezone.now(),
+        observacoes="Encerrada por nova ativação."
+    )
+
+    sessao = SessaoNoturnaBladder.objects.create(
+        operador_ativou=usuario_ativou,
+        data_hora_inicio=timezone.now(),
+        status='ATIVA'
+    )
+
+    user_noturno = garantir_usuario_noturno()
+
+    # Login da conta noturna
+    auth_login(request, user_noturno)
+
+    # Configuração de sessão
+    request.session['is_night_shift_session'] = True
+    request.session['night_shift_start_ts'] = time.time()
+    request.session['sessao_noturna_id'] = sessao.id
+    request.session['_last_human_activity'] = time.time()
+    request.session.pop('_session_expired', None)
+    request.session['bladder_welcome_seen'] = False
+
+    return sessao
+
+
+@transaction.atomic(using='default')
+def saida_estoque_noturna(produto_id, lote, volume, request, sessao_noturna=None, idempotency_key=None):
+    """
+    Executa saída atômica de Bladders na Estação Noturna:
+    - Valida saldo em estoque;
+    - Preserva zeros à esquerda do Lote (string pura);
+    - Volume > 0 e <= saldo;
+    - Idempotência estrita;
+    - Enfileira 1 linha na DR-201 (1 movimento = 1 lote + N volumes).
+    """
+    import uuid
+    from .models import ProdutoBladder, MovimentacaoEstoqueBladder, SessaoNoturnaBladder
+    from .decorators import user_is_noturno_bladder, user_is_operador_bladder
+
+    user = request.user
+    if not user or not user.is_authenticated:
+        raise PermissionError("Usuário não autenticado.")
+    if not user_is_noturno_bladder(user) and not user_is_operador_bladder(user):
+        raise PermissionError("Apenas o Turno Noturno ou operadores autorizados podem registrar saídas noturnas.")
+
+    try:
+        qtd_vol = int(volume)
+    except (ValueError, TypeError):
+        raise ValueError("O volume deve ser um número inteiro positivo.")
+    if qtd_vol <= 0:
+        raise ValueError("O volume deve ser maior que zero.")
+
+    lote_limpo = str(lote or "").strip()
+    if not lote_limpo:
+        raise ValueError("O lote é obrigatório.")
+
+    if not idempotency_key:
+        idempotency_key = f"noturno-{uuid.uuid4()}"
+
+    existente = MovimentacaoEstoqueBladder.objects.filter(idempotency_key=idempotency_key).first()
+    if existente:
+        return existente
+
+    p = ProdutoBladder.objects.select_for_update().get(pk=produto_id)
+    if not p.ativo:
+        raise ValueError(f"Produto {p.codigo} está inativo e não permite retiradas de estoque.")
+    saldo_anterior = p.estoque_atual
+
+    if saldo_anterior - qtd_vol < 0:
+        raise ValueError(
+            f"Saldo insuficiente para retirada. Estoque atual: {saldo_anterior} un, solicitado: {qtd_vol} un."
+        )
+
+    saldo_posterior = saldo_anterior - qtd_vol
+    p.estoque_atual = saldo_posterior
+    p.save(update_fields=['estoque_atual', 'updated_at'])
+
+    hoje = timezone.localdate()
+    sessao_id = sessao_noturna.id if sessao_noturna else (getattr(request, 'session', {}).get('sessao_noturna_id') if hasattr(request, 'session') and request.session else None)
+    justificativa = f"Retirada noturna — Sessão #{sessao_id}" if sessao_id else "Retirada noturna"
+
+    mov = MovimentacaoEstoqueBladder.objects.create(
+        produto=p,
+        tipo='SAIDA',
+        quantidade=qtd_vol,
+        saldo_anterior=saldo_anterior,
+        saldo_posterior=saldo_posterior,
+        usuario=user,
+        turma='TURMA_A',
+        data_turno=hoje,
+        destino="Vulcanização — Consumo Noturno",
+        lote_etiqueta=lote_limpo,
+        justificativa=justificativa,
+        idempotency_key=idempotency_key,
+    )
+
+    data_str = hoje.strftime('%d/%m/%Y')
+    transaction.on_commit(lambda: disparar_sincronizacao_lote_dr201_async([mov.id], data_str, 'NOITE'))
+
+    return mov
+
+
+def encerrar_estacao_noturna(usuario_diurno, request):
+    """
+    Encerra a Estação Noturna e realiza a transição segura para o operador diurno:
+    - Atualiza SessaoNoturnaBladder;
+    - Loga o operador diurno;
+    - Limpa chaves noturnas da sessão;
+    - Marca 'bladder_welcome_seen' = False para direcionar a Boas-Vindas.
+    """
+    import time
+    from django.contrib.auth import login as auth_login
+    from .models import SessaoNoturnaBladder
+    from .decorators import user_is_operador_bladder
+
+    if not usuario_diurno or not usuario_diurno.is_authenticated or not user_is_operador_bladder(usuario_diurno):
+        raise PermissionError("Usuário informado não possui autorização operacional no Setor de Bladder.")
+
+    sessao_id = request.session.get('sessao_noturna_id')
+    sessao = None
+    if sessao_id:
+        sessao = SessaoNoturnaBladder.objects.filter(id=sessao_id).first()
+    if not sessao:
+        sessao = SessaoNoturnaBladder.objects.filter(status='ATIVA').order_by('-data_hora_inicio').first()
+
+    if sessao:
+        sessao.status = 'ENCERRADA'
+        sessao.data_hora_fim = timezone.now()
+        sessao.operador_encerrou = usuario_diurno
+        sessao.save(update_fields=['status', 'data_hora_fim', 'operador_encerrou'])
+
+    # Login do operador diurno
+    auth_login(request, usuario_diurno)
+
+    # Limpeza de chaves
+    request.session.pop('is_night_shift_session', None)
+    request.session.pop('night_shift_start_ts', None)
+    request.session.pop('sessao_noturna_id', None)
+    request.session['_last_human_activity'] = time.time()
+    request.session['bladder_welcome_seen'] = False
+
+    return sessao
 
 
 def calcular_proximo_turno_operacional(momento=None, data_referencia=None):

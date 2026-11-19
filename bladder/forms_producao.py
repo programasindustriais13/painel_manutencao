@@ -80,6 +80,13 @@ class AneisForm(ExecucaoForm):
 
 
 class ManuseioForm(ExecucaoForm):
+    quantidade_manuseada = forms.IntegerField(
+        label='Quantidade manuseada (un)',
+        min_value=1,
+        max_value=2147483647,
+        required=False,
+        widget=forms.NumberInput(attrs={'class': 'form-control form-control-lg', 'inputmode': 'numeric', 'step': '1'})
+    )
     lote_produto = texto('Lote do produto')
     materia_prima = texto('Fornecedor e matéria-prima (ex.: TORTUGA - FBB0001)', limite=150)
     lote_material = texto('Lote do material')
@@ -106,10 +113,20 @@ def numero_amostras(quantidade):
     return (int(quantidade) + 9) // 10 if quantidade > 0 else 0
 
 
-def formulario_amostras(quantidade, data=None, initial=None):
+def formulario_amostras(quantidade, data=None, initial=None, obrigatorias=None):
     n = numero_amostras(quantidade)
-    classe = forms.formset_factory(AmostraForm, extra=n, min_num=n, max_num=n,
-                                   validate_min=True, validate_max=True, absolute_max=n)
+    min_n = obrigatorias if obrigatorias is not None else n
+    initial_count = len(initial) if initial else 0
+    extra = max(0, n - initial_count)
+    classe = forms.formset_factory(
+        AmostraForm,
+        extra=extra,
+        min_num=min_n,
+        max_num=n,
+        validate_min=min_n > 0,
+        validate_max=True,
+        absolute_max=n
+    )
     # min_num já cria as N linhas obrigatórias, não adicionar outras N extras.
-    classe.extra = 0
+    classe.extra = extra
     return classe(data=data, initial=initial, prefix='amostras')

@@ -14,11 +14,12 @@ from .producao import (validar_op, validar_extrusao, registrar_producao, corrigi
                        pode_corrigir, PARAMETROS)
 
 
-def _contexto(request, op, codigo, form, formset=None, extrusao=None, registro=None):
+def _contexto(request, op, codigo, form, formset=None, extrusao=None, registro=None, manuseio_existente=None):
     processo = ProcessoBladder.objects.filter(codigo=codigo).select_related('maquina').first()
     return {'op': op, 'codigo': codigo, 'form': form, 'amostras_formset': formset,
             'equipamento_executado': registro.equipamento if registro else processo.maquina if processo else None,
-            'extrusao': extrusao, 'registro': registro, 'is_correcao': registro is not None,
+            'extrusao': extrusao, 'registro': registro, 'manuseio_existente': manuseio_existente,
+            'is_correcao': registro is not None, 'is_manuseio': codigo == '06',
             'numero_amostras': numero_amostras(extrusao.quantidade_realizada) if extrusao else 0,
             'agora': timezone.now(), 'theme_class': 'theme-light', 'is_operador_view': True}
 
@@ -59,29 +60,65 @@ def registrar_manuseio(request, pk):
 
 
 def _registrar(request, op, codigo, extrusao=None):
+    manuseio_existente = None
+    initial_form = {}
+    initial_amostras = None
     try:
-        if codigo == '06' and extrusao is None:
-            raise ValueError('O manuseio deve ser aberto pela execução de Extrusão de Bladder na lista de etapas pendentes.')
+        if codigo == '06':
+            if extrusao is None:
+                raise ValueError('O manuseio deve ser aberto pela execução de Extrusão de Bladder na lista de etapas pendentes.')
+            manuseio_existente = getattr(extrusao, 'manuseio', None)
+            if manuseio_existente and manuseio_existente.status_manuseio == 'CONCLUIDO':
+                return redirect('bladder:producao_detalhe', pk=manuseio_existente.pk)
+            if manuseio_existente:
+                initial_form = {
+                    'lote_produto': manuseio_existente.lote_produto,
+                    'materia_prima': manuseio_existente.materia_prima,
+                    'lote_material': manuseio_existente.lote_material,
+                    'quantidade_manuseada': manuseio_existente.quantidade_manuseada,
+                    'observacoes': manuseio_existente.observacoes,
+                }
+                initial_amostras = list(manuseio_existente.amostras.order_by('sequencia').values('diametro', 'comprimento', 'peso'))
+            else:
+                initial_form = {
+                    'quantidade_manuseada': extrusao.quantidade_realizada,
+                }
+
         if request.method != 'POST':
             validar_op(op, request.user, manuseio=extrusao is not None)
-            if extrusao and ApontamentoTurnoBladder.objects.filter(extrusao_origem=extrusao).exists():
-                return redirect('bladder:producao_detalhe', pk=extrusao.manuseio.pk)
+
+        initial_form['token'] = _token(request, op, codigo, extrusao.pk if extrusao else None)
         form = formulario_processo(codigo, request.POST if request.method == 'POST' else None,
-                                   initial={'token': _token(request, op, codigo, extrusao.pk if extrusao else None)} if request.method != 'POST' else None)
+                                   initial=initial_form if request.method != 'POST' else None)
     except (ValueError, PermissionError) as erro:
         return render(request, 'bladder/producao_erro.html', {'erro': str(erro)}, status=403)
-    amostras = formulario_amostras(extrusao.quantidade_realizada, request.POST if request.method == 'POST' else None) if extrusao else None
+
+    acao = request.POST.get('acao', 'concluir') if request.method == 'POST' else 'concluir'
+    obrigatorias = 0 if (codigo == '06') else None
+    amostras = formulario_amostras(
+        extrusao.quantidade_realizada,
+        request.POST if request.method == 'POST' else None,
+        initial=initial_amostras,
+        obrigatorias=obrigatorias
+    ) if extrusao else None
+
     if request.method == 'POST' and form.is_valid() and (amostras is None or amostras.is_valid()):
         try:
             chave = _chave(request, op, codigo, extrusao.pk if extrusao else None)
-            registro, criado = registrar_producao(op.pk, request.user, form.cleaned_data, chave,
-                                                  extrusao_id=extrusao.pk if extrusao else None,
-                                                  amostras=amostras.cleaned_data if amostras else None)
+            registro, criado = registrar_producao(
+                op.pk, request.user, form.cleaned_data, chave,
+                extrusao_id=extrusao.pk if extrusao else None,
+                amostras=amostras.cleaned_data if amostras else None,
+                acao=acao
+            )
             op.refresh_from_db()
             if codigo in ('01', '02'):
                 texto = f'Bladder registrado com sucesso — {op.quantidade_realizada} de {op.quantidade_planejada} unidades.'
             elif codigo == '06':
-                texto = 'Manuseio registrado com sucesso. Amostras e médias salvas.'
+                if acao == 'salvar_parcial':
+                    texto = f'Manuseio parcial salvo com sucesso ({registro.quantidade_manuseada} de {extrusao.quantidade_realizada} tarugos). Amostras salvas.'
+                else:
+                    texto = 'Manuseio concluído com sucesso. Todas as amostras e médias salvas.'
             elif codigo == '05':
                 texto = 'Parâmetros e qualidade dos anéis registrados. Quantidade não apurada.'
             else:
@@ -90,7 +127,7 @@ def _registrar(request, op, codigo, extrusao=None):
             return redirect(reverse('bladder:operador') + f'?producao={op.pk}#op-{op.pk}')
         except (ValueError, PermissionError) as erro:
             form.add_error(None, str(erro))
-    return render(request, 'bladder/producao_form.html', _contexto(request, op, codigo, form, amostras, extrusao))
+    return render(request, 'bladder/producao_form.html', _contexto(request, op, codigo, form, amostras, extrusao, manuseio_existente=manuseio_existente))
 
 
 @operador_ou_lider_bladder_required

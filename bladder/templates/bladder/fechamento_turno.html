@@ -2,413 +2,575 @@
 
 {% block title %}Fechamento do Turno &bull; Setor de Bladder{% endblock %}
 
+{% block extra_css %}
+<style>
+    /* Estilos de Alto Contraste WCAG AA para Fechamento de Turno em Tema Claro */
+    .fechamento-container {
+        max-width: 1140px;
+        margin: 0 auto;
+    }
+    .fechamento-card {
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-radius: 14px;
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.04);
+    }
+    .op-card-fechamento {
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-radius: 12px;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .op-card-fechamento:hover {
+        border-color: #F59E0B;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    }
+    .text-slate-900 { color: #0F172A !important; }
+    .text-slate-800 { color: #1E293B !important; }
+    .text-slate-700 { color: #334155 !important; }
+    .text-slate-600 { color: #475569 !important; }
+
+    /* Bloco de Déficit WCAG AAA (> 7:1) */
+    .box-deficit {
+        background: #FEF2F2 !important;
+        border: 1px solid #F87171 !important;
+        border-radius: 10px;
+    }
+    .title-deficit {
+        color: #991B1B !important;
+        font-weight: 700;
+    }
+
+    /* Checkboxes de Categoria com Alto Contraste */
+    .btn-cat-desvio {
+        background-color: #FFFFFF;
+        color: #1E293B;
+        border: 1.5px solid #94A3B8;
+        font-weight: 600;
+        font-size: 0.88rem;
+        padding: 0.4rem 0.85rem;
+        border-radius: 8px;
+        transition: all 0.15s ease;
+    }
+    .btn-check:checked + .btn-cat-desvio {
+        background-color: #D97706 !important;
+        color: #FFFFFF !important;
+        border-color: #B45309 !important;
+        font-weight: 700;
+        box-shadow: 0 2px 6px rgba(217, 119, 6, 0.35);
+    }
+    .btn-cat-desvio:hover {
+        background-color: #F1F5F9;
+        border-color: #64748B;
+        color: #0F172A;
+    }
+
+    /* Touch buttons */
+    .touch-btn {
+        min-height: 48px;
+        font-weight: 700;
+        border-radius: 10px;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-12 col-xl-10">
-        <!-- Topo da Página -->
-        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+<div class="fechamento-container py-3">
+    <!-- Topo da Página -->
+    <div class="fechamento-card p-3 p-md-4 mb-4">
+        <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
             <div>
                 <div class="d-flex align-items-center gap-2 mb-1">
-                    <span class="badge bg-warning text-dark fw-bold fs-6 px-2 py-1">
+                    <span class="badge bg-warning text-dark fw-bold fs-6 px-3 py-1.5">
                         <i class="bi bi-door-closed-fill me-1"></i> FECHAMENTO DO TURNO
                     </span>
-                    <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-2 py-1">
+                    <span class="badge {% if turma_hoje == 'TURMA_A' %}bg-primary{% elif turma_hoje == 'TURMA_B' %}bg-info text-dark{% else %}bg-secondary{% endif %} fs-6 px-3 py-1.5">
                         {{ turma_hoje_display }}
                     </span>
                 </div>
-                <h1 class="h3 fw-bold text-light mb-0">Encerramento e Apontamento Final &bull; {{ hoje|date:"d/m/Y" }}</h1>
+                <h1 class="h3 fw-bold text-slate-900 mb-0">Encerramento e Apontamento Final &bull; {{ hoje|date:"d/m/Y" }}</h1>
             </div>
             <div>
-                <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary">
+                <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary touch-btn d-flex align-items-center gap-2 px-3">
                     <i class="bi bi-arrow-left"></i> Voltar ao Quadro
                 </a>
             </div>
         </div>
+    </div>
 
-        {% if manuseios_turno %}
-        <section class="glass-card mb-4">
-            <h2 class="h5">Manuseios de Tarugo executados neste turno</h2>
-            <p class="small">Etapas vinculadas às extrusões de origem, sem acrescentar produção. O fechamento também pode consolidar somente essas etapas, sem nova OP.</p>
-            {% for registro in manuseios_turno %}<p><a href="{% url 'bladder:producao_detalhe' registro.pk %}">Manuseio #{{ registro.pk }}</a> — extrusão #{{ registro.extrusao_origem_id }}, {{ registro.ordem.numero_ordem_curto }} — {{ registro.operador }}</p>{% endfor %}
-        </section>
-        {% endif %}
-        {% if fechamento_existente %}
-            <!-- Turno Já Encerrado: Visualização Auditada em Somente Leitura -->
-            <div class="glass-card mb-4 border-success border-opacity-50">
-                <div class="d-flex align-items-center gap-3 mb-3 pb-3 border-bottom border-secondary border-opacity-25">
-                    <i class="bi bi-check-circle-fill text-success fs-1"></i>
-                    <div>
-                        <h4 class="fw-bold text-light mb-0">Turno Já Encerrado</h4>
-                        <span class="text-secondary small">
-                            Fechamento auditado realizado por <strong>{{ fechamento_existente.operador.get_full_name|default:fechamento_existente.operador.username }}</strong>
-                            em <strong>{{ fechamento_existente.data_hora_fechamento|date:"d/m/Y às H:i" }}</strong>.
-                        </span>
-                    </div>
+    <!-- Feedbacks de Mensagens -->
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{% if message.tags == 'error' %}danger{% else %}{{ message.tags }}{% endif %} alert-dismissible fade show shadow-sm mb-4" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+        {% endfor %}
+    {% endif %}
+
+    {% if manuseios_turno %}
+    <div class="fechamento-card p-4 mb-4">
+        <h5 class="fw-bold text-slate-900 mb-2">Manuseios de Tarugo executados neste turno</h5>
+        <p class="small text-secondary mb-3">Etapas vinculadas às extrusões de origem, sem acrescentar produção. O fechamento também pode consolidar somente essas etapas, sem nova OP.</p>
+        <div class="d-flex flex-column gap-2">
+            {% for registro in manuseios_turno %}
+            <div class="p-3 bg-light rounded-3 border d-flex justify-content-between align-items-center">
+                <div>
+                    <a href="{% url 'bladder:producao_detalhe' registro.pk %}" class="fw-bold text-slate-900 text-decoration-none">
+                        Manuseio #{{ registro.pk }}
+                    </a>
+                    <span class="text-slate-600 small ms-2">&mdash; extrusão #{{ registro.extrusao_origem_id }}, {{ registro.ordem.numero_ordem_curto }} &bull; {{ registro.operador.get_full_name|default:registro.operador.username }}</span>
                 </div>
+                <div>
+                    <span class="badge bg-secondary font-monospace">{{ registro.quantidade_manuseada }} un</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
 
-                <div class="table-responsive">
-                    <table class="table table-dark table-hover align-middle mb-0 small">
-                        <thead>
-                            <tr class="text-muted">
-                                <th>OP</th>
-                                <th>Processo</th>
-                                <th>Modelo</th>
-                                <th class="text-center">Meta</th>
-                                <th class="text-center">Realizado</th>
-                                <th class="text-center">Saldo</th>
-                                <th class="text-center">Situação</th>
-                                <th>Motivo / Justificativa</th>
+    {% if fechamento_existente %}
+        <!-- Turno Já Encerrado: Visualização Auditada em Somente Leitura (Tema Claro WCAG AA) -->
+        <div class="fechamento-card p-4 mb-4 border-success">
+            <div class="d-flex align-items-center gap-3 mb-3 pb-3 border-bottom">
+                <i class="bi bi-check-circle-fill text-success fs-1"></i>
+                <div>
+                    <h4 class="fw-bold text-slate-900 mb-0">Turno Já Encerrado</h4>
+                    <span class="text-secondary small">
+                        Fechamento auditado realizado por <strong class="text-slate-800">{{ fechamento_existente.operador.get_full_name|default:fechamento_existente.operador.username }}</strong>
+                        em <strong class="text-slate-800">{{ fechamento_existente.data_hora_fechamento|date:"d/m/Y às H:i" }}</strong>.
+                    </span>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover table-striped align-middle mb-0 small">
+                    <thead class="table-light">
+                        <tr class="text-slate-700">
+                            <th>OP</th>
+                            <th>Processo</th>
+                            <th>Modelo</th>
+                            <th class="text-center">Meta</th>
+                            <th class="text-center">Realizado</th>
+                            <th class="text-center">Saldo</th>
+                            <th class="text-center">Situação</th>
+                            <th>Motivo / Justificativa</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in fechamento_existente.itens.all %}
+                            <tr>
+                                <td class="font-monospace fw-bold text-slate-900">{{ item.ordem.numero_ordem }}</td>
+                                <td>{{ item.ordem.processo.nome }}</td>
+                                <td class="fw-semibold text-slate-800">{{ item.ordem.produto.codigo }}</td>
+                                <td class="text-center font-monospace">{{ item.quantidade_programada }} un</td>
+                                <td class="text-center font-monospace fw-bold text-success">
+                                    {% if item.quantidade_apurada %}{{ item.quantidade_realizada }} un{% else %}Não apurada{% endif %}
+                                </td>
+                                <td class="text-center font-monospace {% if item.saldo_gerado > 0 %}text-danger fw-bold{% else %}text-muted{% endif %}">
+                                    {{ item.saldo_gerado }} un
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge {% if item.situacao == 'CONCLUIDA' %}bg-success{% elif item.situacao == 'PARCIAL' %}bg-warning text-dark{% else %}bg-danger{% endif %}">
+                                        {{ item.get_situacao_display }}
+                                    </span>
+                                </td>
+                                <td class="text-slate-600">{{ item.motivo_completo|default:"-" }}</td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            {% for item in fechamento_existente.itens.all %}
-                                <tr>
-                                    <td class="font-monospace fw-bold text-warning">{{ item.ordem.numero_ordem }}</td>
-                                    <td>{{ item.ordem.processo.nome }}</td>
-                                    <td class="fw-semibold text-light">{{ item.ordem.produto.codigo }}</td>
-                                    <td class="text-center font-monospace">{{ item.quantidade_programada }} un</td>
-                                    <td class="text-center font-monospace fw-bold text-success">{% if item.quantidade_apurada %}{{ item.quantidade_realizada }} un{% else %}Não apurada{% endif %}</td>
-                                    <td class="text-center font-monospace {% if item.saldo_gerado > 0 %}text-danger fw-bold{% else %}text-muted{% endif %}">
-                                        {{ item.saldo_gerado }} un
-                                    </td>
-                                    <td class="text-center">
-                                        <span class="badge {% if item.situacao == 'CONCLUIDA' %}bg-success{% elif item.situacao == 'PARCIAL' %}bg-warning text-dark{% else %}bg-danger{% endif %}">
-                                            {{ item.get_situacao_display }}
-                                        </span>
-                                    </td>
-                                    <td class="text-secondary">{{ item.motivo_completo|default:"-" }}</td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            {% if fechamento_existente.observacoes %}
+                <div class="mt-3 p-3 rounded bg-light border small text-slate-800">
+                    <strong class="text-dark">Observações Gerais do Turno:</strong> {{ fechamento_existente.observacoes }}
                 </div>
+            {% endif %}
+        </div>
 
-                {% if fechamento_existente.observacoes %}
-                    <div class="mt-3 p-3 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 small text-light">
-                        <strong class="text-warning">Observações Gerais do Turno:</strong> {{ fechamento_existente.observacoes }}
-                    </div>
-                {% endif %}
-            </div>
+    {% elif not ordens and not manuseios_turno and not manuseios_incompletos %}
+        <!-- Sem OPs Programadas -->
+        <div class="fechamento-card text-center py-5">
+            <i class="bi bi-exclamation-circle text-warning fs-1 d-block mb-3"></i>
+            <h4 class="fw-bold text-slate-900">Não existem ordens de produção para fechamento neste turno!</h4>
+            <p class="text-secondary small">Nenhuma ordem de produção foi programada para a data de hoje.</p>
+            <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary touch-btn mt-2">Voltar ao Quadro Operacional</a>
+        </div>
 
-        {% elif not ordens and not manuseios_turno %}
-            <!-- Sem OPs Programadas -->
-            <div class="glass-card text-center py-5">
-                <i class="bi bi-exclamation-circle text-warning fs-1 d-block mb-3"></i>
-                <h4 class="fw-bold text-light">Não existem ordens de produção para fechamento neste turno!</h4>
-                <p class="text-secondary small">Nenhuma ordem de produção foi programada para a data de hoje.</p>
-                <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary mt-2">Voltar ao Quadro Operacional</a>
-            </div>
+    {% else %}
+        <!-- Formulário de Fechamento do Turno -->
+        <form method="post" id="form-fechamento-turno" onsubmit="return desabilitarSubmitFechamento(this)">
+            {% csrf_token %}
 
-        {% else %}
-            <!-- Formulário de Fechamento do Turno -->
-            <form method="post" id="form-fechamento-turno" onsubmit="return desabilitarSubmitFechamento(this)">
-                {% csrf_token %}
-
-                <div class="glass-card mb-4 border-warning border-opacity-50">
-                    <div class="d-flex align-items-center gap-2 mb-3 pb-2 border-bottom border-secondary border-opacity-25">
-                        <i class="bi bi-clipboard-check text-warning fs-4"></i>
+            <!-- ============================================================== -->
+            <!-- SEÇÃO 1: MANUSEIOS PENDENTES / PARCIAIS DO TURNO (ENTREGA A)     -->
+            <!-- ============================================================== -->
+            {% if manuseios_incompletos %}
+            <div class="fechamento-card p-4 mb-4 border-warning shadow-sm" style="background: #FFFBEB;">
+                <div class="d-flex align-items-center justify-content-between mb-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <i class="bi bi-arrow-right-square-fill text-warning fs-4"></i>
                         <div>
-                            <h5 class="fw-bold text-light mb-0">Apontamento das Atividades do Turno</h5>
-                            <span class="small text-secondary">Informe a quantidade total produzida para cada OP programada no turno.</span>
+                            <h5 class="fw-bold text-warning-emphasis mb-0">Manuseios Pendentes / Parciais deste Turno</h5>
+                            <span class="small text-secondary">
+                                Existem tarugos extrusados com manuseio incompleto. Selecione abaixo para <strong>encaminhar formalmente</strong> à próxima turma.
+                            </span>
                         </div>
                     </div>
+                    <span class="badge bg-warning text-dark fw-bold px-3 py-1 fs-6">{{ manuseios_incompletos|length }} pendente(s)</span>
+                </div>
 
-                    <div class="d-flex flex-column gap-3">
-                        {% for op in ordens %}
-                            <div class="p-3 rounded bg-black bg-opacity-50 border border-secondary border-opacity-50 card-op-fechamento" data-op-id="{{ op.id }}" data-meta="{{ op.quantidade_planejada }}">
-                                <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
-                                    <div>
-                                        <span class="fs-5 fw-bold font-monospace text-warning">{{ op.numero_ordem }}</span>
-                                        <span class="badge bg-secondary ms-2">{{ op.processo.nome }}</span>
-                                        <div class="fw-semibold text-light mt-1">
-                                            {{ op.produto.codigo }} &mdash; <span class="text-secondary small">{{ op.produto.descricao }}</span>
-                                        </div>
+                <div class="alert alert-warning small mb-3 border-warning">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    <strong>Regra Operacional:</strong> Todo manuseio incompleto deste turno deve ser encaminhado para a próxima equipe de revezamento antes de confirmar o fechamento.
+                </div>
+
+                <div class="d-flex flex-column gap-2" id="box-manuseios-incompletos">
+                    {% for ext in manuseios_incompletos %}
+                        <div class="p-3 bg-white rounded-3 border d-flex flex-wrap align-items-center justify-content-between gap-3 shadow-sm">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="form-check form-switch fs-4 mb-0">
+                                    <input class="form-check-input chk-manuseio-transferir" 
+                                           type="checkbox" 
+                                           role="switch" 
+                                           name="manuseios_transferir" 
+                                           value="{{ ext.id }}" 
+                                           id="chk-manuseio-{{ ext.id }}" 
+                                           checked 
+                                           required>
+                                </div>
+                                <div>
+                                    <label class="form-check-label fw-bold text-dark fs-6 d-block" for="chk-manuseio-{{ ext.id }}">
+                                        Encaminhar: {{ ext.ordem.numero_ordem_curto }} &bull; {{ ext.ordem.produto.codigo_com_medida|default:ext.ordem.produto.codigo }}
+                                    </label>
+                                    <div class="small text-secondary">
+                                        Extrusão #{{ ext.pk }} &bull; Extrusado: <strong>{{ ext.quantidade_realizada }} un</strong> &bull;
+                                        Já manuseado: <strong>{{ ext.quantidade_manuseada_calc }} un</strong> &bull;
+                                        Restante a repassar: <strong class="text-danger fw-bold">{{ ext.quantidade_restante_calc }} un</strong>
+                                        <span class="badge {% if ext.status_manuseio_calc == 'PARCIAL' %}bg-warning text-dark{% else %}bg-secondary{% endif %} ms-1">
+                                            {{ ext.status_manuseio_calc }}
+                                        </span>
                                     </div>
-                                    <div class="text-end">
-                                        <span class="text-muted small d-block">Meta Programada</span>
-                                        <span class="fs-4 fw-bold font-monospace text-light">{{ op.quantidade_planejada }} un</span>
-                                        {% if op.saldo_anterior_incorporado > 0 %}
-                                            <span class="small text-info d-block">(+{{ op.saldo_anterior_incorporado }} saldo inc.)</span>
+                                </div>
+                            </div>
+                            <div>
+                                <span class="badge bg-light text-secondary border px-3 py-2 font-monospace">
+                                    Destino: Próximo Turno
+                                </span>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- ============================================================== -->
+            <!-- SEÇÃO 2: APONTAMENTO DAS ORDENS DE PRODUÇÃO                     -->
+            <!-- ============================================================== -->
+            <div class="fechamento-card p-4 mb-4">
+                <div class="d-flex align-items-center gap-2 mb-3 pb-2 border-bottom">
+                    <i class="bi bi-clipboard-check text-warning fs-4"></i>
+                    <div>
+                        <h5 class="fw-bold text-slate-900 mb-0">Apontamento das Atividades do Turno</h5>
+                        <span class="small text-secondary">Informe a quantidade total produzida para cada OP programada no turno.</span>
+                    </div>
+                </div>
+
+                <div class="d-flex flex-column gap-3">
+                    {% for op in ordens %}
+                        <div class="p-3 rounded-3 op-card-fechamento card-op-fechamento" data-op-id="{{ op.id }}" data-meta="{{ op.quantidade_planejada }}">
+                            <!-- Cabeçalho do Card da OP -->
+                            <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-2">
+                                <div>
+                                    <span class="fs-5 fw-bold font-monospace text-slate-900">{{ op.numero_ordem }}</span>
+                                    <span class="badge bg-secondary ms-2">{{ op.processo.nome }}</span>
+                                    <div class="fw-bold text-slate-800 mt-1">
+                                        {{ op.produto.codigo_com_medida|default:op.produto.codigo }}
+                                        {% if op.produto.descricao %}
+                                            <span class="text-slate-600 fw-normal small">&mdash; {{ op.produto.descricao }}</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="text-end">
+                                    <span class="text-slate-600 small d-block">Meta Programada</span>
+                                    <span class="fs-4 fw-bold font-monospace text-slate-900">{{ op.quantidade_planejada }} un</span>
+                                    {% if op.saldo_anterior_incorporado > 0 %}
+                                        <span class="small text-info d-block">(+{{ op.saldo_anterior_incorporado }} saldo inc.)</span>
+                                    {% endif %}
+                                </div>
+                            </div>
+
+                            <div class="row g-3 align-items-center mt-1 pt-2 border-top">
+                                <!-- Input Quantidade Realizada -->
+                                <div class="col-12 col-md-4">
+                                    <label class="form-label small text-slate-800 fw-bold mb-1" for="qtd_realizada_{{ op.id }}">
+                                        Quantidade Realizada (un) *
+                                    </label>
+                                    <input type="{% if op.quantidade_apurada %}number{% else %}hidden{% endif %}"
+                                           data-apurada="{{ op.quantidade_apurada|yesno:'true,false' }}"
+                                           name="qtd_realizada_{{ op.id }}" 
+                                           id="qtd_realizada_{{ op.id }}" 
+                                           value="{{ op.quantidade_realizada }}"
+                                           {% if op.exige_execucoes or op.tem_execucoes or op.processo.codigo == '06' %}readonly{% endif %}
+                                           min="0" 
+                                           class="form-control form-control-lg font-monospace fw-bold text-center input-qtd-fechamento" 
+                                           data-op-id="{{ op.id }}" 
+                                           data-meta="{{ op.quantidade_planejada }}"
+                                           style="min-height: 48px; border: 1.5px solid #94A3B8; color: #0F172A;"
+                                           required>
+                                    <div class="small text-muted text-center mt-1">
+                                        {% if not op.quantidade_apurada %}
+                                            Quantidade não apurada; parâmetros e qualidade registrados.
+                                        {% elif op.processo.codigo == '06' %}
+                                            OP histórica de manuseio: somente o total já registrado é consolidado.
+                                        {% elif op.exige_execucoes or op.tem_execucoes %}
+                                            Total apurado automaticamente nos registros de produção do processo.
+                                        {% else %}
+                                            Informe o total realizado histórico da OP.
                                         {% endif %}
                                     </div>
                                 </div>
 
-                                <div class="row g-3 align-items-center mt-1 pt-2 border-top border-secondary border-opacity-25">
-                                    <!-- Input Quantidade Realizada -->
-                                    <div class="col-12 col-md-4">
-                                        <label class="form-label small text-warning fw-bold mb-1" for="qtd_realizada_{{ op.id }}">
-                                            Quantidade Realizada (un) *
-                                        </label>
-                                        <input type="{% if op.quantidade_apurada %}number{% else %}hidden{% endif %}"
-                                               data-apurada="{{ op.quantidade_apurada|yesno:'true,false' }}"
-                                               name="qtd_realizada_{{ op.id }}" 
-                                               id="qtd_realizada_{{ op.id }}" 
-                                               value="{{ op.quantidade_realizada }}"
-                                               {% if op.exige_execucoes or op.tem_execucoes or op.processo.codigo == '06' %}readonly{% endif %}
-                                               min="0" 
-                                               class="form-control form-control-lg font-monospace fw-bold text-center input-qtd-fechamento" 
-                                               data-op-id="{{ op.id }}" 
-                                               data-meta="{{ op.quantidade_planejada }}"
-                                               required>
-                                        <div class="small text-muted text-center mt-1">{% if not op.quantidade_apurada %}Quantidade não apurada; parâmetros e qualidade registrados, sem geração de saldo quantitativo.{% elif op.processo.codigo == '06' %}OP histórica de manuseio: somente o total já registrado pode ser consolidado. Novas etapas exigem extrusão de origem.{% elif op.exige_execucoes or op.tem_execucoes %}Total apurado nos registros de produção. Registre cada execução na OP; sem registros, o total é zero.{% else %}OP legada em transição: informe somente o realizado histórico. A produção pode superar a meta.{% endif %}</div>
-                                    </div>
-
-                                    <!-- Indicador de Saldo, Excedente e Situação -->
-                                    <div class="col-12 col-md-4">
-                                        <div class="p-2 rounded bg-dark border border-secondary border-opacity-50 text-center">
-                                            <div class="small text-muted mb-1">Resultado Calculado</div>
-                                            <div class="d-flex justify-content-around align-items-center">
-                                                <div>
-                                                    <span class="small text-muted d-block">Saldo / Excedente:</span>
-                                                    <span class="font-monospace fw-bold fs-6 text-light" id="txt-saldo-{{ op.id }}">0 un</span>
-                                                </div>
-                                                <div>
-                                                    <span class="small text-muted d-block">Situação:</span>
-                                                    <span class="badge bg-success" id="badge-status-{{ op.id }}">CONCLUÍDA</span>
-                                                </div>
+                                <!-- Indicador de Saldo e Situação -->
+                                <div class="col-12 col-md-4">
+                                    <div class="p-2 rounded bg-light border text-center">
+                                        <div class="small text-slate-600 mb-1 fw-semibold">Resultado Calculado</div>
+                                        <div class="d-flex justify-content-around align-items-center">
+                                            <div>
+                                                <span class="small text-slate-600 d-block">Saldo / Excedente:</span>
+                                                <span class="font-monospace fw-bold fs-6 text-slate-900" id="txt-saldo-{{ op.id }}">0 un</span>
+                                            </div>
+                                            <div>
+                                                <span class="small text-slate-600 d-block">Situação:</span>
+                                                <span class="badge bg-success" id="badge-status-{{ op.id }}">CONCLUÍDA</span>
                                             </div>
                                         </div>
                                     </div>
-
-                                    <!-- Observação da OP -->
-                                    <div class="col-12 col-md-4">
-                                        <label class="form-label small text-muted mb-1" for="obs_{{ op.id }}">
-                                            Observações Operacionais (Opcional)
-                                        </label>
-                                        <input type="text" name="obs_{{ op.id }}" id="obs_{{ op.id }}" class="form-control form-control-sm" placeholder="Ex: turno estável, tarugo ok...">
-                                    </div>
                                 </div>
 
-                                <!-- Bloco Condicional de Desvio (Obrigatório se Realizado < Meta) -->
-                                <div id="box-motivo-{{ op.id }}" class="p-3 mt-3 rounded bg-danger bg-opacity-10 border border-danger border-opacity-50 d-none">
-                                    <div class="fw-bold text-warning small mb-2 d-flex align-items-center gap-1">
-                                        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
-                                        Esta OP não atingiu a meta planejada. Selecione uma ou mais categorias e descreva o ocorrido:
-                                    </div>
+                                <!-- Observações da OP -->
+                                <div class="col-12 col-md-4">
+                                    <label class="form-label small text-slate-700 fw-semibold mb-1" for="obs_{{ op.id }}">
+                                        Observações da OP (Opcional)
+                                    </label>
+                                    <input type="text" name="obs_{{ op.id }}" id="obs_{{ op.id }}" class="form-control" placeholder="Ex: turno estável, tarugo ok..." style="min-height: 40px;">
+                                </div>
+                            </div>
 
-                                    <!-- Categorias do Desvio (uma ou mais) -->
-                                    <div class="mb-3">
-                                        <label class="form-label small text-light fw-semibold mb-2">Categoria(s) do Desvio *</label>
-                                        <div class="d-flex flex-wrap gap-2" id="box-categorias-{{ op.id }}">
-                                            {% for cat in categorias_desvio %}
+                            <!-- Bloco de Déficit com Alto Contraste (Obrigatório se Realizado < Meta) -->
+                            <div id="box-motivo-{{ op.id }}" class="p-3 mt-3 box-deficit d-none">
+                                <div class="title-deficit small mb-2 d-flex align-items-center gap-1">
+                                    <i class="bi bi-exclamation-triangle-fill text-danger fs-6"></i>
+                                    Esta OP não atingiu a meta planejada. Selecione uma ou mais categorias e descreva o ocorrido:
+                                </div>
+
+                                <!-- Categorias do Desvio -->
+                                <div class="mb-3">
+                                    <label class="form-label small text-slate-900 fw-bold mb-2">Categoria(s) do Desvio *</label>
+                                    <div class="d-flex flex-wrap gap-2" id="box-categorias-{{ op.id }}">
+                                        {% for cat in categorias_desvio %}
+                                            <input type="checkbox" 
+                                                   class="btn-check chk-cat-fechamento" 
+                                                   name="categorias_{{ op.id }}" 
+                                                   id="cat_{{ op.id }}_{{ cat.codigo }}" 
+                                                   value="{{ cat.codigo }}"
+                                                   data-op-id="{{ op.id }}">
+                                            <label class="btn btn-cat-desvio" for="cat_{{ op.id }}_{{ cat.codigo }}">
+                                                {{ cat.nome }}
+                                            </label>
+                                        {% empty %}
+                                            {% for cod, rotulo in motivo_choices %}
                                                 <input type="checkbox" 
                                                        class="btn-check chk-cat-fechamento" 
                                                        name="categorias_{{ op.id }}" 
-                                                       id="cat_{{ op.id }}_{{ cat.codigo }}" 
-                                                       value="{{ cat.codigo }}"
+                                                       id="cat_{{ op.id }}_{{ cod }}" 
+                                                       value="{{ cod }}"
                                                        data-op-id="{{ op.id }}">
-                                                <label class="btn btn-outline-warning btn-sm" for="cat_{{ op.id }}_{{ cat.codigo }}">
-                                                    {{ cat.nome }}
+                                                <label class="btn btn-cat-desvio" for="cat_{{ op.id }}_{{ cod }}">
+                                                    {{ rotulo }}
                                                 </label>
-                                            {% empty %}
-                                                {% for cod, rotulo in motivo_choices %}
-                                                    <input type="checkbox" 
-                                                           class="btn-check chk-cat-fechamento" 
-                                                           name="categorias_{{ op.id }}" 
-                                                           id="cat_{{ op.id }}_{{ cod }}" 
-                                                           value="{{ cod }}"
-                                                           data-op-id="{{ op.id }}">
-                                                    <label class="btn btn-outline-warning btn-sm" for="cat_{{ op.id }}_{{ cod }}">
-                                                        {{ rotulo }}
-                                                    </label>
-                                                {% endfor %}
                                             {% endfor %}
-                                        </div>
-                                    </div>
-
-                                    <!-- Descrição do Ocorrido: O que aconteceu? -->
-                                    <div>
-                                        <label class="form-label small text-light fw-semibold mb-1" for="descricao_desvio_{{ op.id }}">
-                                            O que aconteceu? (Descrição obrigatória) *
-                                        </label>
-                                        <textarea name="descricao_desvio_{{ op.id }}" 
-                                                  id="descricao_desvio_{{ op.id }}" 
-                                                  rows="2" 
-                                                  class="form-control form-control-sm input-descricao-desvio" 
-                                                  data-op-id="{{ op.id }}"
-                                                  placeholder="Descreva o ocorrido (ex: A prensa apresentou vazamento durante o ciclo e ficou parada por aproximadamente duas horas)..."></textarea>
+                                        {% endfor %}
                                     </div>
                                 </div>
+
+                                <!-- Descrição do Ocorrido -->
+                                <div>
+                                    <label class="form-label small text-slate-900 fw-bold mb-1" for="descricao_desvio_{{ op.id }}">
+                                        O que aconteceu? (Descrição obrigatória) *
+                                    </label>
+                                    <textarea name="descricao_desvio_{{ op.id }}" 
+                                              id="descricao_desvio_{{ op.id }}" 
+                                              rows="2" 
+                                              class="form-control form-control-sm input-descricao-desvio" 
+                                              data-op-id="{{ op.id }}"
+                                              placeholder="Descreva o ocorrido (ex: Máquina parou por falta de matéria-prima durante duas horas)..."></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    {% endfor %}
+                </div>
+
+                <!-- ============================================================== -->
+                <!-- SEÇÃO 3: RESUMO DE MOVIMENTAÇÕES DE ESTOQUE                     -->
+                <!-- ============================================================== -->
+                {% if movimentacoes_estoque %}
+                <div class="mt-4 pt-3 border-top">
+                    <h6 class="small text-slate-700 fw-bold text-uppercase mb-2">
+                        <i class="bi bi-boxes text-primary"></i> Movimentações de Estoque no Turno ({{ movimentacoes_estoque|length }})
+                    </h6>
+                    <div class="list-group list-group-flush border rounded bg-white">
+                        {% for m in movimentacoes_estoque %}
+                            <div class="list-group-item py-2 px-3 d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="badge {% if m.tipo == 'ENTRADA' %}bg-success{% elif m.tipo == 'SAIDA' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1">
+                                        {{ m.get_tipo_display }}
+                                    </span>
+                                    <strong class="font-monospace text-slate-900">{{ m.produto.codigo_com_medida }}</strong>
+                                    {% if m.lote_etiqueta %}
+                                        <span class="badge bg-light text-dark border ms-1 font-monospace">{{ m.lote_etiqueta }}</span>
+                                    {% endif %}
+                                </div>
+                                <span class="fw-bold font-monospace text-slate-900">{{ m.quantidade }} un</span>
                             </div>
                         {% endfor %}
                     </div>
+                </div>
+                {% endif %}
 
-                    <!-- ============================================================== -->
-                    <!-- SEÇÃO: RESUMO DE ATIVIDADES E MOVIMENTAÇÃO DE ESTOQUE          -->
-                    <!-- ============================================================== -->
-                    {% if atividades_turno or movimentacoes_turno %}
-                    <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
-                        <div class="row g-3">
-                            {% if atividades_turno %}
-                            <div class="col-12 col-md-6">
-                                <h6 class="small text-secondary fw-bold text-uppercase mb-2">
-                                    <i class="bi bi-tools text-primary"></i> Atividades Operacionais do Turno ({{ atividades_turno|length }})
-                                </h6>
-                                <div class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20">
-                                    {% for a in atividades_turno %}
-                                        <div class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2 px-3 d-flex justify-content-between align-items-center">
-                                            <div>
-                                                <span class="badge bg-primary me-1">{{ a.tipo.nome }}</span>
-                                                <strong class="text-light">{{ a.titulo }}</strong>
-                                            </div>
-                                            <span class="badge {% if a.status == 'CONCLUIDA' %}bg-success{% else %}bg-warning text-dark{% endif %}">
-                                                {{ a.get_status_display }}
-                                            </span>
-                                        </div>
-                                    {% endfor %}
-                                </div>
-                            </div>
-                            {% endif %}
+                <!-- ============================================================== -->
+                <!-- SEÇÃO 4: PASSAGEM PARA O PRÓXIMO TURNO                         -->
+                <!-- ============================================================== -->
+                <div class="mt-4 pt-3 border-top">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                        <div>
+                            <h5 class="fw-bold text-slate-900 mb-0 d-flex align-items-center gap-2">
+                                <i class="bi bi-arrow-left-right text-warning"></i> PASSAGEM PARA O PRÓXIMO TURNO
+                            </h5>
+                            <span class="small text-slate-600">Comunicação e recados operacionais entre turmas (opcional &bull; não bloqueia o fechamento)</span>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-secondary btn-sm fw-bold d-flex align-items-center gap-1 touch-btn">
+                                <i class="bi bi-list-check"></i> VER RECADOS
+                            </a>
+                            <button type="button" class="btn btn-outline-warning text-dark btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" onclick="abrirModalRecadoGeral()">
+                                <i class="bi bi-chat-square-text-fill"></i> + DEIXAR RECADO
+                            </button>
+                        </div>
+                    </div>
 
-                            {% if movimentacoes_turno %}
-                            <div class="col-12 col-md-6">
-                                <h6 class="small text-secondary fw-bold text-uppercase mb-2">
-                                    <i class="bi bi-boxes text-info"></i> Movimentações de Estoque no Turno ({{ movimentacoes_turno|length }})
-                                </h6>
-                                <div class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20">
-                                    {% for m in movimentacoes_turno %}
-                                        <div class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2 px-3 d-flex justify-content-between align-items-center">
-                                            <div>
-                                                <span class="badge {% if m.tipo_movimentacao == 'ENTRADA' %}bg-success{% elif m.tipo_movimentacao == 'SAIDA' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-1">
-                                                    {{ m.get_tipo_movimentacao_display }}
+                    <!-- 1. Recados já criados neste turno -->
+                    <div class="mb-3">
+                        <h6 class="small text-slate-700 fw-bold text-uppercase mb-2">
+                            <i class="bi bi-send-check text-success"></i> Recados Criados Neste Turno ({{ recados_criados_turno|length }})
+                        </h6>
+                        {% if recados_criados_turno %}
+                            <div class="list-group list-group-flush border rounded bg-white">
+                                {% for r in recados_criados_turno %}
+                                    <div class="list-group-item text-dark py-2 px-3">
+                                        <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span class="badge {% if r.prioridade == 'URGENTE' %}bg-danger{% elif r.prioridade == 'IMPORTANTE' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                                                    {{ r.get_prioridade_display }}
                                                 </span>
-                                                <strong class="font-monospace text-warning">{{ m.produto.codigo }}</strong>
+                                                <span class="badge bg-light text-dark border">{{ r.get_tipo_display }}</span>
+                                                <span class="badge bg-light text-dark border">{{ r.get_categoria_display }}</span>
+                                                {% if r.ordem_producao %}
+                                                    <span class="small font-monospace text-primary">{{ r.ordem_producao.numero_ordem_curto }}</span>
+                                                {% endif %}
                                             </div>
-                                            <span class="fw-bold font-monospace">{{ m.quantidade }} un</span>
+                                            <span class="small text-muted">{{ r.created_at|date:"H:i" }} &bull; {{ r.autor.get_full_name|default:r.autor.username }}</span>
                                         </div>
-                                    {% endfor %}
-                                </div>
+                                        <div class="small text-slate-800">{{ r.mensagem }}</div>
+                                    </div>
+                                {% endfor %}
                             </div>
-                            {% endif %}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    <!-- ============================================================== -->
-                    <!-- SEÇÃO: PASSAGEM PARA O PRÓXIMO TURNO                           -->
-                    <!-- ============================================================== -->
-                    <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
-                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                            <div>
-                                <h5 class="fw-bold text-light mb-0 d-flex align-items-center gap-2">
-                                    <i class="bi bi-arrow-left-right text-warning"></i> PASSAGEM PARA O PRÓXIMO TURNO
-                                </h5>
-                                <span class="small text-muted">Comunicação e recados operacionais entre turmas (opcional &bull; não bloqueia o fechamento)</span>
+                        {% else %}
+                            <div class="p-2.5 rounded bg-light border text-slate-600 small">
+                                Nenhum recado criado para o próximo turno até o momento.
                             </div>
-                            <div class="d-flex align-items-center gap-2">
-                                <a href="{% url 'bladder:recados_criados' %}" class="btn btn-outline-secondary btn-sm text-light fw-bold d-flex align-items-center gap-1 touch-btn">
-                                    <i class="bi bi-list-check"></i> VER RECADOS
-                                </a>
-                                <button type="button" class="btn btn-outline-warning btn-sm fw-bold d-flex align-items-center gap-1 touch-btn" onclick="abrirModalRecadoGeral()">
-                                    <i class="bi bi-chat-square-text-fill"></i> + DEIXAR RECADO
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- 1. Recados já criados neste turno -->
-                        <div class="mb-3">
-                            <h6 class="small text-secondary fw-bold text-uppercase mb-2">
-                                <i class="bi bi-send-check text-success"></i> Recados Criados Neste Turno ({{ recados_criados_turno|length }})
-                            </h6>
-                            {% if recados_criados_turno %}
-                                <div class="list-group list-group-flush border border-secondary border-opacity-25 rounded bg-black bg-opacity-20">
-                                    {% for r in recados_criados_turno %}
-                                        <div class="list-group-item bg-transparent text-light border-secondary border-opacity-25 py-2 px-3">
-                                            <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
-                                                <div class="d-flex align-items-center gap-2">
-                                                    <span class="badge {% if r.prioridade == 'URGENTE' %}bg-danger{% elif r.prioridade == 'IMPORTANTE' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
-                                                        {{ r.get_prioridade_display }}
-                                                    </span>
-                                                    <span class="badge bg-dark border border-secondary text-light">{{ r.get_tipo_display }}</span>
-                                                    <span class="badge bg-dark border border-warning border-opacity-25 text-warning">{{ r.get_categoria_display }}</span>
-                                                    {% if r.ordem_producao %}
-                                                        <span class="small font-monospace text-info">{{ r.ordem_producao.numero_ordem_curto }}</span>
-                                                    {% endif %}
-                                                </div>
-                                                <span class="small text-muted">{{ r.created_at|date:"H:i" }} &bull; {{ r.autor.get_full_name|default:r.autor.username }}</span>
-                                            </div>
-                                            <div class="small text-light">{{ r.mensagem }}</div>
-                                        </div>
-                                    {% endfor %}
-                                </div>
-                            {% else %}
-                                <div class="p-2 rounded bg-black bg-opacity-20 border border-secondary border-opacity-25 text-muted small">
-                                    Nenhum recado criado para o próximo turno até o momento.
-                                </div>
-                            {% endif %}
-                        </div>
-
-                        <!-- 2. Acompanhamentos recebidos ainda abertos -->
-                        <div class="mb-3">
-                            <h6 class="small text-secondary fw-bold text-uppercase mb-2">
-                                <i class="bi bi-clock-history text-warning"></i> Acompanhamentos Recebidos Ainda em Aberto ({{ acompanhamentos_abertos|length }})
-                            </h6>
-                            {% if acompanhamentos_abertos %}
-                                <div class="row g-2">
-                                    {% for r in acompanhamentos_abertos %}
-                                        <div class="col-12">
-                                            <div class="p-2 rounded border border-warning border-opacity-40 bg-black bg-opacity-30 d-flex flex-wrap justify-content-between align-items-center gap-2">
-                                                <div>
-                                                    <div class="d-flex align-items-center gap-2 mb-1">
-                                                        <span class="badge {% if r.prioridade == 'URGENTE' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ r.get_prioridade_display }}</span>
-                                                        <span class="badge bg-dark border border-warning border-opacity-25 text-warning">{{ r.get_categoria_display }}</span>
-                                                        <span class="small text-muted">{{ r.autor.get_full_name|default:r.autor.username }} &bull; {{ r.data_turno_origem|date:"d/m" }}</span>
-                                                    </div>
-                                                    <div class="small text-light">"{{ r.mensagem }}"</div>
-                                                </div>
-                                                <div class="d-flex gap-2">
-                                                    <button type="button" class="btn btn-success btn-sm fw-bold px-3" onclick="abrirModalResolverRecado('{{ r.id }}', '{{ r.mensagem|escapejs }}')">
-                                                        <i class="bi bi-check-lg"></i> RESOLVIDO
-                                                    </button>
-                                                    <button type="button" class="btn btn-info btn-sm fw-bold px-3" onclick="abrirModalRepassarRecado('{{ r.id }}', '{{ r.mensagem|escapejs }}')">
-                                                        <i class="bi bi-arrow-repeat"></i> REPASSAR AO PRÓXIMO TURNO
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    {% endfor %}
-                                </div>
-                            {% else %}
-                                <div class="p-2 rounded bg-black bg-opacity-20 border border-secondary border-opacity-25 text-muted small">
-                                    Nenhum acompanhamento pendente de resolução para este turno.
-                                </div>
-                            {% endif %}
-                        </div>
+                        {% endif %}
                     </div>
 
-                    <!-- Observações Gerais do Fechamento -->
-                    <div class="mt-4 pt-3 border-top border-secondary border-opacity-25">
-                        <label class="form-label small text-light fw-bold" for="observacoes_gerais">
-                            Observações Gerais do Turno (Opcional)
-                        </label>
-                        <textarea name="observacoes_gerais" id="observacoes_gerais" rows="2" class="form-control" placeholder="Observações para a liderança ou para o próximo turno..."></textarea>
-                    </div>
-
-
-                    <!-- Botão de Confirmação com Proteção de Duplo Clique -->
-                    <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top border-secondary border-opacity-25">
-                        <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary">Cancelar</a>
-                        <button type="submit" class="btn btn-warning fw-bold px-4 py-2 d-flex align-items-center gap-2" id="btn-submit-fechamento">
-                            <i class="bi bi-check2-circle fs-5"></i> CONFIRMAR FECHAMENTO DO TURNO
-                        </button>
+                    <!-- 2. Acompanhamentos recebidos ainda abertos -->
+                    <div class="mb-3">
+                        <h6 class="small text-slate-700 fw-bold text-uppercase mb-2">
+                            <i class="bi bi-clock-history text-warning"></i> Acompanhamentos Recebidos Ainda em Aberto ({{ acompanhamentos_abertos|length }})
+                        </h6>
+                        {% if acompanhamentos_abertos %}
+                            <div class="list-group list-group-flush border rounded bg-white">
+                                {% for a in acompanhamentos_abertos %}
+                                    <div class="list-group-item text-dark py-2 px-3">
+                                        <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                                            <div class="d-flex align-items-center gap-2">
+                                                <span class="badge {% if a.prioridade == 'URGENTE' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ a.get_prioridade_display }}</span>
+                                                <span class="badge bg-light text-dark border">{{ a.get_categoria_display }}</span>
+                                                <span class="badge bg-warning text-dark">EM ABERTO</span>
+                                            </div>
+                                            <span class="small text-muted">Origem: {{ a.get_turma_origem_display }} ({{ a.data_turno_origem|date:"d/m" }})</span>
+                                        </div>
+                                        <div class="small text-slate-800 mb-1">{{ a.mensagem }}</div>
+                                        <div class="d-flex gap-2 justify-content-end">
+                                            <button type="button" class="btn btn-outline-success btn-sm py-0" onclick="abrirModalResolverAcompanhamento({{ a.id }}, '{{ a.mensagem|escapejs }}')">
+                                                <i class="bi bi-check2"></i> Marcar Resolvido
+                                            </button>
+                                            <button type="button" class="btn btn-outline-warning btn-sm text-dark py-0" onclick="abrirModalRepassarAcompanhamento({{ a.id }}, '{{ a.mensagem|escapejs }}')">
+                                                <i class="bi bi-arrow-right"></i> Repassar
+                                            </button>
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="p-2.5 rounded bg-light border text-slate-600 small">
+                                Nenhum acompanhamento em aberto no momento.
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
-            </form>
-        {% endif %}
-    </div>
+
+                <!-- Observações Gerais do Fechamento -->
+                <div class="mt-4 pt-3 border-top">
+                    <label class="form-label small text-slate-900 fw-bold" for="observacoes_gerais">
+                        Observações Gerais do Turno (Opcional)
+                    </label>
+                    <textarea name="observacoes_gerais" id="observacoes_gerais" rows="2" class="form-control" placeholder="Observações para a liderança ou para o próximo turno..."></textarea>
+                </div>
+
+                <!-- Botões de Confirmação -->
+                <div class="d-flex justify-content-end gap-2 mt-4 pt-3 border-top">
+                    <a href="{% url 'bladder:operador' %}" class="btn btn-outline-secondary touch-btn px-4">Cancelar</a>
+                    <button type="submit" class="btn btn-warning touch-btn text-dark fw-bold px-4 py-2 d-flex align-items-center gap-2 shadow-sm" id="btn-submit-fechamento">
+                        <i class="bi bi-check2-circle fs-5"></i> CONFIRMAR FECHAMENTO DO TURNO
+                    </button>
+                </div>
+            </div>
+        </form>
+    {% endif %}
 </div>
 {% include "bladder/includes/modal_mensagem_turno.html" %}
 {% endblock %}
 
-
 {% block extra_js %}
 <script>
     function desabilitarSubmitFechamento(form) {
-        // Validação client-side para garantir que OPs com deficit tenham categoria e descrição
+        // 1. Validação de manuseios incompletos
+        const chksManuseio = document.querySelectorAll('.chk-manuseio-transferir');
+        for (const chk of chksManuseio) {
+            if (!chk.checked) {
+                alert('Existem manuseios incompletos neste turno. Você deve confirmar o encaminhamento para o próximo turno antes de fechar.');
+                chk.focus();
+                return false;
+            }
+        }
+
+        // 2. Validação client-side para garantir que OPs com déficit tenham categoria e descrição
         const inputsQtd = document.querySelectorAll(".input-qtd-fechamento");
         for (const input of inputsQtd) {
             const opId = input.dataset.opId;
-            if(input.dataset.apurada === "false") {const saldo=document.getElementById(`txt-saldo-${opId}`);if(saldo) saldo.textContent="Não apurada";const badge=document.getElementById(`badge-status-${opId}`);if(badge) badge.textContent="REGISTRO DE QUALIDADE";continue;}
+            if (input.dataset.apurada === "false") { continue; }
             const meta = parseInt(input.dataset.meta || 0, 10);
             const realizada = parseInt(input.value || 0, 10);
 
@@ -423,7 +585,7 @@
 
                 const desc = document.getElementById(`descricao_desvio_${opId}`);
                 if (!desc || !desc.value.trim()) {
-                    alert(`Por favor, descreva 'O que aconteceu?' para a OP.`);
+                    alert(`Por favor, descreva 'O que aconteceu?' para a OP com déficit.`);
                     if (desc) desc.focus();
                     return false;
                 }
@@ -433,7 +595,7 @@
         const btn = document.getElementById("btn-submit-fechamento");
         if (btn) {
             btn.disabled = true;
-            btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Gravando Fechamento e Atualizando Saldos...`;
+            btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span> Gravando Fechamento e Encaminhando Manuseios...`;
         }
         return true;
     }
@@ -443,7 +605,13 @@
 
         function atualizarCardOP(input) {
             const opId = input.dataset.opId;
-            if(input.dataset.apurada === "false") {const saldo=document.getElementById(`txt-saldo-${opId}`);if(saldo) saldo.textContent="Não apurada";const badge=document.getElementById(`badge-status-${opId}`);if(badge) badge.textContent="REGISTRO DE QUALIDADE";return;}
+            if (input.dataset.apurada === "false") {
+                const saldo = document.getElementById(`txt-saldo-${opId}`);
+                if (saldo) saldo.textContent = "Não apurada";
+                const badge = document.getElementById(`badge-status-${opId}`);
+                if (badge) badge.textContent = "REGISTRO DE QUALIDADE";
+                return;
+            }
             const meta = parseInt(input.dataset.meta || 0, 10);
             const realizada = parseInt(input.value || 0, 10);
 
@@ -456,7 +624,7 @@
 
             if (txtSaldo) {
                 if (excedente > 0) {
-                    txtSaldo.innerHTML = `<span class="text-success">+${excedente} un (excedente)</span>`;
+                    txtSaldo.innerHTML = `<span class="text-success fw-bold">+${excedente} un (excedente)</span>`;
                 } else if (saldo > 0) {
                     txtSaldo.innerHTML = `<span class="text-danger fw-bold">${saldo} un (saldo)</span>`;
                 } else {
@@ -498,10 +666,8 @@
             input.addEventListener("input", function () {
                 atualizarCardOP(this);
             });
-            atualizarCardOP(input); // Executa na carga inicial
+            atualizarCardOP(input);
         });
     });
 </script>
 {% endblock %}
-
-
